@@ -19,6 +19,9 @@
 #include "Chat.h"
 #include "WorldSession.h"
 #include "DatabaseEnv.h"
+#include "GameTime.h"
+#include "SpellHistory.h"
+#include "SpellPackets.h"
 #include <cmath>
 
 enum DarkKnightSpells
@@ -361,11 +364,43 @@ public:
  * Companion Hearthstone:
  * Allows player to summon 1 companion bot to fight by their side, or dismiss it.
  * Supports choosing a specific class (e.g. Death Knight / Dark Knight) or random.
+ * Cooldown: 5 hours (18000s) on subsequent uses.
+ * First use: 0 cooldown!
  */
 static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
 {
     if (!player || !player->IsInWorld())
         return false;
+
+    bool const isGM = player->IsGameMaster();
+    uint32 const guidLow = player->GetGUID().GetCounter();
+    time_t const now = GameTime::GetGameTime();
+    constexpr uint64 COOLDOWN_SECONDS = 5 * 3600; // 5 hours
+
+    // Check first use and cooldown in database
+    bool firstUseDone = false;
+    uint64 lastUseTime = 0;
+
+    QueryResult cResult = CharacterDatabase.Query(Trinity::StringFormat("SELECT first_use_done, last_use_time FROM character_companion_stone WHERE guid = {}", guidLow).c_str());
+    if (cResult)
+    {
+        Field* fields = cResult->Fetch();
+        firstUseDone = (fields[0].GetUInt8() != 0);
+        lastUseTime = fields[1].GetUInt64();
+    }
+
+    if (firstUseDone && !isGM)
+    {
+        uint64 const diff = (now > lastUseTime) ? (now - lastUseTime) : 0;
+        if (diff < COOLDOWN_SECONDS)
+        {
+            uint32 const remSec = static_cast<uint32>(COOLDOWN_SECONDS - diff);
+            uint32 const hours = remSec / 3600;
+            uint32 const mins = (remSec % 3600) / 60;
+            ChatHandler(player->GetSession()).PSendSysMessage("|cffff0000[Companion Hearthstone]|r Piatra este in cooldown! Timp ramas: %u ore si %u minute.", hours, mins);
+            return false;
+        }
+    }
 
     // 1. If player already has a companion bot
     if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
@@ -389,6 +424,31 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
                 player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
                 ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
                 player->CastSpell(player, 64034, true); // Visual puff
+
+                // Update cooldown
+                if (!firstUseDone)
+                {
+                    CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
+                    player->GetSpellHistory()->ResetCooldown(55884, true);
+                    ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul a fost retras. (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
+                }
+                else
+                {
+                    CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
+                    if (!isGM)
+                    {
+                        const uint32 cdMs = COOLDOWN_SECONDS * 1000;
+                        player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::hours(5));
+
+                        WorldPackets::Spells::SpellCooldown spellCooldown;
+                        spellCooldown.Caster = player->GetGUID();
+                        spellCooldown.Flags = 0;
+                        spellCooldown.SpellCooldowns.emplace_back(55884, cdMs);
+                        player->SendDirectMessage(spellCooldown.Write());
+
+                        ChatHandler(player->GetSession()).SendSysMessage("|cff00ccff[Companion Hearthstone]|r Cooldown de 5 ore activat.");
+                    }
+                }
                 return true;
             }
             else
@@ -484,6 +544,31 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
     {
         player->CastSpell(player, 64036, true); // Visual light effect
         ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has arrived to fight by your side!", bot->GetName().c_str());
+
+        // Update cooldown
+        if (!firstUseDone)
+        {
+            CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
+            player->GetSpellHistory()->ResetCooldown(55884, true);
+            ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul tau de leveling a sosit! (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
+        }
+        else
+        {
+            CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
+            if (!isGM)
+            {
+                const uint32 cdMs = COOLDOWN_SECONDS * 1000;
+                player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::hours(5));
+
+                WorldPackets::Spells::SpellCooldown spellCooldown;
+                spellCooldown.Caster = player->GetGUID();
+                spellCooldown.Flags = 0;
+                spellCooldown.SpellCooldowns.emplace_back(55884, cdMs);
+                player->SendDirectMessage(spellCooldown.Write());
+
+                ChatHandler(player->GetSession()).SendSysMessage("|cff00ccff[Companion Hearthstone]|r Cooldown de 5 ore activat.");
+            }
+        }
         return true;
     }
     else
@@ -500,7 +585,61 @@ public:
 
     bool OnUse(Player* player, Item* /*item*/, SpellCastTargets const& /*targets*/) override
     {
-        return ToggleCompanionBot(player);
+        ToggleCompanionBot(player);
+        return true;
+    }
+};
+
+class companion_playerscript : public PlayerScript
+{
+public:
+    companion_playerscript() : PlayerScript("companion_playerscript") { }
+
+    void OnLogin(Player* player, bool /*firstLogin*/) override
+    {
+        if (!player)
+            return;
+
+        // 1. Give Companion Hearthstone to existing characters if missing
+        if (!player->HasItemCount(ITEM_COMPANION_STONE, 1))
+        {
+            ItemPosCountVec dest;
+            InventoryResult msg = player->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, ITEM_COMPANION_STONE, 1);
+            if (msg == EQUIP_ERR_OK)
+            {
+                Item* item = player->StoreNewItem(dest, ITEM_COMPANION_STONE, true);
+                player->SendNewItem(item, 1, true, false);
+                ChatHandler(player->GetSession()).SendSysMessage("|cff00ccff[Companion]|r Ai primit |cffffffff|Hitem:70901:0:0:0:0:0:0:0:0|h[Companion Hearthstone]|h|r!");
+            }
+        }
+
+        // 2. Synchronize active cooldown upon login
+        uint32 const guidLow = player->GetGUID().GetCounter();
+        QueryResult cResult = CharacterDatabase.Query(Trinity::StringFormat("SELECT first_use_done, last_use_time FROM character_companion_stone WHERE guid = {}", guidLow).c_str());
+        if (cResult)
+        {
+            Field* fields = cResult->Fetch();
+            bool firstUseDone = (fields[0].GetUInt8() != 0);
+            uint64 lastUseTime = fields[1].GetUInt64();
+
+            if (firstUseDone && lastUseTime > 0)
+            {
+                time_t const now = GameTime::GetGameTime();
+                uint64 const diff = (now > lastUseTime) ? (now - lastUseTime) : 0;
+                constexpr uint64 COOLDOWN_SECONDS = 5 * 3600;
+                if (diff < COOLDOWN_SECONDS)
+                {
+                    uint32 const remSec = static_cast<uint32>(COOLDOWN_SECONDS - diff);
+                    player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::seconds(remSec));
+
+                    WorldPackets::Spells::SpellCooldown spellCooldown;
+                    spellCooldown.Caster = player->GetGUID();
+                    spellCooldown.Flags = 0;
+                    spellCooldown.SpellCooldowns.emplace_back(55884, remSec * 1000);
+                    player->SendDirectMessage(spellCooldown.Write());
+                }
+            }
+        }
     }
 };
 
@@ -807,6 +946,7 @@ void AddCustomScripts()
     new boss_dark_knight_nemesis_script();
     new item_companion_stone();
     new companion_commandscript();
+    new companion_playerscript();
     new boss_illidan_worldboss_script();
 }
 
