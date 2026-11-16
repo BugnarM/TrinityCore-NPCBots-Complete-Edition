@@ -35,6 +35,8 @@ EndContentData */
 #include "GameObject.h"
 #include "GameObjectAI.h"
 #include "GameTime.h"
+#include <algorithm>
+#include <unordered_set>
 #include "Log.h"
 #include "MotionMaster.h"
 #include "ObjectMgr.h"
@@ -630,20 +632,74 @@ constexpr Seconds EVENT_BREWFESTGOBLIN01_TIME = 68s;
 constexpr Seconds EVENT_BREWFESTGOBLIN02_TIME = 93s;
 constexpr Seconds EVENT_BREWFESTGOBLIN03_TIME = 28s;
 
-enum BrewfestMusicAreas
+static constexpr uint32 BrewfestDwarfMusicTracks[3] =
 {
-    SILVERMOON = 3430, // Horde
-    UNDERCITY = 1497,
-    ORGRIMMAR_1 = 1296,
-    ORGRIMMAR_2 = 14,
-    THUNDERBLUFF = 1638,
-    IRONFORGE_1 = 809, // Alliance
-    IRONFORGE_2 = 1,
-    STORMWIND = 12,
-    EXODAR = 3557,
-    DARNASSUS = 1657,
-    SHATTRATH = 3703 // General
+    EVENT_BREWFESTDWARF01,
+    EVENT_BREWFESTDWARF02,
+    EVENT_BREWFESTDWARF03
 };
+
+static constexpr Seconds BrewfestDwarfMusicTimes[3] =
+{
+    EVENT_BREWFESTDWARF01_TIME,
+    EVENT_BREWFESTDWARF02_TIME,
+    EVENT_BREWFESTDWARF03_TIME
+};
+
+static constexpr uint32 BrewfestGoblinMusicTracks[3] =
+{
+    EVENT_BREWFESTGOBLIN01,
+    EVENT_BREWFESTGOBLIN02,
+    EVENT_BREWFESTGOBLIN03
+};
+
+static constexpr Seconds BrewfestGoblinMusicTimes[3] =
+{
+    EVENT_BREWFESTGOBLIN01_TIME,
+    EVENT_BREWFESTGOBLIN02_TIME,
+    EVENT_BREWFESTGOBLIN03_TIME
+};
+
+enum BrewfestMusicFaction
+{
+    BREWFEST_FACTION_ALLIANCE = 0,
+    BREWFEST_FACTION_HORDE    = 1,
+    BREWFEST_FACTION_NEUTRAL  = 2
+};
+
+static BrewfestMusicFaction GetBrewfestMusicFactionForArea(uint32 areaId)
+{
+    switch (areaId)
+    {
+        // Alliance Areas & Camps
+        case 1:    // Dun Morogh
+        case 809:  // Gates of Ironforge
+        case 1537: // Ironforge City
+        case 12:   // Elwynn Forest
+        case 1519: // Stormwind City
+        case 3524: // Azuremyst Isle
+        case 3557: // The Exodar
+        case 141:  // Teldrassil
+        case 1657: // Darnassus
+            return BREWFEST_FACTION_ALLIANCE;
+
+        // Horde Areas & Camps
+        case 14:   // Durotar
+        case 1296: // Rocktusk Farm
+        case 1637: // Orgrimmar
+        case 85:   // Tirisfal Glades
+        case 1497: // Undercity
+        case 18:   // Mulgore
+        case 1638: // Thunder Bluff
+        case 3430: // Eversong Woods
+        case 3487: // Silvermoon City
+            return BREWFEST_FACTION_HORDE;
+
+        // Neutral Areas (Shattrath, Dalaran, etc.)
+        default:
+            return BREWFEST_FACTION_NEUTRAL;
+    }
+}
 
 enum BrewfestMusicEvents
 {
@@ -658,13 +714,27 @@ public:
 
     struct go_brewfest_musicAI : public GameObjectAI
     {
-        uint32 rnd = 0;
-        Milliseconds musicTime = 1s;
+        uint32 _dwarfIndex = 0;
+        uint32 _goblinIndex = 0;
+        Milliseconds _dwarfMusicTime = EVENT_BREWFESTDWARF01_TIME;
+        Milliseconds _goblinMusicTime = EVENT_BREWFESTGOBLIN01_TIME;
+        std::unordered_set<ObjectGuid> _playersInMusic;
 
         go_brewfest_musicAI(GameObject* go) : GameObjectAI(go)
         {
             _events.ScheduleEvent(EVENT_BM_SELECT_MUSIC, 1s);
             _events.ScheduleEvent(EVENT_BM_START_MUSIC, 2s);
+        }
+
+        uint32 GetTrackForPlayer(Player* player) const
+        {
+            BrewfestMusicFaction faction = GetBrewfestMusicFactionForArea(me->GetAreaId());
+            if (faction == BREWFEST_FACTION_HORDE)
+                return BrewfestGoblinMusicTracks[_goblinIndex];
+            if (faction == BREWFEST_FACTION_ALLIANCE)
+                return BrewfestDwarfMusicTracks[_dwarfIndex];
+
+            return (player->GetTeamId() == TEAM_HORDE) ? BrewfestGoblinMusicTracks[_goblinIndex] : BrewfestDwarfMusicTracks[_dwarfIndex];
         }
 
         void UpdateAI(uint32 diff) override
@@ -674,115 +744,66 @@ public:
             {
                 switch (eventId)
                 {
-                case EVENT_BM_SELECT_MUSIC:
-                    if (!IsHolidayActive(HOLIDAY_BREWFEST)) // Check if Brewfest is active
-                        break;
-                    rnd = urand(0, 2); // Select random music sample
-                    _events.ScheduleEvent(EVENT_BM_SELECT_MUSIC, musicTime); // Select new song music after play time is over
-                    break;
-                case EVENT_BM_START_MUSIC:
-                    if (!IsHolidayActive(HOLIDAY_BREWFEST)) // Check if Brewfest is active
-                        break;
-
-                    switch (me->GetAreaId())
+                    case EVENT_BM_SELECT_MUSIC:
                     {
-                        // Horde
-                        case SILVERMOON:
-                        case UNDERCITY:
-                        case ORGRIMMAR_1:
-                        case ORGRIMMAR_2:
-                        case THUNDERBLUFF:
-                            if (rnd == 0)
-                            {
-                                me->PlayDirectMusic(EVENT_BREWFESTGOBLIN01);
-                                musicTime = EVENT_BREWFESTGOBLIN01_TIME;
-                            }
-                            else if (rnd == 1)
-                            {
-                                me->PlayDirectMusic(EVENT_BREWFESTGOBLIN02);
-                                musicTime = EVENT_BREWFESTGOBLIN02_TIME;
-                            }
-                            else
-                            {
-                                me->PlayDirectMusic(EVENT_BREWFESTGOBLIN03);
-                                musicTime = EVENT_BREWFESTGOBLIN03_TIME;
-                            }
+                        if (!IsHolidayActive(HOLIDAY_BREWFEST))
                             break;
-                        // Alliance
-                        case IRONFORGE_1:
-                        case IRONFORGE_2:
-                        case STORMWIND:
-                        case EXODAR:
-                        case DARNASSUS:
-                            if (rnd == 0)
-                            {
-                                me->PlayDirectMusic(EVENT_BREWFESTDWARF01);
-                                musicTime = EVENT_BREWFESTDWARF01_TIME;
-                            }
-                            else if (rnd == 1)
-                            {
-                                me->PlayDirectMusic(EVENT_BREWFESTDWARF02);
-                                musicTime = EVENT_BREWFESTDWARF02_TIME;
-                            }
-                            else
-                            {
-                                me->PlayDirectMusic(EVENT_BREWFESTDWARF03);
-                                musicTime = EVENT_BREWFESTDWARF03_TIME;
-                            }
-                            break;
-                        // Neurtal
-                        case SHATTRATH:
-                            std::vector<Player*> playersNearby;
-                            me->GetPlayerListInGrid(playersNearby, me->GetVisibilityRange());
-                            for (Player* player : playersNearby)
-                            {
-                                if (player->GetTeamId() == TEAM_HORDE)
-                                {
-                                    if (rnd == 0)
-                                    {
-                                        me->PlayDirectMusic(EVENT_BREWFESTGOBLIN01);
-                                        musicTime = EVENT_BREWFESTGOBLIN01_TIME;
-                                    }
-                                    else if (rnd == 1)
-                                    {
-                                        me->PlayDirectMusic(EVENT_BREWFESTGOBLIN02);
-                                        musicTime = EVENT_BREWFESTGOBLIN02_TIME;
-                                    }
-                                    else
-                                    {
-                                        me->PlayDirectMusic(EVENT_BREWFESTGOBLIN03);
-                                        musicTime = EVENT_BREWFESTGOBLIN03_TIME;
-                                    }
-                                }
-                                else
-                                {
-                                    if (rnd == 0)
-                                    {
-                                        me->PlayDirectMusic(EVENT_BREWFESTDWARF01);
-                                        musicTime = EVENT_BREWFESTDWARF01_TIME;
-                                    }
-                                    else if (rnd == 1)
-                                    {
-                                        me->PlayDirectMusic(EVENT_BREWFESTDWARF02);
-                                        musicTime = EVENT_BREWFESTDWARF02_TIME;
-                                    }
-                                    else
-                                    {
-                                        me->PlayDirectMusic(EVENT_BREWFESTDWARF03);
-                                        musicTime = EVENT_BREWFESTDWARF03_TIME;
-                                    }
-                                }
-                            }
-                            break;
-                    }
 
-                    _events.ScheduleEvent(EVENT_BM_START_MUSIC, 5s); // Every 5 second's SMSG_PLAY_MUSIC packet (PlayDirectMusic) is pushed to the client
-                    break;
-                default:
-                    break;
+                        _dwarfIndex = urand(0, 2);
+                        _goblinIndex = urand(0, 2);
+                        _dwarfMusicTime = BrewfestDwarfMusicTimes[_dwarfIndex];
+                        _goblinMusicTime = BrewfestGoblinMusicTimes[_goblinIndex];
+
+                        // Clear listening players so they receive the next song
+                        _playersInMusic.clear();
+
+                        Milliseconds nextTime = std::min(_dwarfMusicTime, _goblinMusicTime);
+                        _events.ScheduleEvent(EVENT_BM_SELECT_MUSIC, nextTime);
+                        break;
+                    }
+                    case EVENT_BM_START_MUSIC:
+                    {
+                        if (!IsHolidayActive(HOLIDAY_BREWFEST))
+                        {
+                            _playersInMusic.clear();
+                            _events.ScheduleEvent(EVENT_BM_START_MUSIC, 5s);
+                            break;
+                        }
+
+                        std::vector<Player*> playersNearby;
+                        me->GetPlayerListInGrid(playersNearby, me->GetVisibilityRange());
+
+                        // Remove players that left visibility
+                        for (auto it = _playersInMusic.begin(); it != _playersInMusic.end(); )
+                        {
+                            if (std::none_of(playersNearby.begin(), playersNearby.end(), [&](Player* p) { return p->GetGUID() == *it; }))
+                                it = _playersInMusic.erase(it);
+                            else
+                                ++it;
+                        }
+
+                        // Play music for newly entered players
+                        for (Player* player : playersNearby)
+                        {
+                            if (!player->IsAlive())
+                                continue;
+
+                            if (_playersInMusic.insert(player->GetGUID()).second)
+                            {
+                                uint32 track = GetTrackForPlayer(player);
+                                me->PlayDirectMusic(track, player);
+                            }
+                        }
+
+                        _events.ScheduleEvent(EVENT_BM_START_MUSIC, 2s);
+                        break;
+                    }
+                    default:
+                        break;
                 }
             }
         }
+
     private:
         EventMap _events;
     };

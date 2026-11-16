@@ -17,7 +17,9 @@ struct ZonePopulation
     uint8 maxLevel = 80;
     uint32 players = 0;
     uint32 target = 0;
+    uint32 darkKnightRespawnTimer = 0;
     std::vector<uint32> activeBots;
+    std::vector<ObjectGuid> darkKnights;
 };
 
 class DynamicZoneMgr

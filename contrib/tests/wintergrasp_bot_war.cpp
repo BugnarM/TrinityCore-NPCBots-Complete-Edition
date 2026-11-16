@@ -19,6 +19,14 @@ void Check(bool condition, char const* message)
 
 int main()
 {
+    for (uint32_t credits=0; credits<=20; ++credits)
+    {
+        Check(HasVehicleBuildRank(credits,true), "attackers can build vehicles without rank");
+        Check(HasVehicleBuildRank(credits,false), "defenders can build vehicles without rank");
+    }
+    Check(FactoryPhaseMask(true,false)==32&&FactoryPhaseMask(false,false)==16, "field factory phases differ from flag phase 1");
+    Check(FactoryPhaseMask(true,true)==128&&FactoryPhaseMask(false,true)==64, "keep factory phases");
+    Check(MaxConcurrentBuilders==2, "only two bots may fetch vehicles at once");
     Check(BotBudget(120, 120, 0) == 120, "empty realm must fill to 120");
     Check(BotBudget(120, 120, 37) == 83, "humans must displace bots");
     Check(BotBudget(120, 120, 120) == 0, "full faction must have no bots");
@@ -53,13 +61,45 @@ int main()
         if (attacker)
         {
             Check(counts[Center] == 30 && counts[West] == 30 && counts[East] == 30, "assault lanes unbalanced");
-            Check(counts[WorkshopWest] == 15 && counts[WorkshopEast] == 15, "workshop guards missing");
+            Check(counts[GuardSouth] == 10 && counts[GuardSouthWest] == 10 && counts[GuardSouthEast] == 10,
+                "attacker south tower guards missing");
+            Check(counts[WorkshopWest] == 0 && counts[WorkshopEast] == 0, "tower guards diverted to workshops");
         }
         else
         {
             Check(counts[KeepCenter] + counts[KeepWest] + counts[KeepEast] == 75, "keep defense missing");
             Check(counts[South] == 15 && counts[SouthWest] == 15 && counts[SouthEast] == 15, "a south tower is uncovered");
         }
+    }
+    for (Lane lane : {GuardSouth, GuardSouthWest, GuardSouthEast})
+    {
+        Check(IsTowerDefense(lane) && !IsAssault(lane) && !IsCounterAttack(lane), "tower duty is offensive");
+        Check(GuardedTowerEntry(lane) >= 190356 && GuardedTowerEntry(lane) <= 190358, "wrong guarded tower");
+        Check(ResolveTowerDefense(lane, false) == lane, "intact/unloaded tower abandoned");
+        Check(IsAssault(ResolveTowerDefense(lane, true)), "destroyed tower guards fail to reinforce assault");
+    }
+    Check(GuardedTowerEntry(GuardSouth) == 190357 && ResolveTowerDefense(GuardSouth, true) == Center, "south tower assignment");
+    Check(GuardedTowerEntry(GuardSouthWest) == 190356 && ResolveTowerDefense(GuardSouthWest, true) == West, "west tower assignment");
+    Check(GuardedTowerEntry(GuardSouthEast) == 190358 && ResolveTowerDefense(GuardSouthEast, true) == East, "east tower assignment");
+    for (uint32_t size = 30; size <= 120; ++size)
+    {
+        std::array<uint32_t, LaneCount> counts{};
+        for (uint32_t slot = 0; slot < size; ++slot)
+            ++counts[SquadLane(true, slot)];
+        Check(counts[GuardSouth] && counts[GuardSouthWest] && counts[GuardSouthEast], "small roster leaves a tower bare");
+    }
+    for (uint32_t mask = 0; mask < 8; ++mask)
+    {
+        std::array<uint32_t, LaneCount> counts{};
+        for (uint32_t slot = 0; slot < 120; ++slot)
+        {
+            Lane lane = SquadLane(true, slot);
+            unsigned bit = lane == GuardSouth ? 0 : lane == GuardSouthWest ? 1 : 2;
+            ++counts[ResolveTowerDefense(lane, IsTowerDefense(lane) && (mask & (1u << bit)))];
+        }
+        Check(counts[Center] == 30u + ((mask & 1u) ? 10u : 0u), "south reinforcements lost");
+        Check(counts[West] == 30u + ((mask & 2u) ? 10u : 0u), "west reinforcements lost");
+        Check(counts[East] == 30u + ((mask & 4u) ? 10u : 0u), "east reinforcements lost");
     }
     std::cout << "PASS: population bounds, human priority, squad cohesion and all tactical objectives\n";
 }

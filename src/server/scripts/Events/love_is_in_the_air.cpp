@@ -258,12 +258,16 @@ class spell_love_is_in_the_air_service_uniform : public AuraScript
 
     void AfterRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
-        GetTarget()->RemoveAurasDueToSpell(uint32(GetEffectInfo(EFFECT_0).CalcValue()));
+        Unit* target = GetTarget();
+        if (target->GetTypeId() == TYPEID_PLAYER)
+            target->DeMorph();
+
+        target->RemoveAurasDueToSpell(uint32(GetEffectInfo(EFFECT_0).CalcValue()));
     }
 
     void Register() override
     {
-        AfterEffectApply += AuraEffectRemoveFn(spell_love_is_in_the_air_service_uniform::AfterApply, EFFECT_0, SPELL_AURA_TRANSFORM, AURA_EFFECT_HANDLE_REAL);
+        AfterEffectApply += AuraEffectApplyFn(spell_love_is_in_the_air_service_uniform::AfterApply, EFFECT_0, SPELL_AURA_TRANSFORM, AURA_EFFECT_HANDLE_REAL);
         AfterEffectRemove += AuraEffectRemoveFn(spell_love_is_in_the_air_service_uniform::AfterRemove, EFFECT_0, SPELL_AURA_TRANSFORM, AURA_EFFECT_HANDLE_REAL);
     }
 };

@@ -8,6 +8,33 @@ namespace WintergraspBotWar
 {
 constexpr uint32_t MaxParticipants = 120;
 constexpr uint32_t SquadSize = 5;
+constexpr uint32_t RankCreditData = 80501;
+
+// Recruit starts with one aura stack: five nearby kills promote to Corporal,
+// five further kills to Lieutenant, matching BattlefieldWG::PromotePlayer.
+constexpr uint32_t RankForCredits(uint32_t credits) { return credits >= 10 ? 2 : credits >= 5 ? 1 : 0; }
+constexpr uint32_t MaxConcurrentBuilders = 2;
+constexpr uint32_t FactoryPhaseMask(bool alliance, bool keep)
+{
+    return keep ? (alliance ? 128u : 64u) : (alliance ? 32u : 16u);
+}
+constexpr bool HasVehicleBuildRank(uint32_t /*credits*/, bool /*attacker*/)
+{
+    // Bots can build siege vehicles without rank; only human players require Corporal / Lieutenant rank.
+    return true;
+}
+constexpr uint32_t CastRetryDelay(bool success, uint32_t cooldown) { return success ? cooldown : 500; }
+constexpr uint32_t WorkshopResponseSquads(bool owned, uint32_t allies, uint32_t enemies)
+{
+    if (!owned && allies >= enemies + 5)
+        return 0;
+    if (!owned)
+        return std::min(2u, (enemies + 5 - allies + SquadSize - 1) / SquadSize);
+    if (!enemies || allies >= enemies + 5)
+        return 0;
+    return std::min(2u, (enemies + 5 - allies + SquadSize - 1) / SquadSize);
+}
+
 
 // Despawn runs OnCreatureRemove synchronously and can erase any live registry
 // entry. Iterators into that registry must not survive a removal callback.
@@ -22,7 +49,8 @@ void VisitVehicleSnapshot(Registry const& vehicles, Visitor&& visit)
 enum Lane : uint8_t
 {
     Center, West, East, South, SouthWest, SouthEast,
-    KeepCenter, KeepWest, KeepEast, WorkshopWest, WorkshopEast, LaneCount
+    KeepCenter, KeepWest, KeepEast, WorkshopWest, WorkshopEast,
+    GuardSouth, GuardSouthWest, GuardSouthEast, WorkshopSouthWest, WorkshopSouthEast, LaneCount
 };
 
 constexpr uint32_t BotBudget(uint32_t target, uint32_t capacity, uint32_t humans)
@@ -36,8 +64,14 @@ constexpr Lane SquadLane(bool attacker, uint32_t slot)
     uint32_t squad = slot / SquadSize;
     if (attacker)
     {
-        constexpr Lane lanes[] = { Center, West, East, Center, West, East, WorkshopWest, WorkshopEast };
-        return lanes[squad % 8];
+        // 90 assault troops and 30 tower guards at a full roster. Interleave
+        // duties so reduced populations do not leave every southern tower bare.
+        constexpr Lane lanes[] = {
+            Center, GuardSouth, West, GuardSouthWest, East, GuardSouthEast, Center, West,
+            East, Center, Center, West, West, East, East, Center,
+            West, GuardSouth, East, GuardSouthWest, Center, GuardSouthEast, West, East
+        };
+        return lanes[squad % 24];
     }
     constexpr Lane lanes[] = { KeepCenter, KeepWest, KeepEast, KeepCenter, South, SouthWest, SouthEast, KeepCenter };
     return lanes[squad % 8];
@@ -55,7 +89,24 @@ constexpr bool IsAssault(Lane lane)
 
 constexpr bool IsWorkshop(Lane lane)
 {
-    return lane == WorkshopWest || lane == WorkshopEast;
+    return lane == WorkshopWest || lane == WorkshopEast || lane == WorkshopSouthWest || lane == WorkshopSouthEast;
+}
+
+constexpr bool IsTowerDefense(Lane lane)
+{
+    return lane == GuardSouth || lane == GuardSouthWest || lane == GuardSouthEast;
+}
+
+constexpr uint32_t GuardedTowerEntry(Lane lane)
+{
+    return lane == GuardSouth ? 190357 : lane == GuardSouthWest ? 190356 : lane == GuardSouthEast ? 190358 : 0;
+}
+
+constexpr Lane ResolveTowerDefense(Lane lane, bool towerDestroyed)
+{
+    if (!towerDestroyed)
+        return lane;
+    return lane == GuardSouth ? Center : lane == GuardSouthWest ? West : lane == GuardSouthEast ? East : lane;
 }
 }
 

@@ -193,7 +193,8 @@ class TC_GAME_API Group
         void LoadGroupFromDB(Field* field);
         void LoadMemberFromDB(ObjectGuid::LowType guidLow, uint8 memberFlags, uint8 subgroup, uint8 roles);
         //npcbot
-        bool Create(Creature* leader);
+        bool Create(Creature* leader, bool temporaryBotRaid = false);
+        bool IsPersistentGroup() const { return !isBGGroup() && !isBFGroup() && !m_temporaryBotRaid; }
         bool AddMember(Creature* creature);
         void LoadCreatureMemberFromDB(uint32 entry, uint8 memberFlags, uint8 subgroup, uint8 roles);
         void UpdateBotOutOfRange(Creature* creature);
@@ -375,6 +376,7 @@ class TC_GAME_API Group
         GroupType           m_groupType;
         Difficulty          m_dungeonDifficulty;
         Difficulty          m_raidDifficulty;
+        bool                m_temporaryBotRaid = false;
         Battleground*       m_bgGroup;
         Battlefield*        m_bfGroup;
         ObjectGuid          m_targetIcons[TARGET_ICONS_COUNT];

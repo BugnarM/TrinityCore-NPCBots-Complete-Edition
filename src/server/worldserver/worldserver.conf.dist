@@ -3972,6 +3972,8 @@ AuctionHouseBot.Buyer.Recheck.Interval = 20
 
 Appender.Console=1,3,0
 Appender.Server=2,2,0,Server.log,w
+# Append battle telemetry across restarts for the Wintergrasp report tool.
+Appender.Wintergrasp=2,3,1,WintergraspBattle.log,a
 Appender.GM=2,2,1,GM.log
 Appender.DBErrors=2,2,0,DBErrors.log
 Appender.NpcBots=1,2,0
@@ -4009,6 +4011,7 @@ Logger.npcbots=2,NpcBots Server
 #Logger.auctionHouse=3,Console Server
 #Logger.bg.arena=3,Console Server
 #Logger.bg.battlefield=3,Console Server
+Logger.bg.battlefield.botwar=3,Console Server Wintergrasp
 #Logger.bg.battleground=3,Console Server
 #Logger.bg.reportpvpafk=3,Console Server
 #Logger.chat.log=3,Console Server
@@ -4218,6 +4221,16 @@ NpcBot.LogToDB = 1
 #        Max:         39
 
 NpcBot.MaxBots = 1,1,1,1,1,1,1,1,1
+
+#    NpcBot.MaxBots.NonGM
+#        Description: Additional personal companion cap for accounts below GM security.
+#                     Applies to hiring and reattaching owned/shared companions.
+#                     Generated Dungeon/Raid Finder bots use group capacity instead.
+#                     GM accounts retain the level-bracket NpcBot.MaxBots limit.
+#        Default:     1
+#        Range:       0-39
+
+NpcBot.MaxBots.NonGM = 1
 
 #
 #    NpcBot.MaxBotsPerClass
@@ -5051,3 +5064,44 @@ NpcBot.RaidFinder.Enable = 0
 NpcBot.RaidFinder.WaitTime = 30
 # Multiply the average item-level thresholds shown by .raid list (0 disables).
 NpcBot.RaidFinder.MinItemLevel.Ratio = 1.0
+
+# City Raids (Stormwind & Orgrimmar)
+CityRaid.Enable = 1
+CityRaid.Cooldown = 7200
+CityRaid.Duration = 1800
+# Attacking raid size is fixed at 40. Defenders are additional: 55 bots at these defaults.
+CityRaid.AttackerCount = 40
+CityRaid.DefenderCount = 15
+
+# CityRaid.Enable controls both manual events and automatic raids.
+# AutoStart only triggers from a non-GM player inside the city (not all Elwynn/Durotar).
+CityRaid.AutoStart = 1
+# A character must contribute >=20 seconds in combat near the raid and be nearby
+# at victory, level 80, and on the attacking team. Each chest allows one claim.
+CityRaid.Reward.Emblems = 2
+CityRaid.Reward.Gold = 10
+CityRaid.Reward.Seconds = 180
+
+#
+#    AOELoot.Enable
+#        Description: Enable Area of Effect (AoE) Looting.
+#                     Automatically loots all nearby corpses when looting an NPC,
+#                     consolidating money, quest items, and regular items into one action.
+#        Default:     1 - Enabled
+#                     0 - Disabled
+
+AOELoot.Enable = 1
+
+#
+#    AOELoot.Range
+#        Description: Maximum distance in yards from the target corpse to gather AoE loot.
+#        Default:     40.0
+
+AOELoot.Range = 40.0
+
+#
+#    AOELoot.MaxCorpses
+#        Description: Maximum number of corpses processed in a single AoE loot action.
+#        Default:     30
+
+AOELoot.MaxCorpses = 30

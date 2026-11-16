@@ -18,7 +18,9 @@
 #include "bpet_ai.h"
 #include "CharacterCache.h"
 #include "Containers.h"
+#include "Config.h"
 #include "Creature.h"
+#include "Corpse.h"
 #include "DatabaseEnv.h"
 #include "DBCStores.h"
 #include "GameTime.h"
@@ -216,12 +218,12 @@ public:
     void Abort(uint64 /*e_time*/) override { AbortMe(); }
 };
 
-static bool SpawnWandererBot(uint32 bot_id, WanderNode const* spawnLoc, NpcBotRegistry* registry, bool dynamicZone = false)
+static bool SpawnWandererBot(uint32 bot_id, WanderNode const* spawnLoc, NpcBotRegistry* registry, bool dynamicZone = false, Position const* overridePos = nullptr)
 {
     CreatureTemplate const& bot_template = _botsExtraCreatureTemplates.at(bot_id);
     NpcBotData const* bot_data = BotDataMgr::SelectNpcBotData(bot_id);
     NpcBotExtras const* bot_extras = BotDataMgr::SelectNpcBotExtras(bot_id);
-    Position spawnPos = spawnLoc->GetPosition();
+    Position spawnPos = overridePos ? *overridePos : spawnLoc->GetPosition();
 
     ASSERT(bot_data);
     ASSERT(bot_extras);
@@ -252,7 +254,7 @@ static bool SpawnWandererBot(uint32 bot_id, WanderNode const* spawnLoc, NpcBotRe
 void BotDataMgr::DespawnWandererBot(uint32 entry)
 {
     Creature const* bot = FindBot(entry);
-    if (bot && bot->IsWandererBot())
+    if (bot && (bot->IsWandererBot() || (bot->GetBotAI() && bot->GetBotAI()->IsCityRaidBot())))
     {
         if (bot->GetBotAI())
             bot->GetBotAI()->canUpdate = false;
@@ -260,6 +262,61 @@ void BotDataMgr::DespawnWandererBot(uint32 entry)
     }
     else
         BOT_LOG_ERROR("npcbots", "DespawnWandererBot(): trying to despawn non-existing wanderer bot {} '{}'!", entry, bot ? bot->GetName() : "unknown");
+}
+
+void BotDataMgr::SpawnBotBones(Creature const* bot)
+{
+    if (!bot || !bot->GetMap() || bot->GetMap()->IsDungeon())
+        return;
+
+    Map* map = bot->GetMap();
+    uint32 orig_entry = bot->GetCreatureTemplate()->KillCredit[0];
+    if (!orig_entry)
+        orig_entry = bot->GetEntry();
+
+    NpcBotExtras const* bot_extras = BotDataMgr::SelectNpcBotExtras(orig_entry);
+    NpcBotAppearanceData const* apdata = BotDataMgr::SelectNpcBotAppearance(orig_entry);
+
+    uint8 race = bot_extras ? bot_extras->race : bot->GetRace();
+    if (!race || race > RACE_DRAENEI)
+        race = RACE_HUMAN;
+
+    uint8 gender = apdata ? apdata->gender : bot->GetNativeGender();
+    if (gender > GENDER_FEMALE)
+        gender = GENDER_MALE;
+
+    uint32 displayId = bot->GetNativeDisplayId();
+    if (!displayId)
+        displayId = bot->GetDisplayId();
+
+    Corpse* bones = new Corpse(CORPSE_BONES);
+    if (!bones->Create(map->GenerateLowGuid<HighGuid::Corpse>()))
+    {
+        delete bones;
+        return;
+    }
+
+    bones->SetObjectScale(1.0f);
+    bones->ReplaceAllCorpseDynamicFlags(CorpseDynFlags(0));
+    bones->SetOwnerGUID(bot->GetGUID());
+    bones->SetDisplayId(displayId);
+    bones->SetRace(race);
+    bones->SetSex(gender);
+    if (apdata)
+    {
+        bones->SetSkinId(apdata->skin);
+        bones->SetFaceId(apdata->face);
+        bones->SetHairStyleId(apdata->hair);
+        bones->SetHairColorId(apdata->haircolor);
+        bones->SetFacialStyle(apdata->features);
+    }
+    bones->ReplaceAllCorpseFlags(CorpseFlags(CORPSE_FLAG_BONES | CORPSE_FLAG_UNK2));
+    bones->Relocate(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetOrientation());
+    bones->SetCellCoord(Trinity::ComputeCellCoord(bot->GetPositionX(), bot->GetPositionY()));
+    bones->CopyPhaseFrom(bot, false);
+
+    map->AddCorpse(bones);
+    map->AddToMap(bones);
 }
 
 static bool SpawnDungeonBot(uint32 bot_id, Player const* owner)
@@ -933,14 +990,15 @@ public:
         _spareBotIdsPerClassMap[botClass].insert(original);
     }
 
-    uint32 GenerateDynamicZoneBot(uint8 target_level, WanderNode const* spawnLoc)
+    uint32 GenerateDynamicZoneBot(uint8 target_level, WanderNode const* spawnLoc, int32 preferredTeam = -1,
+        uint8 requiredClass = 0, uint8 requiredSpec = 0, uint32 battlefieldFaction = 0, Position const* overridePos = nullptr)
     {
         std::vector<std::pair<uint8, uint32>> eligible;
         auto const [nodeMin, nodeMax] = spawnLoc->GetLevels();
         for (auto const& [bot_class, spare_bots] : _spareBotIdsPerClassMap)
         {
             auto const range = NPCBots::DynamicZone::SpawnLevels(nodeMin, nodeMax, BotDataMgr::GetMinLevelForBotClass(bot_class));
-            if (!BotCfg::IsWanderingClassEnabled(bot_class) || !range ||
+            if ((requiredClass && requiredClass != bot_class) || !BotCfg::IsWanderingClassEnabled(bot_class) || !range ||
                 (target_level && (target_level < range->min || target_level > range->max)))
                 continue;
 
@@ -958,6 +1016,24 @@ public:
 
         if (eligible.empty())
             return 0;
+
+        if (preferredTeam != -1)
+        {
+            std::vector<std::pair<uint8, uint32>> teamEligible;
+            for (auto const& item : eligible)
+            {
+                NpcBotExtras const* orig_extras = BotDataMgr::SelectNpcBotExtras(item.second);
+                if (orig_extras)
+                {
+                    uint32 bot_faction = BotDataMgr::GetDefaultFactionForBotRaceClass(item.first, orig_extras->race);
+                    if (int32(BotDataMgr::GetTeamForFaction(bot_faction)) == preferredTeam)
+                        teamEligible.push_back(item);
+                }
+            }
+            if (teamEligible.empty() && battlefieldFaction) return 0; // Never put an opposing race into the army.
+            if (!teamEligible.empty())
+                eligible = std::move(teamEligible);
+        }
 
         auto const [bot_class, orig_entry] = Bcore::Containers::SelectRandomContainerElement(eligible);
         auto const range = *NPCBots::DynamicZone::SpawnLevels(nodeMin, nodeMax, BotDataMgr::GetMinLevelForBotClass(bot_class));
@@ -980,15 +1056,21 @@ public:
         bot_template.rank = CREATURE_ELITE_NORMAL; // No elite level bonus outside the node range.
         bot_template.flags_extra &= ~(CREATURE_FLAG_EXTRA_NO_XP);
 
-        if (sWorld->IsFFAPvPRealm())
+        if (sWorld->IsFFAPvPRealm() && !battlefieldFaction)
         {
             bot_template.faction = FACTION_TEMPLATE_NEUTRAL_HOSTILE;
             bot_faction = FACTION_TEMPLATE_NEUTRAL_HOSTILE;
         }
 
+        if (battlefieldFaction)
+        {
+            bot_faction = battlefieldFaction;
+            bot_template.faction = battlefieldFaction;
+            bot_template.flags_extra |= CREATURE_FLAG_EXTRA_NO_XP;
+        }
         bot_template.InitializeQueryData();
 
-        uint8 bot_spec = BotDataMgr::SelectSpecForClass(bot_class);
+        uint8 bot_spec = requiredSpec ? requiredSpec : BotDataMgr::SelectSpecForClass(bot_class);
         _botsData.emplace(std::piecewise_construct, std::forward_as_tuple(next_bot_id), std::forward_as_tuple(BotDataMgr::DefaultRolesForClass(bot_class, bot_spec), bot_faction, bot_spec));
         _botsExtras.emplace(next_bot_id, NpcBotExtras{.race = orig_extras->race, .bclass = bot_class});
         if (NpcBotAppearanceData const* orig_apdata = BotDataMgr::SelectNpcBotAppearance(orig_entry))
@@ -1001,13 +1083,101 @@ public:
         if (_spareBotIdsPerClassMap.at(bot_class).empty())
             _spareBotIdsPerClassMap.erase(bot_class);
 
-        if (!SpawnWandererBot(next_bot_id, spawnLoc, nullptr, true))
+        if (!SpawnWandererBot(next_bot_id, spawnLoc, nullptr, true, overridePos))
         {
             DiscardExtraBotData(next_bot_id);
             return 0;
         }
         CharacterDatabase.PExecute("UPDATE worldstates SET value = {} WHERE entry = {}", next_bot_id, uint32(BOT_GIVER_ENTRY));
 
+        return next_bot_id;
+    }
+
+    uint32 GenerateCityRaidBot(uint8 target_level, uint32 mapId, Position const& pos, int32 preferredTeam = -1,
+        uint8 requiredClass = 0, uint8 requiredSpec = 0, uint32 factionOverride = 0, uint32 rolesOverride = 0)
+    {
+        std::vector<std::pair<uint8, uint32>> eligible;
+        for (auto const& [bot_class, spare_bots] : _spareBotIdsPerClassMap)
+        {
+            if (requiredClass && requiredClass != bot_class)
+                continue;
+            if (!BotCfg::IsWanderingClassEnabled(bot_class))
+                continue;
+
+            for (uint32 spareBotId : spare_bots)
+            {
+                NpcBotExtras const* orig_extras = BotDataMgr::SelectNpcBotExtras(spareBotId);
+                if (!orig_extras)
+                    continue;
+                uint32 bot_faction = BotDataMgr::GetDefaultFactionForBotRaceClass(bot_class, orig_extras->race);
+                if (preferredTeam != -1 && int32(BotDataMgr::GetTeamForFaction(bot_faction)) != preferredTeam)
+                    continue;
+
+                eligible.emplace_back(bot_class, spareBotId);
+            }
+        }
+
+        // A missing class must not silently turn a tank/healer slot into another class.
+        if (eligible.empty()) return 0;
+
+        auto const [bot_class, orig_entry] = Bcore::Containers::SelectRandomContainerElement(eligible);
+        CreatureTemplateContainer const& all_templates = sObjectMgr->GetCreatureTemplates();
+        while (all_templates.contains(++next_bot_id) || _botsExtraCreatureTemplates.contains(next_bot_id));
+        CreatureTemplate const* orig_template = ASSERT_NOTNULL(sObjectMgr->GetCreatureTemplate(orig_entry));
+        NpcBotExtras const* orig_extras = ASSERT_NOTNULL(BotDataMgr::SelectNpcBotExtras(orig_entry));
+        uint32 bot_faction = BotDataMgr::GetDefaultFactionForBotRaceClass(bot_class, orig_extras->race);
+
+        CreatureTemplate& bot_template = _botsExtraCreatureTemplates[next_bot_id];
+        bot_template = *orig_template;
+        bot_template.Entry = next_bot_id;
+        bot_template.Title = "";
+        bot_template.speed_run = BotCfg::GetBotWandererSpeedMod();
+        bot_template.KillCredit[0] = orig_entry;
+
+        bot_template.minlevel = target_level;
+        bot_template.maxlevel = target_level;
+        bot_template.rank = CREATURE_ELITE_NORMAL;
+        bot_template.flags_extra &= ~(CREATURE_FLAG_EXTRA_NO_XP);
+
+        if (factionOverride)
+        {
+            bot_faction = factionOverride;
+            bot_template.faction = factionOverride;
+            bot_template.flags_extra |= CREATURE_FLAG_EXTRA_NO_XP;
+        }
+        else
+        {
+            bot_template.faction = bot_faction;
+        }
+        bot_template.InitializeQueryData();
+
+        uint8 bot_spec = requiredSpec ? requiredSpec : BotDataMgr::SelectSpecForClass(bot_class);
+        uint32 roles = rolesOverride ? rolesOverride : BotDataMgr::DefaultRolesForClass(bot_class, bot_spec);
+        _botsData.emplace(std::piecewise_construct, std::forward_as_tuple(next_bot_id), std::forward_as_tuple(roles, bot_faction, bot_spec));
+        _botsExtras.emplace(next_bot_id, NpcBotExtras{.race = orig_extras->race, .bclass = bot_class});
+        if (NpcBotAppearanceData const* orig_apdata = BotDataMgr::SelectNpcBotAppearance(orig_entry))
+            _botsAppearanceData.emplace(std::piecewise_construct, std::forward_as_tuple(next_bot_id), std::forward_as_tuple(orig_apdata->gender, orig_apdata->skin, orig_apdata->face, orig_apdata->hair, orig_apdata->haircolor, orig_apdata->features));
+
+        int8 beqId = 1;
+        _botsExtraCreatureEquipmentTemplates[next_bot_id] = sObjectMgr->GetEquipmentInfo(orig_entry, beqId);
+
+        _spareBotIdsPerClassMap.at(bot_class).erase(orig_entry);
+        if (_spareBotIdsPerClassMap.at(bot_class).empty())
+            _spareBotIdsPerClassMap.erase(bot_class);
+
+        Map* map = sMapMgr->CreateBaseMap(mapId);
+        if (!map) { DiscardExtraBotData(next_bot_id); return 0; }
+        map->LoadGrid(pos.GetPositionX(), pos.GetPositionY());
+
+        Creature* bot = new Creature();
+        if (!bot->LoadBotCreatureFromDB(0, map, true, true, next_bot_id, &pos))
+        {
+            delete bot;
+            DiscardExtraBotData(next_bot_id);
+            return 0;
+        }
+
+        CharacterDatabase.PExecute("UPDATE worldstates SET value = {} WHERE entry = {}", next_bot_id, uint32(BOT_GIVER_ENTRY));
         return next_bot_id;
     }
 
@@ -1082,6 +1252,9 @@ void BotDataMgr::Update(uint32 diff)
 
             const uint32 bot_orig_id = _botsExtraCreatureTemplates.at(bot_despawn_id).KillCredit[0];
             const std::string bot_name = bot->GetName();
+
+            if (!bot->IsAlive() && bot->GetMap())
+                SpawnBotBones(bot);
 
             BotMgr::CleanupsBeforeBotDelete(bot);
             bot->GetBotAI()->canUpdate = false;
@@ -1847,7 +2020,8 @@ void BotDataMgr::LoadWanderMap(bool reload, bool force_all_maps)
             }
         }
 
-        if (!force_all_maps && mapEntry->IsContinent() && !BotCfg::IsDynamicZoneWanderersEnabled() &&
+        if (!(mapId == 571 && zoneId == 4197 && sConfigMgr->GetBoolDefault("Wintergrasp.BotWar.Enable", false)) &&
+            !force_all_maps && mapEntry->IsContinent() && !BotCfg::IsDynamicZoneWanderersEnabled() &&
             !BotCfg::IsBotGenerationEnabledWorldMapId(mapId))
         {
             ++disabled_nodes;
@@ -2205,7 +2379,7 @@ void BotDataMgr::ReleaseRaidBots(ObjectGuid leader)
     if (AllBotsLoaded()) sBotGen->ReleaseRaidBots(leader);
 }
 
-uint32 BotDataMgr::SpawnDynamicZoneBot(uint8 level, WanderNode const* spawnLoc)
+uint32 BotDataMgr::SpawnDynamicZoneBot(uint8 level, WanderNode const* spawnLoc, int32 preferredTeam)
 {
     if (!AllBotsLoaded() || !BotCfg::IsDynamicZoneWanderersEnabled() || !spawnLoc ||
         spawnLoc->HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT) || spawnLoc->GetLinks().empty())
@@ -2213,7 +2387,31 @@ uint32 BotDataMgr::SpawnDynamicZoneBot(uint8 level, WanderNode const* spawnLoc)
     auto const* map = sMapStore.LookupEntry(spawnLoc->GetMapId());
     if (!map || !map->IsContinent() || !spawnLoc->GetZoneId()) return 0;
 
-    return sBotGen->GenerateDynamicZoneBot(level, spawnLoc);
+    return sBotGen->GenerateDynamicZoneBot(level, spawnLoc, preferredTeam);
+}
+
+uint32 BotDataMgr::SpawnBattlefieldBot(uint8 level, WanderNode const* spawnLoc, Position const& pos,
+    uint32 team, uint32 faction, uint8 botClass, uint8 spec)
+{
+    if (!AllBotsLoaded() || !spawnLoc || spawnLoc->GetMapId() != 571 || spawnLoc->GetZoneId() != 4197
+        || spawnLoc->GetLinks().empty()) return 0;
+    return sBotGen->GenerateDynamicZoneBot(level, spawnLoc, int32(team), botClass, spec, faction, &pos);
+}
+
+uint32 BotDataMgr::SpawnCityRaidBot(uint8 level, uint32 mapId, Position const& pos,
+    int32 team, uint32 faction, uint8 botClass, uint8 spec, uint32 roles)
+{
+    MapEntry const* map=sMapStore.LookupEntry(mapId);
+    if (!AllBotsLoaded() || !map || !map->IsContinent() || (mapId!=0 && mapId!=1)
+        || level<GetMinLevelForBotClass(botClass) || level>80 || !IsValidSpecForClass(botClass,spec)
+        || (team!=ALLIANCE && team!=HORDE) || !sFactionTemplateStore.LookupEntry(faction))
+        return 0;
+    return sBotGen->GenerateCityRaidBot(level, mapId, pos, team, botClass, spec, faction, roles);
+}
+
+void BotDataMgr::DespawnCityRaidBot(uint32 entry)
+{
+    DespawnWandererBot(entry);
 }
 
 bool BotDataMgr::GenerateRaidBots(Player const* leader, Group* group, uint8 /*raidTier*/, uint8 raidSize)

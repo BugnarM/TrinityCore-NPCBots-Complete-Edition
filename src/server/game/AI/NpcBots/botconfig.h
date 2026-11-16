@@ -4,6 +4,7 @@
 #include "botcommon.h"
 
 class Map;
+class Player;
 
 enum SharedOwnerOptions : uint32
 {
@@ -119,6 +120,8 @@ public:
     static uint32 GetBotWandererKillRewardItemMaxCount();
     static uint32 GetBotWandererKillRewardItemMaxQuality();
     static bool EnableWandererFreeLootSkinning();
+    static float GetBotWandererShareKillDistance();
+    static uint32 GetBotWandererSpawnTruceTime();
     static uint32 GetBotDungeonMaxItemLevel(uint8 level, uint16 map_id, Difficulty map_difficulty);
     static float GetBotDamageModByClass(uint8 botclass);
     static float GetBotDamageModByLevel(uint8 botlevel);
@@ -131,6 +134,7 @@ public:
     static uint32 GetEngageDelayHealDefault();
 
     static uint8 GetMaxNpcBots(uint8 level);
+    static uint8 GetMaxNpcBots(Player const* player);
     static bool IsNpcBotXpReductionEnabled();
     static bool IsNpcBotXpReductionGroupOnly();
     static uint8 GetNpcBotXpReductionExtraAmount();

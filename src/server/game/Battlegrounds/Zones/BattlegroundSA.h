@@ -21,6 +21,7 @@
 #include "Battleground.h"
 #include "BattlegroundScore.h"
 #include "Object.h"
+#include <G3D/Vector3.h>
 
 #define BG_SA_FLAG_AMOUNT           3
 #define BG_SA_DEMOLISHER_AMOUNT     4
@@ -592,7 +593,10 @@ class BattlegroundSA : public Battleground
         WorldSafeLocsEntry const* GetClosestGraveyardForBot(WorldLocation const& curPos, uint32 team) const override;
         TeamId GetAttackersTeam() const { return Attackers; }
         BG_SA_GateState GetGateState(uint8 gateId) const { return gateId < MAX_GATES ? GateStatus[gateId] : BG_SA_GATE_OK; }
+        bool IsBotGateSegmentClear(G3D::Vector3 const& from, G3D::Vector3 const& to, float radius, uint32 phaseMask);
         TeamId GetGraveyardStatus(BG_SA_Graveyards gy) const { return gy < BG_SA_MAX_GY ? GraveyardStatus[gy] : TEAM_NEUTRAL; }
+        /// Gate prerequisites shared by native interactions and bot objective selection.
+        bool CanInteractWithObject(uint32 objectId);
         BG_SA_Status GetRoundStatus() const { return Status; }
         void HandleBotKillUnit(Creature* killer, Creature* victim) override;
 
@@ -643,8 +647,6 @@ class BattlegroundSA : public Battleground
         void OverrideGunFaction();
         /// Set selectable or not demolisher, called on battle start, when boats arrive to dock
         void DemolisherStartState(bool start);
-        /// Checks if a player can interact with the given object
-        bool CanInteractWithObject(uint32 objectId);
         /// Updates interaction flags of specific objects
         void UpdateObjectInteractionFlags(uint32 objectId);
         void UpdateObjectInteractionFlags();

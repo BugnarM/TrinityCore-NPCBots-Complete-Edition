@@ -1,0 +1,5 @@
+## Interface: 30300
+## Title: Wintergrasp Vehicle Map
+## Notes: Live allied and enemy siege vehicles on the Wintergrasp map.
+## Version: 1.0.0
+WGVehicleMap.lua

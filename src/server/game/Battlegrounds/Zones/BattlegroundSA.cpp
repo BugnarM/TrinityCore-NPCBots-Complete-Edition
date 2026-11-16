@@ -19,6 +19,10 @@
 #include "BattlegroundPackets.h"
 #include "DBCStores.h"
 #include "GameObject.h"
+#include "GameObjectModel.h"
+#include "ModelIgnoreFlags.h"
+#include <algorithm>
+#include <cmath>
 #include "GameTime.h"
 #include "Log.h"
 #include "Map.h"
@@ -34,6 +38,55 @@
 #include "bot_ai.h"
 #include "botmgr.h"
 //end npcbot
+
+bool BattlegroundSA::IsBotGateSegmentClear(G3D::Vector3 const& from, G3D::Vector3 const& to,
+    float radius, uint32 phaseMask)
+{
+    G3D::Vector3 delta = to - from;
+    float length = delta.length();
+    if (length < 0.01f)
+        return true;
+    G3D::Vector3 direction = delta / length;
+    float horizontal = std::hypot(delta.x, delta.y);
+    radius = std::clamp(radius, 0.25f, 2.5f);
+    G3D::Vector3 lateral = horizontal > 0.01f
+        ? G3D::Vector3(-delta.y / horizontal * radius, delta.x / horizontal * radius, 0.f)
+        : G3D::Vector3::zero();
+    // Test the full segment and the mover's sides at body height. Gate ownership
+    // does not grant permission to walk through a solid destructible object.
+    for (uint8 gate = 0; gate < MAX_GATES; ++gate)
+    {
+        if (GateStatus[gate] == BG_SA_GATE_DESTROYED)
+            continue;
+        GameObject* object = GetBGObject(gate, true);
+        if (!object || !object->isSpawned())
+            return false; // A missing active gate must not turn into a shortcut.
+        if (!object->InSamePhase(phaseMask))
+            continue;
+        for (float side : {-1.f, 0.f, 1.f})
+        {
+            G3D::Vector3 origin = from + lateral * side + G3D::Vector3(0.f, 0.f, 1.f);
+            G3D::Ray ray = G3D::Ray::fromOriginAndDirection(origin, direction);
+            float distance = length;
+            if (object->m_model && object->m_model->isEnabled())
+            {
+                if (object->m_model->intersectRay(ray, distance, true, phaseMask, VMAP::ModelIgnoreFlags::Nothing))
+                    return false;
+            }
+            else
+            {
+                // Fail closed near a gate if its collision model is unavailable.
+                // Keep the fallback local, so unrelated roads remain usable.
+                G3D::Vector3 center(object->GetPositionX(), object->GetPositionY(), object->GetPositionZ() + 8.f);
+                G3D::AABox bounds = object->m_model ? object->m_model->getBounds()
+                    : G3D::AABox(center - G3D::Vector3(24.f, 24.f, 20.f), center + G3D::Vector3(24.f, 24.f, 20.f));
+                if (ray.intersectionTime(bounds) <= length)
+                    return false;
+            }
+        }
+    }
+    return true;
+}
 
 void BattlegroundSAScore::BuildObjectivesBlock(WorldPackets::Battleground::PVPLogData_Player& playerData)
 {
@@ -1146,6 +1199,7 @@ void BattlegroundSA::EventBotClickedOnFlag(Creature* bot, GameObject* go)
         || (Status != BG_SA_ROUND_ONE && Status != BG_SA_ROUND_TWO)
         || !IsPlayerInBattleground(bot->GetGUID()) || bot->GetMap() != GetBgMap() || go->GetMap() != GetBgMap()
         || GetBotTeamId(bot->GetGUID()) != Attackers || bot->GetVehicle()
+        || !go->isSpawned() || !bot->InSamePhase(go)
         || !bot->IsWithinDistInMap(go, INTERACTION_DISTANCE) || !bot->IsWithinLOSInMap(go)
         || go->HasFlag(GO_FLAG_NOT_SELECTABLE))
         return;

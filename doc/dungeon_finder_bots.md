@@ -14,9 +14,18 @@ NpcBot.Enable = 1
 NpcBot.Enable.Dungeon = 1
 NpcBot.Enable.DungeonFinder = 1
 NpcBot.DungeonBots.Enable = 1
-NpcBot.DungeonBots.Queue.WaitTime = 45
-NpcBot.DungeonBots.Queue.RandomOnly = 1
+NpcBot.DungeonBots.Queue.WaitTime = 1
+NpcBot.DungeonBots.Queue.RandomOnly = 0
 ```
+
+Profilul instalat, actualizat la 26 octombrie 2026, completează după o secundă
+cozile random și selecțiile individuale normale/eroice. Restricțiile native de
+nivel, echipament și lockout rămân aplicabile. La schimbarea configurației,
+worldserver era oprit; valorile noi se încarcă la următoarea pornire.
+
+Limita de un companion personal pentru conturile non-GM nu include boții
+generați pentru Finder. Un jucător solo poate primi patru boți; cu un companion
+personal inclus în grup poate primi încă trei. Vezi `npcbot_player_limits.md`.
 
 `WaitTime` se măsoară în secunde, de la intrarea în coadă, după alegerea rolurilor.
 Valoarea `0` permite completarea imediată după încercarea de matchmaking uman;

@@ -1,6 +1,8 @@
 # Wintergrasp Bot War — implementare și verificare
 
-TrinityCore 3.3.5a + NPCBots, revizie 2026-10-23.
+TrinityCore 3.3.5a + NPCBots.
+
+Corecții curente (2026-11-08): [AI vehicule, captură și ofensivă](wintergrasp_aggression_2026_11_08.md), apoi [ateliere, ranguri și coordonare](wintergrasp_realism_2026_11_08.md), apoi [recuperare, opt profiluri, PvP, asediu și statistici](wintergrasp_upgrades_2026_11_08.md). Raportul nou descrie starea acestei intervenții; verificările istorice de mai jos nu sunt validare în client pentru versiunea curentă.
 
 
 ## Starea verificării
@@ -12,6 +14,13 @@ TrinityCore 3.3.5a + NPCBots, revizie 2026-10-23.
 - Activarea pe server și verificarea în client sunt încă de efectuat. Configurația instalată are în continuare `Wintergrasp.PlayerMax = 100`; noul modul necesită SQL-ul și opțiunile de mai jos.
 
 ## Capacitatea bătăliei
+
+Armatele se activează numai în timpul unei bătălii active și după ce cel puțin
+un jucător real a acceptat intrarea în luptă. Înscrierea în coada pentru următoarea
+bătălie nu este suficientă. Intrarea după începutul bătăliei activează armatele
+în același mod; dacă ultimul participant real pleacă, boții sunt retrași. La o nouă
+intrare, popularea începe după aproximativ patru secunde, cu limita de creare de
+mai jos. Calendarul nativ al bătăliilor continuă să ruleze.
 
 Limita WotLK este **120 de participanți pe facțiune, 240 în total**. Referință: [notele oficiale Blizzard pentru patch 3.2.0, arhivate de Blue Tracker](https://www.bluetracker.gg/wow/topic/eu-en/10222156565-world-of-warcraft-patch-notes-320/).
 
@@ -28,31 +37,61 @@ Exemplu: 17 jucători Alliance înseamnă cel mult 103 boți Alliance. Intrarea 
 ## Ce există în cod
 
 - Plafon de populație și roster stabil, cu prioritate pentru jucătorii reali.
-- Grupe de cinci: doi melee, un frost mage, un healer și un marksman. Rolul de luptă este ales după entry; `unit_class` reprezintă clasa statistică NPC, nu specializarea unui jucător.
+- Grupe de cinci: doi melee, un healer și doi ranged, distribuiți între opt profiluri. Rolul de luptă este ales după entry; `unit_class` reprezintă clasa statistică NPC, nu specializarea unui jucător.
 - Ordine individuale: culoar, număr de grupă, loc în formație și vehicul de escortat.
-- Trei culoare de asalt, trei contraatacuri spre turnuri, trei poziții de apărare a cetății și două obiective de atelier.
+- Trei culoare de asalt, garnizoane pentru fiecare turn sudic, trei contraatacuri
+  spre turnuri, trei poziții de apărare a cetății și două obiective de atelier.
+- Garnizoane active la atelierele nordice (Broken Temple și Sunken Ring): apărătorii
+  de pe flancuri contestă steagurile la începutul bătăliei, iar la pierderea atelierului
+  efectuează o retragere tactică spre porțile exterioare ale cetății.
+- Puncte de start sudice pentru atacatori: aripile Vest și Est pornesc din taberele
+  sudice Westpark și Eastspark, înaintează călare peste poduri și asaltează atelierele
+  nordice; doar după capturare acestea devin baze avansate de spawn și blindate.
+- Vehicule defensive în curtea cetății: apărătorii construiesc catapulte (Plague Barrel
+  anti-infanterie) și demolishere defensive din atelierele interioare ale cetății.
+- Prioritizare a blindatelor de asediu: soldații și vehiculele de apărare își concentrează
+  daunele pe tancurile care atacă porțile. Fire Cannon (57609) este folosit de turela vehiculului;
+  soldații nu folosesc arma tunului ca explozibil portabil.
+- Last Stand la Titan Relic: la distrugerea Porții Seifului (191810), toți apărătorii
+  din cetate se retrag în sala relicvei (5440.38, 2840.49, 430.28) și formează un perimetru;
+  relicva nu poate fi revendicată dacă botul atacator se află în luptă.
+- Garnizoanele atacatorilor păstrează turnurile și nu pleacă după vehicule libere.
+  După distrugerea unui turn, supraviețuitorii și înlocuitorii lor întăresc asaltul
+  central, vestic sau estic corespunzător. Flancurile de asalt capturează în
+  continuare atelierele nordice înainte să avanseze.
 - Capturarea atelierelor prin bara nativă, împreună cu jucătorii și sub aceleași limite de viteză. Boții îmbarcați nu capturează ateliere.
 - Atacatorii vest/est securizează atelierul înainte să avanseze. Garnizoana centrală se retrage spre poarta seifului după distrugerea zidului interior. Grupele care au distrus turnul sudic se îndreaptă apoi spre un atelier nordic.
 - Checkpoint-uri înaintea porților și zidurilor; avansarea se blochează până la distrugerea obstacolului. O clădire care nu este încă disponibilă în hartă nu este considerată distrusă.
-- Pathfinding la deplasare, formații cu poziții stabile, mount terestru pentru drumuri lungi și descălecare la apropierea obiectivului sau la angajare.
+- Pathfinding la deplasare, formații cu poziții stabile, alergare de bază de 7 m/s,
+  mount terestru de 14 m/s pentru drumuri lungi și descălecare la apropierea
+  obiectivului sau la angajare. Multiplicatorii sunt setați prin `SetSpeedRate`,
+  iar deplasarea folosește explicit modul de alergare.
 - Alegerea țintelor, verificări de vizibilitate, distanță de luptă pentru ranged, heal și în afara luptei, abilități defensive și trinket PvP cu cooldown de două minute. Urmărirea unui adversar este limitată la 100 m de locul angajării.
 - Vehicule cu șofer bot; Siege Engine poate primi tunar bot în turela accesoriu existentă în DB. La apropierea unui jucător aliat la 8 m, botul eliberează scaunul pentru preluare. Îmbarcarea și predarea controlului trebuie validate cu clientul.
-- Construirea/refacerea vehiculelor prin verificarea capacității native BattlefieldWG. Boții folosesc cel mult jumătate din capacitatea totală curentă, lăsând loc constructorilor umani. Refacerea este verificată la intervale de 30 de secunde.
+- Vehiculele autonome folosesc spline-uri calculate și verificate cu navmesh,
+  VMAP și coliziunea obiectelor dinamice. Sunt verificate centrul și marginile
+  laterale. La un blocaj încearcă prefixe scurte, ocoliri laterale și retragere,
+  cu verificarea progresului și reîncercări limitate. Nu folosesc fallback direct
+  când un traseu este invalid. Vezi `wintergrasp_vehicle_navigation_2026_10_26.md`.
+- Construirea/refacerea vehiculelor la un inginer dintr-un atelier deținut, după deplasarea constructorului și cinci secunde de construcție. Se verifică rangul, prezența, controlul local și capacitatea nativă BattlefieldWG. Rămâne un loc liber dacă facțiunea are participanți umani. Căutările nereușite sunt reîncercate la zece secunde.
 - Daune de asediu prin spell-urile native; fără scăderi arbitrare de HP. Catapulta are comportament antiinfanterie, fără daune artificiale asupra porților.
 - Capturarea relicvei doar pentru atacatori, la cel mult 5 m, cu vizibilitate, după deblocarea nativă a relicvei și trei secunde fără luptă.
 - Curățare la încheiere, dezactivare și schimbarea bătăliei. Un vehicul ocupat de un om este păstrat când se eliberează locul soldatului, inclusiv dacă omul este tunar în turela secundară.
 - Populare treptată: prima actualizare după 4 secunde, cel mult 10 soldați/facțiune/secundă. Summon-urile și deplasarea sunt gestionate din actualizarea hărții Northrend.
 - Mesaje de diagnostic `Wintergrasp BotWar` în categoria de log `bg.battlefield`: prima raportare după aproximativ 15 secunde, apoi la fiecare 30 de secunde; includ oameni, boți, buget și vehicule.
 
-La populație exclusiv de boți, distribuția inițială este:
+Pentru o facțiune completată cu 120 de boți, distribuția inițială este cea de mai
+jos. Este necesar cel puțin un participant real în cealaltă facțiune; două armate
+de boți nu mai pornesc singure o luptă fără participanți reali.
 
 | Facțiunea tactică | Obiectiv | Soldați |
 |---|---|---:|
 | Atacatori | Asalt central | 30 |
 | Atacatori | Asalt vestic | 30 |
 | Atacatori | Asalt estic | 30 |
-| Atacatori | Capturare/apărare Broken Temple | 15 |
-| Atacatori | Capturare/apărare Sunken Ring | 15 |
+| Atacatori | Apărare turn sudic central | 10 |
+| Atacatori | Apărare turn sudic vestic | 10 |
+| Atacatori | Apărare turn sudic estic | 10 |
 | Apărători | Cetate: centru / vest / est | 45 / 15 / 15 |
 | Apărători | Turn sudic central / vestic / estic | 15 / 15 / 15 |
 
@@ -188,6 +227,6 @@ Compilarea și testele automate nu reprezintă validare vizuală a traseelor sau
 
 ## Ce mai trebuie pentru fidelitate completă
 
-Versiunea actuală este o bază funcțională de război scriptat, nu echivalența completă a 240 de jucători veterani. Rămân de implementat/validat: celelalte clase și specializări, rotații PvP complete, ranguri de construcție câștigate de boți prin kill-uri, folosirea tuturor atelierelor sudice, flancări dinamice după presiunea reală, folosirea acoperirii/strafe, conversații contextuale și recompense de onoare echivalente jucătorilor. Numele interne atribuite prin `SetName` trebuie verificate în client; cache-ul de template poate păstra numele generic.
+Versiunea actuală include recuperare, coordonare și opt profiluri; nu reproduce întregul comportament al unor jucători veterani. Vezi raportul de upgrade pentru implementarea și limitele curente. Rămân de implementat/validat: celelalte clase și specializări, rotații PvP complete, tactici de flancare mai avansate decât redistribuirea după presiunea atelierelor, folosirea acoperirii/strafe, conversații contextuale și recompense de onoare echivalente jucătorilor. Numele interne atribuite prin `SetName` trebuie verificate în client; cache-ul de template poate păstra numele generic.
 
 Nu sunt încă validate în client traseele, accesoriile/turelele din baza instalată, preluarea controlului sau performanța 120v120. Pentru a numi experiența apropiată de jocul real trebuie încheiat playbook-ul de mai sus pe ambele facțiuni.

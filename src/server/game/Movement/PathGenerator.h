@@ -62,12 +62,22 @@ class TC_GAME_API PathGenerator
         // Calculate the path from owner to given destination
         // return: true if new path was calculated, false otherwise (no change needed)
         bool CalculatePath(float destX, float destY, float destZ, bool forceDest = false);
+        bool CalculatePathFrom(G3D::Vector3 const& start, G3D::Vector3 const& destination, bool forceDest = false);
         bool IsInvalidDestinationZ(Unit const* target) const;
 
         // option setters - use optional
         void SetUseStraightPath(bool useStraightPath) { _useStraightPath = useStraightPath; }
         void SetPathLengthLimit(float distance) { _pointPathLimit = std::min<uint32>(uint32(distance/SMOOTH_PATH_STEP_SIZE), MAX_POINT_PATH_LENGTH); }
         void SetUseRaycast(bool useRaycast) { _useRaycast = useRaycast; }
+        // Caller owns the query and must serialize access on this map's update thread.
+        // An attached mesh from another map must never be used for this path.
+        bool SetNavMeshQuery(dtNavMeshQuery const* query)
+        {
+            if (!query || query->getAttachedNavMesh()!=_navMesh) return false;
+            _navMeshQuery=query;
+            return true;
+        }
+
 
         // result getters
         G3D::Vector3 const& GetStartPosition() const { return _startPosition; }

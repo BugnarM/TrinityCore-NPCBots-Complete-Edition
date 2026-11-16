@@ -118,9 +118,11 @@ class NearestHostileUnitCheck
         {
             if (u == me)
                 return INVALID;
+            if (free && (u->IsCritter() || (u->IsCreature() && (u->ToCreature()->GetCreatureTemplate()->type == CREATURE_TYPE_CRITTER || u->ToCreature()->IsCivilian()))))
+                return INVALID;
             if (!me->IsWithinDistInMap(u, m_range, !berserk))
                 return INVALID;
-            if (berserk && std::fabs(me->GetPositionZ() - u->GetPositionZ()) > (m_range * 0.25f + 5.0f))
+            if (berserk && std::fabs(me->GetPositionZ() - u->GetPositionZ()) > (m_range * 0.45f + 12.0f))
                 return INVALID;
             if (me->HasUnitState(UNIT_STATE_ROOT) && (ai->HasRole(BOT_ROLE_RANGED) == me->IsWithinDistInMap(u, 8.f)))
                 return INVALID;

@@ -1788,8 +1788,9 @@ void Spell::SelectImplicitTrajTargets(SpellEffectInfo const& spellEffectInfo, Sp
 
     if (dist2d > bestDist)
     {
-        float x = m_targets.GetSrcPos()->m_positionX + std::cos(unitCaster->GetOrientation()) * bestDist;
-        float y = m_targets.GetSrcPos()->m_positionY + std::sin(unitCaster->GetOrientation()) * bestDist;
+        float const trajAngle = m_targets.GetSrcPos()->GetAbsoluteAngle(m_targets.GetDstPos());
+        float x = m_targets.GetSrcPos()->m_positionX + std::cos(trajAngle) * bestDist;
+        float y = m_targets.GetSrcPos()->m_positionY + std::sin(trajAngle) * bestDist;
         float z = m_targets.GetSrcPos()->m_positionZ + bestDist * (a * bestDist + b);
 
         SpellDestination dest(x, y, z, unitCaster->GetOrientation());
@@ -4010,6 +4011,22 @@ void Spell::update(uint32 difftime)
                     m_timer = 0;
                 else
                     m_timer -= difftime;
+            }
+
+            Unit* unitCaster = m_caster->ToUnit();
+            Unit* charmer = unitCaster ? unitCaster->GetCharmer() : nullptr;
+            Vehicle* kit = unitCaster ? unitCaster->GetVehicleKit() : nullptr;
+            Unit* passenger = kit ? kit->GetPassenger(0) : nullptr;
+            bool const playerDriven = m_fromClient || (charmer && charmer->GetTypeId() == TYPEID_PLAYER)
+                || (passenger && passenger->GetTypeId() == TYPEID_PLAYER);
+
+            // a trajectory spell with a cast time (e.g. Plague Barrel) launches with the client's final aim,
+            // which the client sends at the end of its own cast bar with CMSG_UPDATE_MISSILE_TRAJECTORY
+            if (m_timer == 0 && m_casttime > 0 && m_targets.HasTraj() && !_trajWaitedForClient && playerDriven)
+            {
+                _trajWaitedForClient = true;
+                m_timer = 1000; // wait up to 1s for client's final aim
+                break;
             }
 
             if (m_timer == 0 && !m_spellInfo->IsNextMeleeSwingSpell() && !IsAutoRepeat())

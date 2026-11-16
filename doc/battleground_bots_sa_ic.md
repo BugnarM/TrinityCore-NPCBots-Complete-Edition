@@ -27,6 +27,21 @@ Migrarea rezervă numai ID-urile **5200–5226** pe harta 607 și **5300–5322*
 
 ### Strand of the Ancients
 
+- Șoferii păstrează vehiculele sănătoase; vehiculele atacatoare asediază porți,
+  iar infanteria capturează steaguri. Apărătorii țin fața porții și pot ocupa
+  ambele tunuri native. Căutarea vehiculelor include ambele porturi și verifică
+  accesibilitatea. Detalii în `sa_vehicle_roles_and_retention_2026_10_27.md`.
+- Relicva vulnerabilă are prioritate față de steagurile necapturate. Capturatorii
+  desemnați rămân pe jos și nu abandonează interacțiunile pentru vehicule sau
+  bombe. Detalii și regresii în `sa_objective_capture_2026_10_27.md`.
+- Porțile intacte sunt verificate fizic și pentru mișcarea din luptă, pentru
+  ambele echipe și vehiculele boților. Apărătorii folosesc drumuri, coborâri
+  verificate de pe zid și teleportere native; apărarea finală ține exteriorul
+  camerei. Detalii în `sa_gate_collision_and_defense_2026_10_26.md`.
+- În pregătirea ambelor runde, ambele echipe stau la spawn. Mișcarea tactică
+  începe după pornirea rundei. Checkpointul comandat este păstrat până la sosire,
+  pentru a evita întoarcerile repetate lângă debarcader/cimitir. Corecția din
+  26 octombrie 2026 este documentată în `sa_movement_and_preparation_2026_10_26.md`.
 - Atacatorii aleg două culoare și avansează în ordinea nativă: Green/Blue, Purple/Red, Yellow, Ancient, relicvă. O poartă laterală deschisă permite continuarea etapei corespunzătoare.
 - O parte dintre infanteriști capturează cimitirele disponibile; ceilalți escortează vehiculele sau asaltează frontul.
 - Apărătorii se repoziționează la frontul activ și pot ocupa tunurile native. AI-ul de clasă execută lupta și vindecarea.
@@ -37,6 +52,10 @@ Migrarea rezervă numai ID-urile **5200–5226** pe harta 607 și **5300–5322*
 
 ### Isle of Conquest
 
+- Teleporterele fortărețelor sunt folosite explicit de infanteria autonomă,
+  în ambele sensuri și pentru ambele facțiuni. După transfer, waypointurile de
+  pe porți închise nu mai blochează reatașarea la graf. Corecția și verificările
+  sunt în `ioc_keep_teleporters_2026_10_26.md`.
 - Boții primesc opt grupe logice de câte cinci după ID, repartizate inițial între Workshop, Docks, Hangar, Quarry și Refinery. Repartizarea efectivă depinde de ID-urile participanților disponibili.
 - Bazele capturate păstrează santinele; majoritatea grupelor din Workshop/Docks escortează asediul. Grupul de reacție încearcă să recupereze obiective contestate.
 - Steagurile folosesc același flux ca jucătorii: cast, banner contestat, cronometru nativ de 60 secunde, captură/apărare, mesaje, punctaj, vehicule și spirit guides.

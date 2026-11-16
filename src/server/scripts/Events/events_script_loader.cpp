@@ -27,6 +27,7 @@ void AddSC_event_operation_gnomeregan();
 void AddSC_event_pilgrims_bounty();
 void AddSC_event_winter_veil();
 void AddSC_event_zalazane_fall();
+void AddSC_event_city_raids();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
@@ -43,4 +44,5 @@ void AddEventsScripts()
     AddSC_event_pilgrims_bounty();
     AddSC_event_winter_veil();
     AddSC_event_zalazane_fall();
+    AddSC_event_city_raids();
 }

@@ -2509,6 +2509,7 @@ void World::Update(uint32 diff)
         TC_METRIC_TIMER("world_update_time", TC_METRIC_TAG("type", "Update maps"));
         sMapMgr->Update(diff);
     }
+    SendQueuedZoneUnderAttack(); // Map workers have joined; session iteration is now safe.
 
     if (sWorld->getBoolConfig(CONFIG_AUTOBROADCAST))
     {
@@ -2632,6 +2633,30 @@ void World::ForceGameEventUpdate()
     uint32 nextGameEvent = sGameEventMgr->Update();
     m_timers[WUPDATE_EVENTS].SetInterval(nextGameEvent);
     m_timers[WUPDATE_EVENTS].Reset();
+}
+
+// Map-thread producers enqueue values; broadcasts run after the map barrier.
+void World::QueueZoneUnderAttack(uint32 areaId, uint32 defendingTeam)
+{
+    if (!areaId || (defendingTeam != ALLIANCE && defendingTeam != HORDE)) return;
+    std::lock_guard<std::mutex> lock(_zoneAttackLock);
+    if (_zoneAttackQueue.size()<256) _zoneAttackQueue.emplace(areaId,defendingTeam);
+}
+
+void World::SendQueuedZoneUnderAttack()
+{
+    std::set<std::pair<uint32,uint32>> requests;
+    { std::lock_guard<std::mutex> lock(_zoneAttackLock); requests.swap(_zoneAttackQueue); }
+    time_t now=GameTime::GetGameTime();
+    for (auto const& key:requests)
+    {
+        auto last=_zoneAttackCooldowns.find(key);
+        if (last!=_zoneAttackCooldowns.end() && now>=last->second && now-last->second<60) continue;
+        _zoneAttackCooldowns[key]=now;
+        WorldPacket data(SMSG_ZONE_UNDER_ATTACK,4);
+        data << key.first;
+        SendGlobalMessage(&data,nullptr,key.second);
+    }
 }
 
 /// Send a packet to all players (except self if mentioned)

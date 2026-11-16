@@ -11573,6 +11573,56 @@ bool Unit::InitTamedPet(Pet* pet, uint8 level, uint32 spell_id)
 
     Creature* creature = victim->ToCreature();
 
+    //npcbot: if victim was killed by a wanderer/free bot and has no player tap, share kill credit, XP, and loot with nearest friendly player
+    if (!player && creature && !creature->hasLootRecipient())
+    {
+        Unit const* realAttacker = attacker;
+        if (realAttacker && (realAttacker->IsPet() || realAttacker->IsTotem() || realAttacker->IsSummon()))
+            if (Unit const* owner = realAttacker->GetOwner())
+                realAttacker = owner;
+
+        if (realAttacker && realAttacker->IsCreature() && realAttacker->ToCreature()->IsNPCBot() && realAttacker->ToCreature()->IsFreeBot())
+        {
+            float const shareDist = BotCfg::GetBotWandererShareKillDistance();
+            if (shareDist > 0.0f)
+            {
+                struct NearestFriendlyPlayerInObjectRangeCheck
+                {
+                    WorldObject const* i_obj;
+                    Unit const* i_friendlyTo;
+                    float i_range;
+
+                    NearestFriendlyPlayerInObjectRangeCheck(WorldObject const* obj, Unit const* friendlyTo, float range)
+                        : i_obj(obj), i_friendlyTo(friendlyTo), i_range(range) { }
+
+                    bool operator()(Player* u)
+                    {
+                        if (u->IsAlive() && !u->IsGameMaster() && i_obj->IsInMap(u) && i_obj->InSamePhase(u) &&
+                            i_obj->IsWithinDistInMap(u, i_range) && (!i_friendlyTo || i_friendlyTo->IsFriendlyTo(u)))
+                        {
+                            i_range = i_obj->GetDistance(u);
+                            return true;
+                        }
+                        return false;
+                    }
+                };
+
+                Player* target = nullptr;
+                NearestFriendlyPlayerInObjectRangeCheck checker(victim, realAttacker, shareDist);
+                Trinity::PlayerLastSearcher<NearestFriendlyPlayerInObjectRangeCheck> searcher(victim, target, checker);
+                Cell::VisitWorldObjects(victim, searcher, shareDist);
+
+                if (target)
+                {
+                    player = target;
+                    creature->LowerPlayerDamageReq(creature->GetMaxHealth());
+                    creature->SetLootRecipient(player);
+                }
+            }
+        }
+    }
+    //end npcbot
+
     bool isRewardAllowed = true;
     if (creature)
     {
@@ -11816,6 +11866,9 @@ bool Unit::InitTamedPet(Pet* pet, uint8 level, uint32 spell_id)
         // Call creature just died function
         if (CreatureAI* ai = creature->AI())
             ai->JustDied(attacker);
+
+        if (attacker && (creature->IsGuard() || creature->IsCivilian() || creature->IsRacialLeader()))
+            creature->SendZoneUnderAttackMessage(attacker);
 
         if (TempSummon * summon = creature->ToTempSummon())
         {

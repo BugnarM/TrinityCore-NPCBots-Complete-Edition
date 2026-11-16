@@ -12,6 +12,7 @@
 #include <sstream>
 #include <map>
 #include <stdexcept>
+#include <regex>
 
 static void Require(bool value, std::string const& message)
 {
@@ -119,9 +120,33 @@ int main(int argc, char** argv)
             Require(arrived,"Road exceeds prefix budget: "+std::to_string(id)+" -> "+std::to_string(next));
             ++edges;
         }
-    // Actual native keep portal positions must be navigable from the spawn courtyard.
+    // Every native keep platform, including the Horde west-side approach.
+    // Read production coordinates so a changed GO cannot silently stale the test.
     struct Portal { unsigned spawn; float x,y,z; };
-    Portal portals[]={{5300,326.285f,-777.366f,49.0208f},{5305,1235.53f,-683.872f,49.304f}};
+    std::vector<Portal> portals;
+    std::ifstream icHeader("src/server/game/Battlegrounds/Zones/BattlegroundIC.h");
+    std::regex portalPattern(R"(\{BG_IC_GO_TELEPORTER_[1-4]_[1-3], GO_TELEPORTER_([1-4]), ([^,]+), ([^,]+), ([^,]+),)");
+    while(std::getline(icHeader,line))
+    {
+        std::smatch match;
+        if(!std::regex_search(line,match,portalPattern))continue;
+        unsigned entry=std::stoul(match[1]);
+        float x=std::stof(match[2]),y=std::stof(match[3]),z=std::stof(match[4]);
+        unsigned team=entry<=2?1:0;
+        unsigned spawn=team?5305:5300;
+        if(NPCBots::SiegeBG::ICPositionKeep(x,y)!=team)
+        {
+            float distance=1.e30f;
+            for(auto const& [id,node]:nodes)
+                if(NPCBots::SiegeBG::ICNodeKeep(id)==2 && NPCBots::SiegeBG::ICSegmentOpen(x,y,node.x,node.y,0))
+                {
+                    float d=std::hypot(node.x-x,node.y-y);
+                    if(d<distance){distance=d;spawn=id;}
+                }
+        }
+        portals.push_back({spawn,x,y,z});
+    }
+    Require(portals.size()==12,"Missing native keep platforms");
     for(auto const& portal:portals)
     {
         auto const& source=nodes.at(portal.spawn);
@@ -134,9 +159,10 @@ int main(int argc, char** argv)
         Require(dtStatusSucceed(query.findStraightPath(source.near,near,corridor,count,points,nullptr,nullptr,&size,74)),"Invalid portal path");
         for(int i=1;i<size;++i)
             Require(NPCBots::SiegeBG::ICSegmentOpen(points[(i-1)*3+2],points[(i-1)*3],points[i*3+2],points[i*3],0),
-                "Portal approach crosses an intact wall");
+                "Portal approach crosses an intact wall: road "+std::to_string(portal.spawn)+
+                    " -> "+std::to_string(portal.x)+","+std::to_string(portal.y));
     }
-    std::cout<<"PASS: "<<loaded<<" production-compatible IC tiles, 23 checkpoints, "<<edges<<" directed road paths, both keep portal approaches.\n";
+    std::cout<<"PASS: "<<loaded<<" production-compatible IC tiles, 23 checkpoints, "<<edges<<" directed road paths, all 12 keep portal approaches.\n";
  }
  catch(std::exception const& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}
 }

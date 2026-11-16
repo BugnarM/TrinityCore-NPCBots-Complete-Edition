@@ -6,13 +6,16 @@
 #include "botdatamgr.h"
 #include "botdynamiczonepolicy.h"
 #include "botlog.h"
+#include "botlimits.h"
 #include "Config.h"
 #include "DBCStores.h"
 #include "Group.h"
 #include "Log.h"
 #include "MapManager.h"
+#include "Player.h"
 #include "ScriptMgr.h"
 #include "World.h"
+#include "WorldSession.h"
 
 /*
 Npc Bot Config by Trickerer (onlysuffering@gmail.com)
@@ -31,6 +34,7 @@ Npc Bot Config by Trickerer (onlysuffering@gmail.com)
 
 static uint8 _basefollowdist;
 static uint8 _maxClassNpcBots;
+static uint8 _maxPlayerNpcBots;
 static uint8 _maxAccountNpcBots;
 static uint8 _maxSharedOwners;
 static uint8 _xpReductionExtraAmount;
@@ -158,6 +162,8 @@ static bool _bothk_achievements_enable;
 static bool _untarget_wnpc_questgiver;
 static bool _untarget_wnpc_flightmaster;
 static bool _wanderingFreeLootSkinning;
+static float _wandererShareKillDistance;
+static uint32 _wandererSpawnTruceTime;
 static float _botStatLimits_dodge;
 static float _botStatLimits_parry;
 static float _botStatLimits_block;
@@ -333,6 +339,7 @@ private:
         _enableNpcBots                  = sConfigMgr->GetBoolDefault("NpcBot.Enable", true);
         _logToDB                        = sConfigMgr->GetBoolDefault("NpcBot.LogToDB", true);
         _maxClassNpcBots                = sConfigMgr->GetIntDefault("NpcBot.MaxBotsPerClass", 1);
+        _maxPlayerNpcBots               = uint8(std::clamp(sConfigMgr->GetIntDefault("NpcBot.MaxBots.NonGM", 1), 0, 39));
         _maxAccountNpcBots              = sConfigMgr->GetIntDefault("NpcBot.MaxBotsPerAccount", 0);
         _filterRaces                    = sConfigMgr->GetBoolDefault("NpcBot.Botgiver.FilterRaces", false);
         _shared_ownership_options       = sConfigMgr->GetIntDefault("NpcBot.SharedOwnership.Options", 0);
@@ -466,14 +473,16 @@ private:
         _botStatLimits_crit             = sConfigMgr->GetFloatDefault("NpcBot.Stats.Limits.Crit", 95.0f);
         _desiredWanderingBotsCount      = sConfigMgr->GetIntDefault("NpcBot.WanderingBots.Continents.Count", 0);
         _dynamicZoneWanderersEnabled    = sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.DynamicZone.Enable", true);
-        _dynamicZoneBotsPerZone         = NPCBots::DynamicZone::Normalize(sConfigMgr->GetIntDefault("NpcBot.WanderingBots.DynamicZone.BotsPerZone", 8), 0, 100);
+        _dynamicZoneBotsPerZone         = NPCBots::DynamicZone::Normalize(sConfigMgr->GetIntDefault("NpcBot.WanderingBots.DynamicZone.BotsPerZone", 8), 0, 1000);
         _dynamicZoneUpdateInterval      = NPCBots::DynamicZone::Normalize(sConfigMgr->GetIntDefault("NpcBot.WanderingBots.DynamicZone.UpdateInterval", 15), 1, 300);
-        _dynamicZoneMaxBots             = NPCBots::DynamicZone::Normalize(sConfigMgr->GetIntDefault("NpcBot.WanderingBots.DynamicZone.MaxBots", 200), 0, 1000);
-        _dynamicZoneSpawnBudget         = NPCBots::DynamicZone::Normalize(sConfigMgr->GetIntDefault("NpcBot.WanderingBots.DynamicZone.SpawnBudget", 8), 1, 32);
+        _dynamicZoneMaxBots             = NPCBots::DynamicZone::Normalize(sConfigMgr->GetIntDefault("NpcBot.WanderingBots.DynamicZone.MaxBots", 200), 0, 5000);
+        _dynamicZoneSpawnBudget         = NPCBots::DynamicZone::Normalize(sConfigMgr->GetIntDefault("NpcBot.WanderingBots.DynamicZone.SpawnBudget", 8), 1, 200);
         _killrewardWandererMoneyBase    = sConfigMgr->GetIntDefault("NpcBot.WanderingBots.KillReward.Money", 0);
         _killrewardWandererItemCount    = sConfigMgr->GetIntDefault("NpcBot.WanderingBots.KillReward.ItemCount", 0);
         _killrewardWandererItemQuality  = sConfigMgr->GetIntDefault("NpcBot.WanderingBots.KillReward.ItemQuality", int(ITEM_QUALITY_RARE));
         _wanderingFreeLootSkinning      = sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.FreeLoot.Skinning", false);
+        _wandererShareKillDistance      = sConfigMgr->GetFloatDefault("NpcBot.Wanderer.ShareKillDistance", 50.0f);
+        _wandererSpawnTruceTime         = sConfigMgr->GetIntDefault("NpcBot.WanderingBots.SpawnTruceTime", 60);
         _mult_xpgain_wanderer           = sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.Continents.XPGain", 1.0f);
         _enableWanderingBotsBG          = sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.BG.Enable", false);
         _enableWanderingBotsArena       = sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.Arena.Enable", true);
@@ -1259,6 +1268,12 @@ uint8 BotCfg::GetMaxNpcBots(uint8 level)
     return _max_npcbots[std::min<size_t>(BRACKETS_COUNT - 1, level / 10)];
 }
 
+uint8 BotCfg::GetMaxNpcBots(Player const* player)
+{
+    return NPCBots::Limits::PersonalLimit(GetMaxNpcBots(player->GetLevel()), _maxPlayerNpcBots,
+        player->GetSession()->GetSecurity() >= SEC_GAMEMASTER);
+}
+
 int32 BotCfg::GetBotInfoPacketsLimit()
 {
     return _botInfoPacketsLimit;
@@ -1324,6 +1339,16 @@ uint32 BotCfg::GetBotWandererKillRewardItemMaxQuality()
 bool BotCfg::EnableWandererFreeLootSkinning()
 {
     return _wanderingFreeLootSkinning;
+}
+
+float BotCfg::GetBotWandererShareKillDistance()
+{
+    return _enableNpcBots ? _wandererShareKillDistance : 0.0f;
+}
+
+uint32 BotCfg::GetBotWandererSpawnTruceTime()
+{
+    return _enableNpcBots ? _wandererSpawnTruceTime : 0;
 }
 
 uint32 BotCfg::GetBotDungeonMaxItemLevel(uint8 level, uint16 map_id, Difficulty map_difficulty)

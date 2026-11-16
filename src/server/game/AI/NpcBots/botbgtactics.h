@@ -7,11 +7,22 @@
 
 namespace NPCBots::SiegeBG
 {
+// Keep the commanded waypoint while traversing long edges. Reattaching to the
+// nearest graph node mid-edge can repeatedly send the mover back to its origin.
+constexpr bool KeepSiegeCheckpoint(float distance) { return distance >= 18.f; }
+
 enum Gate : uint8_t { Green, Yellow, Blue, Red, Purple, Ancient, NoGate };
 constexpr bool Broken(uint32_t mask, uint8_t gate) { return (mask & (1u << gate)) != 0; }
 constexpr bool OuterOpen(uint32_t mask) { return Broken(mask, Green) || Broken(mask, Blue); }
 constexpr bool MiddleOpen(uint32_t mask) { return OuterOpen(mask) && (Broken(mask, Red) || Broken(mask, Purple)); }
 constexpr bool RelicOpen(uint32_t mask) { return MiddleOpen(mask) && Broken(mask, Yellow) && Broken(mask, Ancient); }
+constexpr bool SACaptureScout(uint32_t botId) { return botId % 5 == 4; }
+constexpr bool SADefenderGunner(uint32_t botId) { return botId % 5 == 1 || botId % 5 == 2; }
+constexpr uint8_t SACannonIndex(Gate gate, uint32_t botId)
+{
+    constexpr uint8_t base[] = {0, 2, 4, 6, 8};
+    return gate < Ancient ? uint8_t(base[gate] + (botId % 5 == 2 ? 1 : 0)) : 10;
+}
 
 constexpr Gate AssaultGate(uint32_t mask, bool west)
 {

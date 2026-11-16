@@ -55,6 +55,18 @@ class bot_ai : public CreatureAI
 public:
     virtual ~bot_ai();
 
+    // A battlefield supplies objectives; the native class AI retains combat and equipment.
+    void SetBattlefieldAI(std::unique_ptr<CreatureAI> controller) { _battlefieldAI = std::move(controller); }
+    CreatureAI* GetBattlefieldAI() const { return _battlefieldAI.get(); }
+    bool IsBattlefieldBot() const { return bool(_battlefieldAI); }
+    void SetCityRaidAI(std::unique_ptr<CreatureAI> controller) { _cityRaidAI = std::move(controller); }
+    CreatureAI* GetCityRaidAI() const { return _cityRaidAI.get(); }
+    bool IsCityRaidBot() const { return bool(_cityRaidAI); }
+    bool TryCityRaidSpell(uint32 baseSpell, Unit* target);
+    uint32 GetData(uint32 id) const override { return _battlefieldAI ? _battlefieldAI->GetData(id) : _cityRaidAI ? _cityRaidAI->GetData(id) : 0; }
+    void SetData(uint32 id, uint32 value) override { if (_battlefieldAI) _battlefieldAI->SetData(id, value); else if (_cityRaidAI) _cityRaidAI->SetData(id, value); }
+    void DoAction(int32 action) override { if (_battlefieldAI) _battlefieldAI->DoAction(action); else if (_cityRaidAI) _cityRaidAI->DoAction(action); }
+
     bool canUpdate{true};
 
     void InitializeAI() override;
@@ -70,7 +82,7 @@ public:
     void JustExitedCombat() override;
     void MoveInLineOfSight(Unit* u) override;
     void DamageDealt(Unit* victim, uint32& damage, DamageEffectType damageType) override;
-    //void DamageTaken(Unit* /*attacker*/, uint32& /*damage*/, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override { }
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType damageType, SpellInfo const* spellInfo) override;
     void ReceiveEmote(Player* player, uint32 emote) override;
     void EnterEvadeMode(EvadeReason/* why*/ = EVADE_REASON_OTHER) override { }
     //void LeavingWorld() override { }
@@ -203,6 +215,8 @@ public:
     WanderNode const* GetNextWanderNode(Position const* fromPos, uint8 lvl, bool random) const;
     WanderNode const* GetNextTravelNode(Position const* from, bool random) const;
     WanderNode const* GetNextBGTravelNode() const;
+    bool HasSpawnTruce() const { return _wanderer && _spawnTruceTimer > 0; }
+    void BreakSpawnTruce() { _spawnTruceTimer = 0; }
     void OnWanderNodeReached();
     void OnBotEnterBattleground();
 
@@ -394,8 +408,11 @@ protected:
     uint32 _siegeThinkTimer = 0;
     uint32 _siegeWeaponTimer = 0;
     uint32 _siegeBoardTimer = 0;
+    uint32 _siegeMountTimer = 0;
     uint32 _siegeBombTimer = 0;
     uint32 _siegeTravelNode = 0;
+    std::unique_ptr<CreatureAI> _battlefieldAI;
+    std::unique_ptr<CreatureAI> _cityRaidAI;
     uint32 _siegeVehicleFaction = 0;
     uint8 _siegeSARole = 2;
     bool _siegeBombCarrier = false;
@@ -793,6 +810,7 @@ private:
     uint8 _baseLevel{};
     WanderNode const* _travel_node_last{};
     WanderNode const* _travel_node_cur{};
+    uint32 _spawnTruceTimer{};
 
     uint32 _groupUpdateMask{};
     uint64 _auraRaidUpdateMask{};

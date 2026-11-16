@@ -204,7 +204,7 @@ void BattlegroundIC::PostUpdateImpl(uint32 diff)
                 DelObject(nodePoint[i].gameobject_type);
                 AddObject(nodePoint[i].gameobject_type, nodePoint[i].gameobject_entry, cords[0], cords[1], cords[2], cords[3], 0, 0, 0, 0, RESPAWN_ONE_DAY);
 
-                GetBGObject(nodePoint[i].gameobject_type)->SetFaction(nodePoint[i].faction == TEAM_ALLIANCE ? BG_IC_Factions[1] : BG_IC_Factions[0]);
+                GetBGObject(nodePoint[i].gameobject_type)->SetFaction(nodePoint[i].faction == TEAM_ALLIANCE ? BG_IC_Factions[0] : BG_IC_Factions[1]);
 
                 UpdateNodeWorldState(&nodePoint[i]);
                 HandleCapturedNodes(&nodePoint[i], false);
@@ -439,8 +439,8 @@ void BattlegroundIC::EventUnitClickedOnFlag(Unit* source, GameObject* target_obj
 {
     if (GetStatus() != STATUS_IN_PROGRESS || !source || !target_obj || !source->IsAlive()
         || source->GetMap() != GetBgMap() || target_obj->GetMap() != GetBgMap()
-        || source->GetVehicle() || !source->IsWithinDistInMap(target_obj, INTERACTION_DISTANCE)
-        || !source->IsWithinLOSInMap(target_obj) || target_obj->HasFlag(GO_FLAG_NOT_SELECTABLE))
+        || source->GetVehicle() || !source->IsWithinDistInMap(target_obj, 10.0f)
+        || target_obj->HasFlag(GO_FLAG_NOT_SELECTABLE))
         return;
     Player* player = source->ToPlayer();
     Creature* bot = source->ToCreature();
@@ -523,7 +523,7 @@ void BattlegroundIC::EventUnitClickedOnFlag(Unit* source, GameObject* target_obj
                 return;
             }
 
-            GetBGObject(nodePoint[i].gameobject_type)->SetFaction(nodePoint[i].faction == TEAM_ALLIANCE ? BG_IC_Factions[1] : BG_IC_Factions[0]);
+            GetBGObject(nodePoint[i].gameobject_type)->SetFaction(nodePoint[i].faction == TEAM_ALLIANCE ? BG_IC_Factions[0] : BG_IC_Factions[1]);
 
             UpdateNodeWorldState(&nodePoint[i]);
             // we dont need iterating if we are here
@@ -574,9 +574,16 @@ uint32 BattlegroundIC::GetNextBanner(ICNodePoint* node, uint32 team, bool return
     if (node->gameobject_entry == node->banners[BANNER_A_CONTROLLED] || node->gameobject_entry == node->banners[BANNER_H_CONTROLLED])
         return node->banners[(team == TEAM_ALLIANCE ? BANNER_A_CONTESTED : BANNER_H_CONTESTED)];
 
-    // If the actual banner is the grey faction banner, we must return the previous banner
-    if (node->gameobject_entry == node->banners[BANNER_A_CONTESTED] || node->banners[BANNER_H_CONTESTED])
-        return node->last_entry;
+    // If the actual banner is the grey faction banner:
+    if (node->gameobject_entry == node->banners[BANNER_A_CONTESTED] || node->gameobject_entry == node->banners[BANNER_H_CONTESTED])
+    {
+        // If the clicking team was the original controller, defend it back to controlled
+        if (node->last_entry == node->banners[(team == TEAM_ALLIANCE ? BANNER_A_CONTROLLED : BANNER_H_CONTROLLED)])
+            return node->last_entry;
+
+        // Otherwise (was neutral, or other faction controlled banner), contest it for the clicking team
+        return node->banners[(team == TEAM_ALLIANCE ? BANNER_A_CONTESTED : BANNER_H_CONTESTED)];
+    }
 
     // we should never be here...
     TC_LOG_ERROR("bg.battleground", "Isle Of Conquest: Unexpected return in GetNextBanner function");

@@ -12,12 +12,15 @@
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "PathGenerator.h"
 #include "Spell.h"
 #include "SpellHistory.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "Transport.h"
 #include "Vehicle.h"
+#include "Map.h"
+#include "MovementTypedefs.h"
 #include <algorithm>
 #include <limits>
 #include <queue>
@@ -48,9 +51,255 @@ bool HumanNear(Unit* vehicle, float radius)
     return false;
 }
 
+bool HumanRequestsVehicle(Unit* vehicle)
+{
+    for (auto const& ref : vehicle->GetMap()->GetPlayers())
+        if (Player* player = ref.GetSource())
+            if (player->IsAlive() && vehicle->IsFriendlyTo(player) && player->InSamePhase(vehicle) &&
+                player->GetTarget() == vehicle->GetGUID() && player->IsWithinDistInMap(vehicle, INTERACTION_DISTANCE))
+                return true;
+    return false;
+}
+
 bool ControlledBy(ICNodePoint const& node, TeamId team)
 {
     return node.faction == team && node.nodeState == (team == TEAM_ALLIANCE ? NODE_STATE_CONTROLLED_A : NODE_STATE_CONTROLLED_H);
+}
+
+// Keep teleporters use invisible world triggers as their native landing points.
+// Resolve the actual paired platform explicitly for autonomous infantry instead
+// of relying on the generic GO spell's implicit target search and GO-centre LOS.
+bool UseICKeepTeleporter(Creature* bot, Battleground* bg, GameObject* entrance, TeamId team)
+{
+    if (bg->GetTypeID() != BATTLEGROUND_IC || bg->GetStatus() != STATUS_IN_PROGRESS ||
+        !bot->IsAlive() || bot->GetVehicle() || bot->GetTransport() || bot->IsInCombat() ||
+        bot->HasUnitState(UNIT_STATE_CASTING | UNIT_STATE_CONTROLLED) ||
+        !entrance->isSpawned() || entrance->HasFlag(GO_FLAG_NOT_SELECTABLE) ||
+        !bot->InSamePhase(entrance) || !bot->IsWithinDistInMap(entrance, INTERACTION_DISTANCE))
+        return false;
+
+    bool const leaving = ICPositionKeep(bot->GetPositionX(), bot->GetPositionY()) == team;
+    uint32 const entry = leaving ? (team == TEAM_ALLIANCE ? GO_TELEPORTER_4 : GO_TELEPORTER_2)
+        : (team == TEAM_ALLIANCE ? GO_TELEPORTER_3 : GO_TELEPORTER_1);
+    if (entrance->GetEntry() != entry ||
+        (ICPositionKeep(entrance->GetPositionX(), entrance->GetPositionY()) == team) != leaving)
+        return false;
+
+    uint32 const exitEntry = leaving ? (team == TEAM_ALLIANCE ? GO_TELEPORTER_3 : GO_TELEPORTER_1)
+        : (team == TEAM_ALLIANCE ? GO_TELEPORTER_4 : GO_TELEPORTER_2);
+    GameObject* exit = nullptr;
+    for (auto const& spawn : BG_IC_Teleporters)
+        if (spawn.entry == exitEntry)
+            if (GameObject* go = bg->GetBGObject(spawn.type, true))
+                if (go->isSpawned() && !go->HasFlag(GO_FLAG_NOT_SELECTABLE) && bot->InSamePhase(go) &&
+                    (ICPositionKeep(go->GetPositionX(), go->GetPositionY()) == team) != leaving &&
+                    (!exit || entrance->GetExactDist(go) < entrance->GetExactDist(exit)))
+                    exit = go;
+    if (!exit)
+        return false;
+
+    std::list<Creature*> triggers;
+    exit->GetCreatureListWithEntryInGrid(triggers, 22515, 10.f);
+    Creature* landing = nullptr;
+    for (Creature* trigger : triggers)
+        if (trigger->IsAlive() && bot->InSamePhase(trigger) &&
+            (ICPositionKeep(trigger->GetPositionX(), trigger->GetPositionY()) == team) != leaving &&
+            (!landing || exit->GetExactDist(trigger) < exit->GetExactDist(landing)))
+            landing = trigger;
+    if (!landing)
+        return false;
+
+    bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
+    bot->GetMotionMaster()->Clear(MOTION_PRIORITY_NORMAL);
+    bot->StopMoving();
+    bot->CastSpell(bot, SPELL_TELEPORT_VISUAL_ONLY, true);
+    bot->NearTeleportTo(landing->GetPosition());
+    return true;
+}
+
+bool SAPathClear(Unit* mover, Position const& destination, BattlegroundSA* sa)
+{
+    PathGenerator path(mover);
+    path.SetUseStraightPath(true);
+    if (!path.CalculatePath(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(), false) ||
+        !VerifiedSiegePath(path.GetPathType(), path.GetPath().size()))
+        return false;
+    auto const& points = path.GetPath();
+    for (std::size_t i = 1; i < points.size(); ++i)
+        if (!sa->IsBotGateSegmentClear(points[i - 1], points[i], mover->GetBoundingRadius(), mover->GetPhaseMask()))
+            return false;
+    return true;
+}
+
+bool SADescentClear(Creature* bot, BattlegroundSA* sa, Position const& from, Position const& to)
+{
+    float amplitude = 7.5f * 7.5f / (2.f * Movement::gravity);
+    G3D::Vector3 previous(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ());
+    for (unsigned sample = 1; sample <= 16; ++sample)
+    {
+        float t = float(sample) / 16.f;
+        G3D::Vector3 next(from.GetPositionX() + (to.GetPositionX() - from.GetPositionX()) * t,
+            from.GetPositionY() + (to.GetPositionY() - from.GetPositionY()) * t,
+            from.GetPositionZ() + (to.GetPositionZ() - from.GetPositionZ()) * t + 4.f * amplitude * t * (1.f - t));
+        if (!sa->IsBotGateSegmentClear(previous, next, bot->GetBoundingRadius(), bot->GetPhaseMask()) ||
+            !bot->GetMap()->isInLineOfSight(previous.x, previous.y, previous.z + 1.f, next.x, next.y, next.z + 1.f,
+                bot->GetPhaseMask(), LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
+            return false;
+        previous = next;
+    }
+    return true;
+}
+
+bool SAPathFromClear(Creature* bot, BattlegroundSA* sa, Position const& from, Position const& destination)
+{
+    G3D::Vector3 start(from.GetPositionX(), from.GetPositionY(), from.GetPositionZ());
+    G3D::Vector3 goal(destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ());
+    for (unsigned prefix = 0; prefix < 16; ++prefix)
+    {
+        PathGenerator path(bot);
+        path.SetUseStraightPath(true);
+        if (!path.CalculatePathFrom(start, goal, false) || !VerifiedSiegePath(path.GetPathType(), path.GetPath().size()))
+            return false;
+        auto const& points = path.GetPath();
+        for (std::size_t i = 1; i < points.size(); ++i)
+            if (!sa->IsBotGateSegmentClear(points[i - 1], points[i], bot->GetBoundingRadius(), bot->GetPhaseMask()))
+                return false;
+        if ((path.GetActualEndPosition() - goal).length() <= 7.f)
+            return true;
+        if (path.GetPathType() != PATHFIND_INCOMPLETE || (path.GetActualEndPosition() - start).length() < 1.f)
+            return false;
+        start = path.GetActualEndPosition();
+    }
+    return false;
+}
+
+// Native wall stairs are navigable, but navmeshes have no downward jump link.
+// A defender can descend from a cannon platform, as a player can, before using
+// the next gate's real portal. Never leap from the ground over a closed gate.
+bool TrySADefenderDescent(Creature* bot, BattlegroundSA* sa, Position const& destination)
+{
+    if (bot->HasUnitState(UNIT_STATE_JUMPING))
+        return true;
+    Position const* platform = nullptr;
+    Position landing;
+    float bestScore = std::numeric_limits<float>::max();
+    for (unsigned gun = 0; gun < 10; ++gun)
+    {
+        Position const& from = BG_SA_NpcSpawnlocs[gun];
+        if (!SAPathClear(bot, from, sa))
+            continue;
+        for (unsigned direction = 0; direction < 8; ++direction)
+        {
+            float angle = float(direction) * float(M_PI) / 4.f;
+            Position to(from.GetPositionX() + std::cos(angle) * 12.f, from.GetPositionY() + std::sin(angle) * 12.f,
+                from.GetPositionZ() - 12.f, from.GetOrientation());
+            float ground = bot->GetMap()->GetHeight(bot->GetPhaseMask(), to.GetPositionX(), to.GetPositionY(),
+                from.GetPositionZ() + 2.f, true, 30.f);
+            if (ground <= INVALID_HEIGHT || from.GetPositionZ() - ground < 3.f || from.GetPositionZ() - ground > 20.f)
+                continue;
+            to.m_positionZ = ground;
+            if (!SADescentClear(bot, sa, from, to))
+                continue;
+            if (!SAPathFromClear(bot, sa, to, destination))
+                continue;
+            float score = bot->GetExactDist(&from) + to.GetExactDist(&destination);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                platform = &from;
+                landing = to;
+            }
+        }
+    }
+    if (!platform)
+        return false;
+    if (bot->GetExactDist(platform) > 1.5f)
+    {
+        Position current;
+        if (!bot->isMoving() || !bot->GetMotionMaster()->GetDestination(current.m_positionX, current.m_positionY, current.m_positionZ) ||
+            current.GetExactDist(platform) >= 3.f)
+            bot->GetMotionMaster()->MovePoint(607628, *platform, true);
+    }
+    else
+    {
+        if (!SADescentClear(bot, sa, bot->GetPosition(), landing))
+            return false;
+        bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
+        bot->GetMotionMaster()->MoveJump(landing, 7.f, 7.5f, 607631);
+    }
+    return true;
+}
+
+// Defenders must obey the same physical gates as attackers. Prefer a real
+// navigable approach; otherwise reach a native defender platform and use its
+// world-trigger landing. A destroyed gate needs no portal detour.
+bool MoveSADefender(Creature* bot, BattlegroundSA* sa, Position const& destination)
+{
+    if (sa->GetStatus() != STATUS_IN_PROGRESS || sa->GetAttackersTeam() == sa->GetBotTeamId(bot->GetGUID()) ||
+        !bot->IsAlive() || bot->GetVehicle() || bot->GetTransport() || bot->IsInCombat() ||
+        bot->HasUnitState(UNIT_STATE_CASTING | UNIT_STATE_CONTROLLED))
+        return false;
+    auto move = [&](Position const& point)
+    {
+        Position current;
+        if (bot->isMoving() && bot->GetMotionMaster()->GetDestination(current.m_positionX, current.m_positionY, current.m_positionZ) &&
+            current.GetExactDist(&point) < 3.f)
+            return;
+        bot->GetMotionMaster()->MovePoint(607628, point, true);
+    };
+    if (SAPathClear(bot, destination, sa))
+    {
+        move(destination);
+        return false;
+    }
+    if (TrySADefenderDescent(bot, sa, destination))
+        return false;
+    GameObject* platform = nullptr;
+    Creature* landing = nullptr;
+    float bestScore = std::numeric_limits<float>::max();
+    for (uint32 type = BG_SA_PORTAL_DEFFENDER_BLUE; type <= BG_SA_PORTAL_DEFFENDER_RED; ++type)
+        if (GameObject* go = sa->GetBGObject(type, true))
+        {
+            if (!go->isSpawned() || go->HasFlag(GO_FLAG_NOT_SELECTABLE) || !bot->InSamePhase(go) ||
+                !SAPathClear(bot, go->GetPosition(), sa))
+                continue;
+            std::list<Creature*> triggers;
+            go->GetCreatureListWithEntryInGrid(triggers, NPC_WORLD_TRIGGER_LARGE_AOI_NOT_IMMUNE_PC_NPC, 60.f);
+            Creature* target = nullptr;
+            for (Creature* trigger : triggers)
+                if (trigger->IsAlive() && bot->InSamePhase(trigger) &&
+                    (!target || go->GetExactDist(trigger) < go->GetExactDist(target)))
+                    target = trigger;
+            if (!target)
+                continue;
+            float score = target->GetExactDist(&destination) + bot->GetExactDist(go) * 0.2f;
+            if (score < bestScore)
+            {
+                bestScore = score;
+                platform = go;
+                landing = target;
+            }
+        }
+    if (!platform)
+    {
+        if (bot->isMoving())
+            bot->StopMoving();
+        return false;
+    }
+    if (!bot->IsWithinDistInMap(platform, INTERACTION_DISTANCE))
+    {
+        move(platform->GetPosition());
+        return false;
+    }
+    if (bot->HasAura(54643))
+        return false; // Native teleporter lockout; no repeated transfers.
+    bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
+    bot->GetMotionMaster()->Clear(MOTION_PRIORITY_NORMAL);
+    bot->StopMoving();
+    bot->CastSpell(bot, SPELL_TELEPORT_VISUAL_ONLY, true);
+    bot->NearTeleportTo(landing->GetPosition());
+    bot->AddAura(54643, bot); // Apply the native lockout without a second teleport cast.
+    return true;
 }
 
 uint32 VehicleSpell(Creature* vehicle, std::initializer_list<uint32> candidates)
@@ -65,6 +314,31 @@ uint32 VehicleSpell(Creature* vehicle, std::initializer_list<uint32> candidates)
                 return spell;
     return 0;
 }
+
+GameObject* SelectSAAttackObjective(Creature* bot, BattlegroundSA* sa)
+{
+    TeamId team = sa->GetBotTeamId(bot->GetGUID());
+    if (team != sa->GetAttackersTeam())
+        return nullptr;
+    if (GameObject* relic = sa->GetBGObject(BG_SA_TITAN_RELIC, true))
+        if (relic->isSpawned() && bot->InSamePhase(relic) && !relic->HasFlag(GO_FLAG_NOT_SELECTABLE) &&
+            sa->CanInteractWithObject(BG_SA_TITAN_RELIC))
+            return relic; // Victory has priority over every outstanding graveyard.
+
+    if (bot->GetVehicle())
+        return nullptr; // Attacking vehicles assault gates; only infantry captures flags.
+    bool scout = SACaptureScout(bot->GetGUID().GetCounter());
+    GameObject* closest = nullptr;
+    for (auto [type, gy] : { std::pair{BG_SA_LEFT_FLAG, BG_SA_LEFT_CAPTURABLE_GY},
+        std::pair{BG_SA_RIGHT_FLAG, BG_SA_RIGHT_CAPTURABLE_GY}, std::pair{BG_SA_CENTRAL_FLAG, BG_SA_CENTRAL_CAPTURABLE_GY} })
+        if (GameObject* flag = sa->GetBGObject(type, true))
+            if (flag->isSpawned() && bot->InSamePhase(flag) && !flag->HasFlag(GO_FLAG_NOT_SELECTABLE) &&
+                sa->CanInteractWithObject(type) && sa->GetGraveyardStatus(gy) != team &&
+                (scout || (!bot->GetVehicle() && bot->IsWithinDistInMap(flag, 20.f))) &&
+                (!closest || bot->GetExactDist(flag) < bot->GetExactDist(closest)))
+                closest = flag;
+    return closest;
+}
 }
 
 bool bot_ai::IsSiegeBattlegroundBot() const
@@ -75,7 +349,7 @@ bool bot_ai::IsSiegeBattlegroundBot() const
 
 void bot_ai::ResetSiegeBattlegroundState()
 {
-    _siegeThinkTimer = _siegeWeaponTimer = _siegeBoardTimer = _siegeBombTimer = _siegeTravelNode = 0;
+    _siegeThinkTimer = _siegeWeaponTimer = _siegeBoardTimer = _siegeMountTimer = _siegeBombTimer = _siegeTravelNode = 0;
     _siegeSARole = 2;
     _siegeBombCarrier = false;
     RemoveBotCommandState(BOT_COMMAND_STAY | BOT_COMMAND_FOLLOW | BOT_COMMAND_ATTACK);
@@ -90,6 +364,8 @@ bool bot_ai::MoveToSiegeObjective(Position const& destination, float radius, uin
 {
     Battleground* bg = GetBG();
     Unit* mover = me->GetVehicle() && CanBotMoveVehicle() ? me->GetVehicleBase() : me;
+    if (mover == me && mover->GetExactDist(&destination) < 35.f)
+        _siegeMountTimer = 2500;
     if (mover->GetExactDist(&destination) <= radius)
     {
         mover->StopMoving();
@@ -113,20 +389,27 @@ bool bot_ai::MoveToSiegeObjective(Position const& destination, float radius, uin
         for (auto const& spawn : BG_IC_Teleporters)
             if (spawn.entry == portalEntry)
                 if (GameObject* go = bg->GetBGObject(spawn.type, true))
-                    if (go->isSpawned() && !go->HasFlag(GO_FLAG_NOT_SELECTABLE) &&
+                    if (go->isSpawned() && !go->HasFlag(GO_FLAG_NOT_SELECTABLE) && me->InSamePhase(go) &&
+                        ICPositionKeep(go->GetPositionX(), go->GetPositionY()) == originKeep &&
                         (!portal || me->GetExactDist(go) < me->GetExactDist(portal))) portal = go;
         if (!portal) return false;
-        if (me->IsWithinDistInMap(portal, INTERACTION_DISTANCE) && me->IsWithinLOSInMap(portal))
+        if (me->IsWithinDistInMap(portal, INTERACTION_DISTANCE))
         {
-            DismountBot();
-            me->GetMotionMaster()->Clear(MOTION_PRIORITY_NORMAL);
-            me->StopMoving();
-            portal->Use(me);
-            _siegeTravelNode = 0;
-            _siegeThinkTimer = 2000;
+            if (UseICKeepTeleporter(me, bg, portal, team))
+            {
+                _siegeTravelNode = 0;
+                _siegeThinkTimer = 2000;
+            }
         }
         else
             mover->GetMotionMaster()->MovePoint(607628, portal->GetPosition(), true);
+        return false;
+    }
+    if (bg->GetTypeID() == BATTLEGROUND_SA && !attacker && mover == me && !me->GetVehicle() && !me->GetTransport())
+    {
+        _siegeTravelNode = 0;
+        if (MoveSADefender(me, static_cast<BattlegroundSA*>(bg), destination))
+            _siegeThinkTimer = 2000;
         return false;
     }
     auto allowed = [&](WanderNode const* node) {
@@ -138,7 +421,7 @@ bool bot_ai::MoveToSiegeObjective(Position const& destination, float radius, uin
         return true; // Gate edges, physical attachment and spline validation enforce access.
     };
     auto edgeOpen = [&](WanderNode const* from, WanderNode const* to) {
-        return bg->GetTypeID() == BATTLEGROUND_SA ? (!attacker || SAEdgeOpen(from->GetWPId(), to->GetWPId(), gates))
+        return bg->GetTypeID() == BATTLEGROUND_SA ? SAEdgeOpen(from->GetWPId(), to->GetWPId(), gates)
             : ICEdgeOpen(from->GetWPId(), to->GetWPId(), uint8(team), gates);
     };
     WanderNode const* start = nullptr;
@@ -148,13 +431,15 @@ bool bot_ai::MoveToSiegeObjective(Position const& destination, float radius, uin
         if (!allowed(node))
             return;
         float distance = mover->GetExactDistSq(node);
-        if (distance < startDistance && (!icMap || ICNodeKeep(node->GetWPId()) == originKeep))
+        if (distance < startDistance && (!icMap || (ICNodeKeep(node->GetWPId()) == originKeep &&
+            ICSegmentOpen(mover->GetPositionX(), mover->GetPositionY(), node->GetPositionX(), node->GetPositionY(), gates))))
         {
             startDistance = distance;
             start = node;
         }
         distance = destination.GetExactDistSq(node);
-        if (distance < finishDistance && (!icMap || ICNodeKeep(node->GetWPId()) == destinationKeep))
+        if (distance < finishDistance && (!icMap || (ICNodeKeep(node->GetWPId()) == destinationKeep &&
+            ICSegmentOpen(destination.GetPositionX(), destination.GetPositionY(), node->GetPositionX(), node->GetPositionY(), gates))))
         {
             finishDistance = distance;
             finish = node;
@@ -162,16 +447,25 @@ bool bot_ai::MoveToSiegeObjective(Position const& destination, float radius, uin
     });
     if (!start || !finish)
         return false;
+    WanderNode const* pendingCheckpoint = nullptr;
     if (_siegeTravelNode)
         if (WanderNode const* current = WanderNode::FindInMapWPs(me->GetMapId(), [this](WanderNode const* node) {
             return node->GetWPId() == _siegeTravelNode;
         }))
-            if (allowed(current) && mover->GetExactDist(current) < 18.f &&
-                (!icMap || ICNodeKeep(current->GetWPId()) == originKeep))
-                start = current;
+            if (allowed(current) &&
+                (!icMap || (ICNodeKeep(current->GetWPId()) == originKeep &&
+                    ICSegmentOpen(mover->GetPositionX(), mover->GetPositionY(), current->GetPositionX(), current->GetPositionY(), gates))))
+            {
+                if (KeepSiegeCheckpoint(mover->GetExactDist(current)))
+                    pendingCheckpoint = current;
+                else
+                    start = current;
+            }
 
     Position point = destination;
-    if (start != finish)
+    if (pendingCheckpoint)
+        point = *pendingCheckpoint;
+    else if (start != finish)
     {
         using Step = std::pair<float, WanderNode const*>;
         std::priority_queue<Step, std::vector<Step>, std::greater<Step>> pending;
@@ -216,6 +510,8 @@ bool bot_ai::MoveToSiegeObjective(Position const& destination, float radius, uin
             _siegeTravelNode = start->GetWPId();
         }
     }
+    else
+        _siegeTravelNode = 0; // The graph endpoint is reached; finish the local approach.
     if (mover == me && !me->GetTransport())
     {
         // Stable small offsets spread squads without moving the interaction point.
@@ -242,7 +538,9 @@ bool bot_ai::TrySiegeVehicle(bool defender, uint8 squad)
         return false;
     uint32 member = me->GetGUID().GetCounter() % 5;
     bool sa = GetBG()->GetTypeID() == BATTLEGROUND_SA;
-    if (defender && member != 1)
+    if (sa && !defender && SACaptureScout(me->GetGUID().GetCounter()))
+        return false; // Keep a capture runner in each five-bot squad on foot.
+    if (defender && (sa ? !SADefenderGunner(me->GetGUID().GetCounter()) : member != 1))
         return false;
     std::vector<uint32> entries;
     if (sa)
@@ -258,7 +556,8 @@ bool bot_ai::TrySiegeVehicle(bool defender, uint8 squad)
 
     Creature* best = nullptr;
     int8 bestSeat = 0;
-    float maxSearchDist = (squad == 0 || squad == 1 || squad == 5 || squad == 6 || squad == 7 || sa) ? 140.f : 45.f;
+    float maxSearchDist = sa && !defender ? 300.f :
+        (squad == 0 || squad == 1 || squad == 5 || squad == 6 || squad == 7 || sa) ? 140.f : 45.f;
 
     for (uint32 entry : entries)
     {
@@ -267,8 +566,20 @@ bool bot_ai::TrySiegeVehicle(bool defender, uint8 squad)
         for (Creature* vehicle : vehicles)
         {
             Vehicle* kit = vehicle->GetVehicleKit();
-            if (!vehicle->IsAlive() || !kit || vehicle->HasUnitFlag(UNIT_FLAG_UNINTERACTIBLE)
+            if (!vehicle->IsAlive() || vehicle->GetHealthPct() < 15.f || !kit || vehicle->HasUnitFlag(UNIT_FLAG_UNINTERACTIBLE)
                 || vehicle->IsHostileTo(me) || HumanNear(vehicle, 10.f))
+                continue;
+            if (sa && defender)
+            {
+                auto* battleground = static_cast<BattlegroundSA*>(GetBG());
+                Gate gate = AssaultGate(GateMask(battleground), (me->GetGUID().GetCounter() / 5) % 2 == 0);
+                uint8 cannon = SACannonIndex(gate, me->GetGUID().GetCounter());
+                if (cannon >= 10 || (vehicle != battleground->GetBGCreature(cannon, true) &&
+                    vehicle != battleground->GetBGCreature(cannon ^ 1, true)))
+                    continue;
+            }
+            if (sa && !me->IsWithinDistInMap(vehicle, INTERACTION_DISTANCE) &&
+                !SAPathFromClear(me, static_cast<BattlegroundSA*>(GetBG()), me->GetPosition(), vehicle->GetPosition()))
                 continue;
 
             if (kit->HasEmptySeat(0))
@@ -315,13 +626,18 @@ bool bot_ai::TrySiegeVehicle(bool defender, uint8 squad)
         return false;
     if (!me->IsWithinDistInMap(best, INTERACTION_DISTANCE))
     {
-        me->GetMotionMaster()->MovePoint(607629, best->GetPosition(), true);
+        _siegeMountTimer = 2500;
+        Position current;
+        if (!me->isMoving() || !me->GetMotionMaster()->GetDestination(current.m_positionX, current.m_positionY, current.m_positionZ) ||
+            current.GetExactDist(best) >= 3.f)
+            me->GetMotionMaster()->MovePoint(607629, best->GetPosition(), true);
         return true;
     }
     DismountBot();
     removeShapeshiftForm();
     me->CombatStop(true);
     me->EnterVehicle(best, bestSeat);
+    // VehicleJoinEvent attaches the passenger on a later update, not here.
     _siegeBoardTimer = 2000;
     return true;
 }
@@ -331,24 +647,28 @@ void bot_ai::UpdateSiegeVehicle(uint32 /*diff*/, GameObject* building, Position 
     Creature* vehicle = me->GetVehicleCreatureBase();
     if (!vehicle)
         return;
-    if (vehicle->GetHealthPct() < 15.0f || HumanNear(vehicle, 8.f))
+    if (vehicle->GetHealthPct() < 15.0f || HumanRequestsVehicle(vehicle))
     {
         vehicle->StopMoving();
         me->ExitVehicle();
         _siegeBoardTimer = 20000;
         return;
     }
+    bool canMove = CanBotMoveVehicle();
     if (!CanBotMoveVehicle())
-        return;
+    {
+        // Secondary turret seats cannot steer the vehicle, but continue below to aim and fire weapons
+    }
     bool cannon = vehicle->GetEntry() == NPC_ANTI_PERSONNAL_CANNON || vehicle->GetEntry() == NPC_KEEP_CANNON
         || vehicle->GetEntry() == NPC_HORDE_GUNSHIP_CANNON || vehicle->GetEntry() == NPC_ALLIANCE_GUNSHIP_CANNON
         || vehicle->GetVehicleBase();
     bool catapult = vehicle->GetEntry() == NPC_CATAPULT;
     bool engine = vehicle->GetEntry() == NPC_SIEGE_ENGINE_A || vehicle->GetEntry() == NPC_SIEGE_ENGINE_H;
+    bool demolisher = vehicle->GetEntry() == NPC_DEMOLISHER || vehicle->GetEntry() == NPC_DEMOLISHER_SA;
     bool glaive = vehicle->GetEntry() == NPC_GLAIVE_THROWER_A || vehicle->GetEntry() == NPC_GLAIVE_THROWER_H;
-    if (!cannon)
+    if (canMove && !cannon)
     {
-        float range = engine ? 8.f : glaive ? 55.f : catapult ? 28.f : 30.f;
+        float range = (engine || demolisher) ? 8.f : glaive ? 45.f : catapult ? 28.f : 30.f;
         Position approach = destination;
         if (building)
         {
@@ -410,34 +730,42 @@ void bot_ai::UpdateSiegeVehicle(uint32 /*diff*/, GameObject* building, Position 
     }
     if (enemy && !vehicle->IsWithinLOSInMap(enemy))
         enemy = nullptr;
+    bool isRamVehicle = engine || demolisher;
     bool siege = building && building->GetDestructibleState() != GO_DESTRUCTIBLE_DESTROYED && !catapult
-        && vehicle->GetExactDist2d(building) <= (engine ? 14.f : cannon ? 200.f : glaive ? 75.f : 45.f);
+        && vehicle->GetExactDist2d(building) <= (isRamVehicle ? 15.f : cannon ? 200.f : glaive ? 75.f : 45.f);
     if (!siege && !enemy)
         return;
     uint32 spell = 0;
-    if (engine)
-        spell = VehicleSpell(vehicle, {67796, 67442, 67441, 67816, 54109, 51678});
+    bool isRamSpell = false;
+    if (isRamVehicle)
+    {
+        if (siege && vehicle->GetExactDist2d(building) <= 14.f)
+        {
+            spell = VehicleSpell(vehicle, {67441, 67796, 67442, 67816, 60206, 54107, 54109, 51678});
+            if (spell)
+                isRamSpell = true;
+        }
+        if (!spell)
+            spell = VehicleSpell(vehicle, {67440, 52338, 50896, 68068});
+    }
     else if (glaive)
-        spell = VehicleSpell(vehicle, {66456, 67195, 67034, 68826, 68827});
+        spell = VehicleSpell(vehicle, {66456, 67034, 67195, 68826, 68827});
     else if (cannon)
         spell = VehicleSpell(vehicle, {49872, 67452, 67461, 51362, 51421, 66518, 66529});
     else if (catapult)
         spell = VehicleSpell(vehicle, {66186, 68832, 50989, 57606, 66296});
     else
     {
-        if (siege && vehicle->GetExactDist2d(building) <= 12.f)
-            spell = VehicleSpell(vehicle, {60206, 67441, 54107});
-        if (!spell)
-            spell = VehicleSpell(vehicle, {52338, 67440, 50896, 68068});
+        spell = VehicleSpell(vehicle, {66203, 67461, 66186, 60206, 67441, 54107, 52338, 67440});
     }
     if (!spell)
         return;
-    if (siege)
+    if (siege && building)
         vehicle->SetFacingToObject(building);
-    else
+    else if (enemy)
         vehicle->SetFacingToObject(enemy);
     SpellCastResult result = SPELL_FAILED_BAD_TARGETS;
-    if (engine)
+    if (isRamSpell)
         result = vehicle->CastSpell(vehicle, spell, false);
     else if (siege && building)
     {
@@ -468,16 +796,19 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
     using namespace NPCBots::SiegeBG;
     Battleground* bg = GetBG();
     auto tick = [diff](uint32& timer) { timer = timer > diff ? timer - diff : 0; };
-    tick(_siegeThinkTimer); tick(_siegeWeaponTimer); tick(_siegeBoardTimer); tick(_siegeBombTimer);
+    tick(_siegeThinkTimer); tick(_siegeWeaponTimer); tick(_siegeBoardTimer); tick(_siegeMountTimer); tick(_siegeBombTimer);
     bool saMap = bg->GetTypeID() == BATTLEGROUND_SA;
     BattlegroundSA* sa = saMap ? static_cast<BattlegroundSA*>(bg) : nullptr;
     if (bg->GetStatus() != STATUS_IN_PROGRESS || (sa && sa->GetRoundStatus() != BG_SA_ROUND_ONE && sa->GetRoundStatus() != BG_SA_ROUND_TWO))
     {
-        if (sa && sa->GetAttackersTeam() != bg->GetBotTeamId(me->GetGUID()))
+        if (sa)
         {
-            Position defense = BG_SA_ObjSpawnlocs[(me->GetGUID().GetCounter() / 5) % 2 ? BG_SA_GREEN_GATE : BG_SA_BLUE_GATE];
-            defense.m_positionX -= 25.f;
-            MoveToSiegeObjective(defense, 7.f, GateMask(bg), false);
+            // Both teams stay at their round spawn during preparation. Reissuing
+            // road movement here on every AI tick makes defenders visibly shake.
+            if (!HasBotCommandState(BOT_COMMAND_STAY))
+                SetBotCommandState(BOT_COMMAND_STAY);
+            if (me->isMoving())
+                me->BotStopMovement();
         }
         return true;
     }
@@ -501,7 +832,7 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
     GameObject* building = nullptr;
     bool defend = !attacker;
     bool finalAssault = false;
-    if (_siegeBombCarrier && !me->HasAura(saMap ? 52418 : 66271))
+    if (_siegeBombCarrier && !me->HasAura(saMap ? 52418 : 66271) && !me->HasAura(68377))
         _siegeBombCarrier = false;
 
     if (sa)
@@ -519,32 +850,41 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
             if (building)
             {
                 destination = building->GetPosition();
-                destination.m_positionX += attacker ? 30.f : -25.f;
-                if (!attacker && id % 5 == 1 && !HasRole(BOT_ROLE_HEAL))
+                destination.m_positionX += attacker ? 30.f : 35.f;
+                if (!attacker && gate != Ancient && SADefenderGunner(id) && !HasRole(BOT_ROLE_HEAL))
                 {
-                    static uint8 const guns[] = { 0, 2, 4, 6, 8, 2 };
-                    if (Creature* cannon = sa->GetBGCreature(guns[uint8(gate)] + id % 2, true))
-                        destination = cannon->GetPosition();
+                    uint8 preferred = SACannonIndex(gate, id);
+                    for (uint8 slot : {preferred, uint8(preferred ^ 1)})
+                        if (Creature* cannon = sa->GetBGCreature(slot, true))
+                            if (cannon->IsAlive() && cannon->GetHealthPct() >= 15.f && cannon->GetVehicleKit() &&
+                                (me->GetVehicleBase() == cannon ||
+                                    (cannon->GetVehicleKit()->HasEmptySeat(0) && !HumanNear(cannon, 10.f))))
+                            {
+                                destination = cannon->GetPosition();
+                                break;
+                            }
                 }
                 me->UpdateAllowedPositionZ(destination.m_positionX, destination.m_positionY, destination.m_positionZ);
             }
         }
-        else
+        else if (attacker)
         {
             objective = sa->GetBGObject(BG_SA_TITAN_RELIC, true);
             finalAssault = true;
         }
-        if (attacker && !me->GetVehicle())
-            for (auto [flagType, gy] : { std::pair{BG_SA_LEFT_FLAG, BG_SA_LEFT_CAPTURABLE_GY},
-                std::pair{BG_SA_RIGHT_FLAG, BG_SA_RIGHT_CAPTURABLE_GY}, std::pair{BG_SA_CENTRAL_FLAG, BG_SA_CENTRAL_CAPTURABLE_GY} })
+        else
+        {
+            // Hold the approach to the chamber. Defenders never receive the
+            // relic's interaction point as their destination, even after breach.
+            destination = BG_SA_ObjSpawnlocs[BG_SA_ANCIENT_GATE];
+            destination.m_positionX += 35.f;
+        }
+        if (attacker)
+            if (GameObject* selected = SelectSAAttackObjective(me, sa))
             {
-                GameObject* flag = sa->GetBGObject(flagType, true);
-                if (flag && !flag->HasFlag(GO_FLAG_NOT_SELECTABLE) && sa->GetGraveyardStatus(gy) != team
-                    && (id % 3 == 2 || me->IsWithinDistInMap(flag, 20.f)))
-                {
-                    objective = flag;
-                    break;
-                }
+                objective = selected;
+                building = nullptr; // A capture runner must not detour for gate bombs.
+                finalAssault = objective == sa->GetBGObject(BG_SA_TITAN_RELIC, true);
             }
     }
     else
@@ -587,9 +927,46 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
                     MoveToSiegeObjective(portal->GetPosition(), 3.f, gates, true);
                 return true;
             }
+        auto selectICEnemyGate = [&](BattlegroundIC* bgIC, TeamId botTeam, Position const& moverPos) -> GameObject* {
+            uint32 const gatesMask = GateMask(bgIC);
+            uint32 const gateEntries[2][3] = {
+                { BG_IC_GO_HORDE_GATE_1, BG_IC_GO_HORDE_GATE_2, BG_IC_GO_HORDE_GATE_3 },
+                { BG_IC_GO_ALLIANCE_GATE_3, BG_IC_GO_ALLIANCE_GATE_1, BG_IC_GO_ALLIANCE_GATE_2 }
+            };
+            uint8 const doorIndices[2][3] = {
+                { BG_IC_H_FRONT, BG_IC_H_WEST, BG_IC_H_EAST },
+                { BG_IC_A_FRONT, BG_IC_A_WEST, BG_IC_A_EAST }
+            };
+            uint8 t = botTeam == TEAM_ALLIANCE ? 0 : 1;
+            GameObject* best = nullptr;
+            float bestDistSq = std::numeric_limits<float>::max();
+            for (uint8 i = 0; i < 3; ++i)
+            {
+                if (!Broken(gatesMask, doorIndices[t][i]))
+                {
+                    if (GameObject* go = bgIC->GetBGObject(gateEntries[t][i], true))
+                    {
+                        if (go->isSpawned() && go->GetDestructibleState() != GO_DESTRUCTIBLE_DESTROYED)
+                        {
+                            float distSq = moverPos.GetExactDistSq(go);
+                            if (i == 0) distSq *= 0.85f;
+                            if (distSq < bestDistSq)
+                            {
+                                bestDistSq = distSq;
+                                best = go;
+                            }
+                        }
+                    }
+                }
+            }
+            return best;
+        };
+
         uint32 enemyMask = team == TEAM_ALLIANCE ? 7u : 56u;
         uint32 ownMask = team == TEAM_ALLIANCE ? 56u : 7u;
-        defend = (gates & ownMask) && (squad == 3 || squad == 6);
+        Creature* ownCommander = ic->GetBGCreature(team == TEAM_ALLIANCE ? BG_IC_NPC_HIGH_COMMANDER_HALFORD_WYRMBANE : BG_IC_NPC_OVERLORD_AGMAR, true);
+        bool commanderAttacked = ownCommander && (ownCommander->IsInCombat() || ownCommander->GetHealthPct() < 95.f);
+        defend = ((gates & ownMask) || commanderAttacked) && (squad == 3 || squad == 6);
         if ((gates & enemyMask) && !defend && squad != 4)
         {
             finalAssault = true;
@@ -638,8 +1015,7 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
             bool ownsVehicleBase = ControlledBy(nodes[node], team) && (node == NODE_TYPE_WORKSHOP || node == NODE_TYPE_DOCKS);
             if (ownsVehicleBase && (id % 5 != 4 || squad == 7))
             {
-                uint32 gateType = team == TEAM_ALLIANCE ? BG_IC_GO_HORDE_GATE_1 : BG_IC_GO_ALLIANCE_GATE_3;
-                building = ic->GetBGObject(gateType, true);
+                building = selectICEnemyGate(ic, team, me->GetPosition());
                 if (building)
                 {
                     destination = building->GetPosition();
@@ -649,9 +1025,45 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
             }
             else if (objective && (ControlledBy(nodes[node], team) || nodes[node].faction == team))
                 objective = nullptr; // Defend the banner during its capture timer.
+            if (!objective && !me->GetVehicle())
+            {
+                for (uint8 i = 0; i < MAX_NODE_TYPES; ++i)
+                {
+                    if (nodes[i].faction != team && !ControlledBy(nodes[i], team))
+                    {
+                        if (GameObject* banner = ic->GetBGObject(nodes[i].gameobject_type, true))
+                        {
+                            if (banner->isSpawned() && me->InSamePhase(banner) && !banner->HasFlag(GO_FLAG_NOT_SELECTABLE) &&
+                                me->IsWithinDistInMap(banner, 25.f))
+                            {
+                                objective = banner;
+                                destination = banner->GetPosition();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
         if (me->GetTransport() && me->GetVehicle())
-            building = ic->GetBGObject(team == TEAM_ALLIANCE ? BG_IC_GO_HORDE_GATE_1 : BG_IC_GO_ALLIANCE_GATE_3, true);
+            building = selectICEnemyGate(ic, team, me->GetPosition());
+        if (me->GetVehicle())
+        {
+            Creature* veh = me->GetVehicleCreatureBase();
+            bool const isSiegeMover = veh && (veh->GetEntry() == NPC_SIEGE_ENGINE_A || veh->GetEntry() == NPC_SIEGE_ENGINE_H
+                || veh->GetEntry() == NPC_DEMOLISHER || veh->GetEntry() == NPC_GLAIVE_THROWER_A || veh->GetEntry() == NPC_GLAIVE_THROWER_H
+                || veh->GetEntry() == NPC_CATAPULT);
+            if (isSiegeMover)
+            {
+                objective = nullptr;
+                if (GameObject* targetGate = selectICEnemyGate(ic, team, me->GetPosition()))
+                {
+                    building = targetGate;
+                    destination = building->GetPosition();
+                    destination.m_positionX += team == TEAM_ALLIANCE ? -35.f : 35.f;
+                }
+            }
+        }
     }
     if (objective)
         destination = objective->GetPosition();
@@ -673,11 +1085,11 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
         UpdateSiegeVehicle(diff, attacker ? building : nullptr, destination, gates, attacker);
         return true;
     }
-    if (!finalAssault && TrySiegeVehicle(defend, squad))
+    if (!finalAssault && !(sa && objective) && !objective && TrySiegeVehicle(defend, squad))
         return true;
-    if (me->IsInCombat())
+    if (!objective && me->IsInCombat())
         return false;
-    if (objective && me->IsWithinDistInMap(objective, INTERACTION_DISTANCE) && me->IsWithinLOSInMap(objective))
+    if (objective && me->IsWithinDistInMap(objective, INTERACTION_DISTANCE) && (!sa || me->IsWithinLOSInMap(objective)))
     {
         if (!objective->HasFlag(GO_FLAG_NOT_SELECTABLE))
         {
@@ -690,19 +1102,30 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
             if (!anotherCaster)
             {
                 DismountBot();
+                removeShapeshiftForm();
                 me->StopMoving();
-                me->CastSpell(objective, OPEN_FLAG_BG, false);
-                return true;
+                me->AttackStop();
+                if (me->CastSpell(objective, OPEN_FLAG_BG, false) == SPELL_CAST_OK)
+                    return true;
             }
         }
     }
+    if (me->IsInCombat())
+        return false;
     // Carry a real bomb payload from an existing supply pile, then plant the native charge.
-    if (attacker && !_siegeBombTimer && !HasRole(BOT_ROLE_HEAL))
+    if (attacker && !objective && !_siegeBombTimer && !HasRole(BOT_ROLE_HEAL))
     {
         if (!_siegeBombCarrier)
         {
             std::list<GameObject*> supplies;
-            me->GetGameObjectListWithEntryInGrid(supplies, saMap ? BG_SA_ObjEntries[BG_SA_BOMB] : GO_SEAFORIUM_BOMBS, building ? 80.f : 8.f);
+            if (saMap)
+                me->GetGameObjectListWithEntryInGrid(supplies, BG_SA_ObjEntries[BG_SA_BOMB], building ? 80.f : 8.f);
+            else
+            {
+                me->GetGameObjectListWithEntryInGrid(supplies, GO_SEAFORIUM_BOMBS, building ? 80.f : 8.f);
+                me->GetGameObjectListWithEntryInGrid(supplies, GO_HUGE_SEAFORIUM_BOMB_A, 80.f);
+                me->GetGameObjectListWithEntryInGrid(supplies, GO_HUGE_SEAFORIUM_BOMB_H, 80.f);
+            }
             GameObject* closestSupply = nullptr;
             for (GameObject* supply : supplies)
                 if (supply->isSpawned() && (!closestSupply || me->GetExactDist(supply) < me->GetExactDist(closestSupply)))
@@ -711,7 +1134,8 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
             {
                 if (me->IsWithinDistInMap(closestSupply, INTERACTION_DISTANCE))
                 {
-                    me->CastSpell(me, saMap ? 52418 : 66271, true);
+                    bool isHuge = closestSupply->GetEntry() == GO_HUGE_SEAFORIUM_BOMB_A || closestSupply->GetEntry() == GO_HUGE_SEAFORIUM_BOMB_H;
+                    me->CastSpell(me, saMap ? 52418 : isHuge ? 68377 : 66271, true);
                     _siegeBombCarrier = true;
                     _siegeBombTimer = 2000;
                 }
@@ -724,10 +1148,12 @@ bool bot_ai::UpdateSiegeBattleground(uint32 diff)
             DismountBot();
             me->StopMoving();
             me->SetFacingToObject(building);
-            if (me->CastSpell(me, saMap ? 52410 : 66268, false) == SPELL_CAST_OK)
+            uint32 plantSpell = saMap ? 52410 : me->HasAura(68377) ? 66674 : 66268;
+            if (me->CastSpell(me, plantSpell, false) == SPELL_CAST_OK)
             {
                 _siegeBombCarrier = false;
                 me->RemoveAurasDueToSpell(saMap ? 52418 : 66271);
+                me->RemoveAurasDueToSpell(68377);
                 _siegeBombTimer = 15000;
             }
             return true;

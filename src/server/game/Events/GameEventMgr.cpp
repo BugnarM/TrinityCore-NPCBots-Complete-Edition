@@ -1070,6 +1070,10 @@ uint32 GameEventMgr::Update()                               // return the next e
     std::set<uint16> activate, deactivate;
     for (uint16 itr = 1; itr < mGameEvent.size(); ++itr)
     {
+        // Internal events are owned by their script/GM commands. CheckOneGameEvent
+        // deliberately returns false for them; it must not mean automatic stop.
+        if (mGameEvent[itr].state==GAMEEVENT_INTERNAL)
+            continue;
         // must do the activating first, and after that the deactivating
         // so first queue it
         //TC_LOG_ERROR("sql.sql", "Checking event {}", itr);

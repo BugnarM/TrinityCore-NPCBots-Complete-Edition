@@ -7,6 +7,7 @@
 #include "BattlegroundSA.h"
 #include "BattlegroundIC.h"
 #include "bot_ai.h"
+#include "botcityraid.h"
 #include "botautoequip.h"
 #include "botraidfinder.h"
 #include "bothazard.h"
@@ -552,6 +553,16 @@ SpellCastResult bot_ai::CheckBotCast(Unit const* victim, uint32 spellId) const
 
     if (int32(me->GetPower(spellInfo->PowerType)) < spellInfo->CalcPowerCost(me, spellInfo->GetSchoolMask()))
         return SPELL_FAILED_NO_POWER;
+
+    if (_cityRaidAI && _cityRaidAI->GetData(NPCBots::CityRaid::BossFormation)
+        && !_cityRaidAI->GetData(NPCBots::CityRaid::AllowTaunt))
+    {
+        uint32 base = spellInfo->GetFirstRankSpell()->Id;
+        if (spellInfo->HasEffect(SPELL_EFFECT_ATTACK_ME) || base == 31789 || base == 49576)
+            return SPELL_FAILED_DONT_REPORT;
+        for (auto const& effect : spellInfo->GetEffects())
+            if (effect.ApplyAuraName == SPELL_AURA_MOD_TAUNT) return SPELL_FAILED_DONT_REPORT;
+    }
 
     if (!IsSpellReady(spellInfo->GetFirstRankSpell()->Id, lastdiff, false))
         return SPELL_FAILED_NOT_READY;
@@ -1469,6 +1480,7 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
 // no need to check global cooldown
 void bot_ai::ResurrectGroup(uint32 spell_id)
 {
+    if (_cityRaidAI) return; // Preserve the event's 20s/30s wave cadence.
     if (!spell_id || Rand() > 10 || me->GetMap()->IsBattlegroundOrArena())
         return;
 
@@ -1636,6 +1648,39 @@ void bot_ai::CureGroup(uint32 cureSpell, uint32 diff)
     if (IsCasting()) return;
 
     Group const* pGroup = !IAmFree() ? master->GetGroup() : me->GetBotGroup();
+    if (_cityRaidAI && pGroup)
+    {
+        uint32 mask = 0;
+        if (SpellInfo const* info = sSpellMgr->GetSpellInfo(cureSpell))
+            for (auto const& effect : info->GetEffects())
+                if (effect.Effect == SPELL_EFFECT_DISPEL) mask |= SpellInfo::GetDispelMask(DispelType(effect.MiscValue));
+        Unit* best = nullptr;
+        float score = -1.f;
+        for (GroupBotReference const* ref = pGroup->GetFirstBotMember(); ref; ref = ref->next())
+        {
+            Creature* ally = ref->GetSource();
+            if (!ally || !ally->IsInWorld() || !ally->IsAlive() || ally->GetMap() != me->GetMap()
+                || !ally->GetBotAI() || !_canCureTarget(ally,cureSpell) || !me->IsWithinLOSInMap(ally)) continue;
+            std::list<Aura const*> effects;
+            _getBotDispellableAuraList(ally,mask,effects);
+            bool control=false, healingDebuff=false;
+            for (Aura const* aura : effects)
+            {
+                for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
+                {
+                    AuraEffect const* effect = aura->GetEffect(i);
+                    if (!effect) continue;
+                    auto type = effect->GetAuraType();
+                    if (type == SPELL_AURA_MOD_STUN || type == SPELL_AURA_MOD_CONFUSE || type == SPELL_AURA_MOD_FEAR) control=true;
+                    if (type == SPELL_AURA_MOD_HEALING_PCT && effect->GetAmount() < 0) healingDebuff=true;
+                }
+            }
+            float priority=NPCBots::CityRaid::DispelPriority(ally->GetBotAI()->HasRole(BOT_ROLE_TANK),ally->GetHealthPct(),control,healingDebuff);
+            if (!effects.empty() && priority > score) { score=priority; best=ally; }
+        }
+        if (best) doCast(best,cureSpell);
+        return;
+    }
     std::list<Unit*> targets;
     if (IAmFree() && (!IsWanderer() || !pGroup || me->IsInCombat()))
     {
@@ -1863,6 +1908,7 @@ bool bot_ai::CanRemoveReflectSpells(Unit const* target, uint32 spellId) const
 
 bool bot_ai::CanTauntTarget(Unit const* target, float dist) const
 {
+    if (_cityRaidAI && _cityRaidAI->GetData(NPCBots::CityRaid::BossFormation) && !_cityRaidAI->GetData(NPCBots::CityRaid::AllowTaunt)) return false;
     Unit const* u = target->GetVictim();
 
     if (u && u != me && Rand() < 50 && dist < 30 &&
@@ -3603,6 +3649,8 @@ void bot_ai::RefreshAura(uint32 spellId, int8 count, Unit* target) const
 
 bool bot_ai::CanBotAttack(Unit const* target, int8 byspell, bool secondary) const
 {
+    if (_battlefieldAI && !_battlefieldAI->CanAIAttack(target)) return false;
+    if (_cityRaidAI && !_cityRaidAI->CanAIAttack(target)) return false;
     if (!target)
         return false;
     if (IsSiegeBattlegroundBot() && GetBG()->GetTypeID() == BATTLEGROUND_IC && !me->GetTransport())
@@ -3644,6 +3692,11 @@ bool bot_ai::CanBotAttack(Unit const* target, int8 byspell, bool secondary) cons
 
     if (IsWanderer() && target->IsCreature() && target->GetVictim() != me)
     {
+        if (target->ToCreature()->IsWandererBot())
+        {
+            if (HasSpawnTruce() || (target->ToCreature()->GetBotAI() && target->ToCreature()->GetBotAI()->HasSpawnTruce()))
+                return false;
+        }
         if (BotCfg::EnableWanderingUntargetNpcQuestgiver() && target->IsQuestGiver())
             return false;
         if (BotCfg::EnableWanderingUntargetNpcFlightmaster() && target->IsTaxi())
@@ -4433,7 +4486,7 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
             return { u, u };
     }
 
-    if (IAmFree() && IsWanderer() && !me->IsInCombat() && me->getAttackers().empty() && (evadeDelayTimer > 7500 || Feasting() || me->GetHealthPct() < 85.f))
+    if (IAmFree() && IsWanderer() && !me->IsInCombat() && me->getAttackers().empty() && (Feasting() || me->GetHealthPct() < 85.f))
         return { nullptr, nullptr };
 
     //check targets around
@@ -4458,7 +4511,7 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
             }
 
             std::erase_if(unitList, [this](Unit const* unit) {
-                if (!unit->IsInCombatWith(me) && !(unit->IsNPCBot() && unit->ToCreature()->IsWandererBot()))
+                if (!unit->IsInCombatWith(me) && !(unit->IsNPCBot() && unit->ToCreature()->IsWandererBot()) && !IsCityRaidBot())
                 {
                     if (unit->IsPlayer())
                     {
@@ -4610,7 +4663,13 @@ bool bot_ai::CheckAttackTarget()
             return false;
     }
 
-    if (Unit* focus = GetArenaFocusTarget(); focus && HasRole(BOT_ROLE_DPS) && CanBotAttack(focus, byspell))
+    Unit* cityFocus = _cityRaidAI ? ObjectAccessor::GetUnit(*me, _cityRaidAI->GetGUID(NPCBots::CityRaid::FocusTarget)) : nullptr;
+    if (cityFocus && cityFocus->IsAlive() && cityFocus->GetMap() == me->GetMap() && CanBotAttack(cityFocus, byspell))
+    {
+        opponent = disttarget = cityFocus;
+        reset = me->GetVictim() != cityFocus;
+    }
+    else if (Unit* focus = GetArenaFocusTarget(); focus && HasRole(BOT_ROLE_DPS) && CanBotAttack(focus, byspell))
     {
         opponent = disttarget = focus;
         reset = me->GetVictim() != focus;
@@ -5889,6 +5948,7 @@ void bot_ai::CalculateAttackPos(Unit* target, Position& pos, bool& force) const
 // Forces bot to chase opponent (if ranged then distance depends on follow distance)
 void bot_ai::GetInPosition(bool force, Unit* newtarget, Position* mypos)
 {
+    if (_cityRaidAI && _cityRaidAI->GetData(NPCBots::CityRaid::FormationOwned)) return;
     Unit* mover = me->GetVehicle() ? me->GetVehicleBase() : me;
     if (HasBotCommandState(BOT_COMMAND_STAY))
         return;
@@ -6073,6 +6133,7 @@ void bot_ai::CheckAttackState()
 //Move behind current target if needed (avoid cleaves and dodges/parries, also rogues/ferals)
 void bot_ai::MoveBehind(Unit const* target) const
 {
+    if (_cityRaidAI && _cityRaidAI->GetData(NPCBots::CityRaid::FormationOwned)) return;
     if (_moveBehindTimer > lastdiff || HasBotCommandState(BOT_COMMAND_MASK_UNMOVING) || HasRole(BOT_ROLE_RANGED) || JumpingOrFalling() ||
         /*(me->isMoving() && !target->IsPlayer()) ||*/
         me->GetVehicle() || (IsTank() && target->GetVictim() == me) || CCed(me, true) ||
@@ -6100,6 +6161,8 @@ void bot_ai::MoveBehind(Unit const* target) const
 //MOUNT SUPPORT
 uint32 bot_ai::_selectMountSpell() const
 {
+    if (IsSiegeBattlegroundBot() && (_siegeBoardTimer || _siegeMountTimer))
+        return 0;
     uint8 minLevel60 = BotCfg::GetNpcBotMountLevel60();
     uint8 minLevel100 = BotCfg::GetNpcBotMountLevel100();
 
@@ -6262,6 +6325,7 @@ uint32 bot_ai::_selectMountSpell() const
 }
 void bot_ai::_updateMountedState()
 {
+    if (IsBattlefieldBot() || IsCityRaidBot()) return; // Objective controller mounts for travel and dismounts at posts/combat.
     bool aura = me->HasAuraType(SPELL_AURA_MOUNTED);
     bool mounted = me->IsMounted() && (_botclass != BOT_CLASS_ARCHMAGE || aura);
     bool template_fly = me->GetCreatureTemplate()->Movement.Flight != CreatureFlightMovementType::None;
@@ -8110,7 +8174,7 @@ bool bot_ai::OnGossipHello(Player* player, uint32 /*option*/)
             reason = -1;
         if (!reason && _botData->owner)
             reason = 1;
-        if (!reason && BotDataMgr::GetOwnedBotsCount(player->GetGUID()) >= BotCfg::GetMaxNpcBots(player->GetLevel()))
+        if (!reason && BotDataMgr::GetOwnedBotsCount(player->GetGUID()) >= BotCfg::GetMaxNpcBots(player))
             reason = 2;
         if (!reason && !player->HasEnoughMoney(cost))
             reason = 3;
@@ -10805,7 +10869,7 @@ bool bot_ai::OnGossipSelect(Player* player, Creature* creature/* == me*/, uint32
                         break;
                     }
                     case 2: //max npcbots exceed
-                        ch.PSendSysMessage(LocalizedNpcText(player, BOT_TEXT_HIREFAIL_MAXBOTS).c_str(), BotCfg::GetMaxNpcBots(player->GetLevel()));
+                        ch.PSendSysMessage(LocalizedNpcText(player, BOT_TEXT_HIREFAIL_MAXBOTS).c_str(), BotCfg::GetMaxNpcBots(player));
                         BotSay("...", player);
                         break;
                     case 3: //not enough money
@@ -15235,7 +15299,7 @@ void bot_ai::DefaultInit()
     }
 
     me->SetPvP(master->IsPvP() || IsWanderer());
-    if (sWorld->IsFFAPvPRealm())
+    if (sWorld->IsFFAPvPRealm() && !IsBattlefieldBot() && !IsCityRaidBot())
         me->SetByteFlag(UNIT_FIELD_BYTES_2, 1, UNIT_BYTE2_FLAG_FFA_PVP);
     else if (IAmFree())
         me->SetByteFlag(UNIT_FIELD_BYTES_2, 1, 0);
@@ -16370,6 +16434,7 @@ bool bot_ai::StartAttack(Unit const* u, bool force)
 void bot_ai::JustEnteredCombat(Unit* u)
 {
     _atHome = false;
+    _spawnTruceTimer = 0;
 
     //clear gossip during combat. See CheckAuras() for restore
     if (me->HasNpcFlag(UNIT_NPC_FLAG_GOSSIP))
@@ -16425,6 +16490,8 @@ void bot_ai::JustExitedCombat()
 //killer may be NULL
 void bot_ai::JustDied(Unit* u)
 {
+    if (_battlefieldAI) _battlefieldAI->JustDied(u);
+    if (_cityRaidAI) _cityRaidAI->JustDied(u);
     AbortTeleport();
     AbortAwaitStateRemoval();
     KillEvents(false);
@@ -16461,7 +16528,10 @@ void bot_ai::JustDied(Unit* u)
             if (WorldSafeLocsEntry const* gy = bg->GetClosestGraveyardForBot(*me, my_team == TEAM_HORDE ? HORDE : ALLIANCE))
             {
                 Position pos(gy->Loc.X, gy->Loc.Y, gy->Loc.Z, me->GetOrientation());
-                Events.AddEventAtOffset([me = me, pos = pos]() { BotMgr::TeleportBot(me, me->GetMap(), &pos, true); }, 5s);
+                Events.AddEventAtOffset([me = me, pos = pos]() {
+                    BotDataMgr::SpawnBotBones(me);
+                    BotMgr::TeleportBot(me, me->GetMap(), &pos, true);
+                }, 5s);
             }
         }
     }
@@ -16474,7 +16544,7 @@ void bot_ai::JustDied(Unit* u)
             IsWanderer() ? _travel_node_cur->GetName() : "''");
     }
 
-    _reviveTimer = (IsWanderer() && !(u && u->IsControlledByPlayer())) ? REVIVE_TIMER_MEDIUM :
+    _reviveTimer = IsWanderer() ? 300000 : // Wanderers release spirit after 5 minutes (300 seconds)
         IAmFree() ? REVIVE_TIMER_DEFAULT : master->InBattleground() ? REVIVE_TIMER_BG : REVIVE_TIMER_SHORT;
     _atHome = false;
     _evadeMode = false;
@@ -16522,6 +16592,8 @@ void bot_ai::OnDeath([[maybe_unused]] Unit* attacker/* = nullptr*/)
 
 void bot_ai::KilledUnit(Unit* u)
 {
+    if (_battlefieldAI) _battlefieldAI->KilledUnit(u);
+    if (_cityRaidAI) _cityRaidAI->KilledUnit(u);
     if (u->GetOwnerGUID() == me->GetGUID() || u->GetGUID() == me->GetGUID())
         return;
 
@@ -16635,12 +16707,32 @@ void bot_ai::UnsummonPet(bool save)
     UnsummonCreature(botPet, save);
 }
 
+bool bot_ai::TryCityRaidSpell(uint32 baseSpell, Unit* target)
+{
+    if (!_cityRaidAI || !target || !target->IsInWorld() || !target->IsAlive() || !me->IsAlive() || !me->IsInWorld()
+        || target->GetMap() != me->GetMap() || IsCasting() || CCed(me)) return false;
+    uint32 spell = GetSpell(baseSpell);
+    return spell && IsSpellReady(baseSpell, lastdiff) && doCast(target, spell);
+}
+
 void bot_ai::MoveInLineOfSight(Unit* /*u*/)
 {
 }
 
-void bot_ai::AttackStart(Unit* /*u*/)
+void bot_ai::AttackStart(Unit* u)
 {
+    // Ordinary owner/wanderer target selection remains class-driven. A battlefield
+    // may explicitly focus a nearby threat without replacing the class rotation.
+    if ((!_battlefieldAI && !_cityRaidAI) || !u || !CanBotAttack(u)) return;
+    opponent = disttarget = u;
+    SetBotCommandState(BOT_COMMAND_COMBATRESET);
+    me->Attack(u, !IsRanged());
+}
+
+void bot_ai::DamageTaken(Unit* attacker, uint32& /*damage*/, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/)
+{
+    if (attacker && _spawnTruceTimer > 0)
+        _spawnTruceTimer = 0;
 }
 
 void bot_ai::DamageDealt(Unit* victim, uint32& damage, DamageEffectType /*damageType*/)
@@ -16672,6 +16764,7 @@ void bot_ai::OnBotSpellStart(SpellInfo const* spellInfo)
 void bot_ai::OnBotSpellGo(Spell const* spell, bool ok)
 {
     SpellInfo const* curInfo = spell->GetSpellInfo();
+    if (ok && _battlefieldAI) _battlefieldAI->OnSpellCast(curInfo);
 
     if (ok)
     {
@@ -18205,6 +18298,7 @@ uint8 bot_ai::LivingVehiclesCount(uint32 entry) const
 //GLOBAL UPDATE
 void bot_ai::UpdateDeadAI(uint32 diff)
 {
+    if (_cityRaidAI) return; // The event owns corpse release and fixed resurrection waves.
     // group update
     if (_groupUpdateTimer <= diff)
         SendUpdateToOutOfRangeBotGroupMembers();
@@ -18546,7 +18640,7 @@ bool bot_ai::GlobalUpdate(uint32 diff)
         //ensure master is not controlled
         ChrRacesEntry const* rEntry = sChrRacesStore.LookupEntry(master->GetRace());
         uint32 fac_orig = rEntry ? rEntry->FactionID : 0;
-        if (master->GetFaction() == fac_orig)
+        if (!IsBattlefieldBot() && !IsCityRaidBot() && master->GetFaction() == fac_orig)
         {
             uint32 fac = (!IAmFree() && me->GetMap()->IsBattleArena()) ? uint32(FACTION_MONSTER) : fac_orig;
             if (me->GetFaction() != fac)
@@ -18877,10 +18971,23 @@ bool bot_ai::GlobalUpdate(uint32 diff)
             me->RemoveUnitFlag(UNIT_FLAG_PET_IN_COMBAT);
     }
 
+    if (_battlefieldAI)
+    {
+        _battlefieldAI->UpdateAI(diff);
+        me->RemoveNpcFlag(UNIT_NPC_FLAG_GOSSIP);
+        if (me->GetVehicle()) return false; // Native WG vehicle AI controls driving and weapons.
+    }
+
+    if (_cityRaidAI)
+    {
+        _cityRaidAI->UpdateAI(diff);
+        me->RemoveNpcFlag(UNIT_NPC_FLAG_GOSSIP);
+    }
+
     if (IsSiegeBattlegroundBot() && UpdateSiegeBattleground(diff))
         return false;
 
-    if (!me->GetVictim() && !IsSiegeBattlegroundBot())
+    if (!me->GetVictim() && !IsSiegeBattlegroundBot() && !IsBattlefieldBot() && !IsCityRaidBot())
         Evade();
 
     if (HasBotCommandState(BOT_COMMAND_FULLSTOP))
@@ -19115,6 +19222,14 @@ void bot_ai::CommonTimers(uint32 diff)
     if (_moveBehindTimer > diff)    _moveBehindTimer -= diff;
     if (itemsAutouseTimer > diff)   itemsAutouseTimer -= diff;
     if (evadeDelayTimer > diff)     evadeDelayTimer -= diff;
+    if (_spawnTruceTimer > diff)
+    {
+        _spawnTruceTimer -= diff;
+        if (me->GetExactDist2d(&homepos) > 150.f)
+            _spawnTruceTimer = 0;
+    }
+    else
+        _spawnTruceTimer = 0;
     if (roleTimer > diff)           roleTimer -= diff;
     if (actionsTimer > diff)        actionsTimer -= diff;
     if (_checkMasterTimer > diff)   _checkMasterTimer -= diff;
@@ -19169,6 +19284,7 @@ void bot_ai::CommonTimers(uint32 diff)
 
 void bot_ai::UpdateReviveTimer(uint32 diff)
 {
+    if (_battlefieldAI || _cityRaidAI) return; // Battlefield / City Raid roster owns graveyard timing and replacement.
     if (GetBG() && GetBG()->isArena())
         return;
     if (me->IsAlive())
@@ -19179,10 +19295,11 @@ void bot_ai::UpdateReviveTimer(uint32 diff)
     {
         if (IAmFree())
         {
-            BotMgr::ReviveBot(me);
-
             if (IsWanderer())
             {
+                // Release spirit after 5 seconds: leave behind skeletal bones
+                BotDataMgr::SpawnBotBones(me);
+
                 outdoorsTimer = 0;
                 if (me->GetMap()->GetEntry()->IsContinent() || me->GetMap()->IsBattlegroundOrArena())
                 {
@@ -19196,7 +19313,10 @@ void bot_ai::UpdateReviveTimer(uint32 diff)
                         return;
                     }
 
+                    BotMgr::ReviveBot(me);
+
                     homepos.Relocate(nextNode);
+                    me->SetHomePosition(homepos);
                     if (me->GetMap()->GetEntry()->IsContinent())
                         BotMgr::TeleportBot(me, sMapMgr->CreateBaseMap(nextNode->GetMapId()), nextNode, true);
 
@@ -19209,6 +19329,8 @@ void bot_ai::UpdateReviveTimer(uint32 diff)
                     return;
                 }
             }
+
+            BotMgr::ReviveBot(me);
         }
         else
             if (_reviveTimer > 0)   _reviveTimer = 0;
@@ -19217,8 +19339,8 @@ void bot_ai::UpdateReviveTimer(uint32 diff)
 
 void bot_ai::Evade()
 {
-    if (IsSiegeBattlegroundBot())
-        return; // Siege routing owns idle movement, including after combat.
+    if (IsSiegeBattlegroundBot() || IsBattlefieldBot() || IsCityRaidBot())
+        return; // Objective routing owns idle movement, including after combat.
     if (_atHome && !_evadeMode)
         return;
     if (evadeDelayTimer > lastdiff)
@@ -19361,6 +19483,7 @@ void bot_ai::Evade()
                     float cdist = nextNode->HasFlag(BotWPFlags::BOTWP_FLAG_INTERACTION_MILL_RADIUS) ? frand(INTERACTION_DISTANCE * 0.25f, INTERACTION_DISTANCE) : frand(8.0f, 15.0f);
                     Position cnpos = me->GetFirstCollisionPosition(cdist, cangle);
                     homepos.Relocate(cnpos);
+                    me->SetHomePosition(homepos);
                     evadeDelayTimer = urand(4000, 6000);
                 }
                 else
@@ -19383,6 +19506,7 @@ void bot_ai::Evade()
                             z += 2.f;
                     }
                     homepos.Relocate(x, y, z, o);
+                    me->SetHomePosition(homepos);
                     if (me->GetMap()->GetEntry()->IsContinent())
                         evadeDelayTimer = urand(_travel_node_cur->GetWaitTime().first, _travel_node_cur->GetWaitTime().second);
                     else
@@ -19705,6 +19829,7 @@ void bot_ai::SetDynamicWanderZone(WanderNode const* spawn)
     _travel_node_cur = spawn;
     _travel_node_last = nullptr;
     homepos.Relocate(spawn);
+    _spawnTruceTimer = BotCfg::GetBotWandererSpawnTruceTime() * 1000;
 }
 
 /*static */bool bot_ai::IsWanderNodeAvailableForBotFaction(WanderNode const* wp, uint32 factionTemplateId, bool teleport, bool spawn)
@@ -21140,6 +21265,7 @@ void bot_ai::SetWanderer()
     if (IAmFree())
     {
         _wanderer = true;
+        _spawnTruceTimer = BotCfg::GetBotWandererSpawnTruceTime() * 1000;
         if (botPet)
             botPet->GetBotPetAI()->SetWanderer();
     }
@@ -21156,7 +21282,7 @@ void bot_ai::OnBotEnterVehicle(Vehicle const* vehicle)
     {
         if (seat->Flags & VEHICLE_SEAT_FLAG_CAN_CONTROL)
         {
-            if (IsSiegeBattlegroundBot())
+            if (IsSiegeBattlegroundBot() || IsBattlefieldBot())
                 _siegeVehicleFaction = vehicle->GetBase()->GetFaction();
             vehicle->GetBase()->SetFaction(master->GetFaction());
             //vehicle->GetBase()->SetOwnerGUID(master->GetGUID());
@@ -21228,7 +21354,7 @@ void bot_ai::OnBotExitVehicle(Vehicle const* vehicle)
             vehicle->GetBase()->SetControlledByPlayer(false);
             vehicle->GetBase()->RemoveCharmedBy(me);
             vehicle->GetBase()->RestoreFaction();
-            if (IsSiegeBattlegroundBot() && _siegeVehicleFaction)
+            if ((IsSiegeBattlegroundBot() || IsBattlefieldBot()) && _siegeVehicleFaction)
                 vehicle->GetBase()->SetFaction(_siegeVehicleFaction);
             //vehicle->GetBase()->SetOwnerGUID(ObjectGuid::Empty);
             vehicle->GetBase()->SetCreator(nullptr);
@@ -21238,7 +21364,7 @@ void bot_ai::OnBotExitVehicle(Vehicle const* vehicle)
             vehicle->GetBase()->SetByteValue(UNIT_FIELD_BYTES_2, 1, 0);
 
             _curVehStrat = BOT_VEH_STRAT_NONE;
-            if (vehicle->GetBase()->IsSummon() && !IsSiegeBattlegroundBot())
+            if (vehicle->GetBase()->IsSummon() && !IsSiegeBattlegroundBot() && !IsBattlefieldBot())
                 vehicle->GetBase()->ToCreature()->DespawnOrUnsummon(1ms);
         }
     }

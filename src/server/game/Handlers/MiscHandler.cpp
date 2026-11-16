@@ -1225,6 +1225,8 @@ void WorldSession::HandleUpdateMissileTrajectory(WorldPacket& recvPacket)
     spell->m_targets.SetPitch(pitch);
     spell->m_targets.SetSpeed(speed);
 
+    spell->ClientUpdatedTrajectory();
+
     if (moveStop)
     {
         OpcodeClient opcode = static_cast<OpcodeClient>(recvPacket.read<uint32>());

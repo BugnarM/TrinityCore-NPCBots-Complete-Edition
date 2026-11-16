@@ -20,6 +20,7 @@
 /// @todo Add proper implement of achievement
 
 #include "BattlefieldWG.h"
+#include "bot_ai.h"
 #include "AchievementMgr.h"
 #include "BattlefieldMgr.h"
 #include "Config.h"
@@ -44,6 +45,7 @@
 #include "WorldSession.h"
 #include "WorldStatePackets.h"
 #include "Northrend/wintergrasp_bot_war.h"
+#include "Northrend/wintergrasp_tactics.h"
 
 struct BfWGCoordGY
 {
@@ -549,6 +551,8 @@ bool BattlefieldWG::SetupBattlefield()
 
 bool BattlefieldWG::Update(uint32 diff)
 {
+    if (IsWarTime() && WintergraspBotWar::BotBattleStats.Active)
+        WintergraspBotWar::BotBattleStats.Elapsed += diff;
     bool m_return = Battlefield::Update(diff);
     if (m_saveTimer <= diff)
     {
@@ -570,6 +574,11 @@ bool BattlefieldWG::Update(uint32 diff)
 void BattlefieldWG::OnBattleStart()
 {
     ++m_botWarBattleSerial;
+    m_promotedBotWarVictims.clear();
+    if (sConfigMgr->GetBoolDefault("Wintergrasp.BotWar.Enable", false, true))
+        WintergraspBotWar::BotBattleStats.Start(m_botWarBattleSerial, GetAttackerTeam());
+    else
+        WintergraspBotWar::BotBattleStats.Active=false;
     // Spawn titan relic
     if (GameObject* relic = SpawnGameObject(GO_WINTERGRASP_TITAN_S_RELIC, WintergraspRelicPos, WintergraspRelicRot))
     {
@@ -653,6 +662,20 @@ void BattlefieldWG::UpdateCounterVehicle(bool init)
 
 void BattlefieldWG::OnBattleEnd(bool endByTimer)
 {
+    auto& stats = WintergraspBotWar::BotBattleStats;
+    if (stats.Active)
+    {
+        auto const& a = stats.Teams[TEAM_ALLIANCE];
+        auto const& h = stats.Teams[TEAM_HORDE];
+        stats.Finish(GetDefenderTeam());
+        TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=battle_end serial={} attacker={} winner={} timer={} participated={} army_started_ms={} duration_ms={} first_breach_ms={} built_a={} built_h={} lost_a={} lost_h={} salvaged_a={} salvaged_h={} captures_a={} captures_h={} first_capture_a_ms={} first_capture_h_ms={} stalls_a={} stalls_h={} recovered_a={} recovered_h={} kills_a={} kills_h={} deaths_a={} deaths_h={} interrupt_casts_a={} interrupt_casts_h={} control_casts_a={} control_casts_h={} attacker_battles_a={} attacker_battles_h={} attacker_wins_a={} attacker_wins_h={}",
+            stats.Serial, stats.Attacker, GetDefenderTeam(), endByTimer, stats.Participated, stats.ArmyStartedMs, stats.Elapsed, stats.FirstBreachMs,
+            a.Built,h.Built,a.Lost,h.Lost,a.RecoveredVehicles,h.RecoveredVehicles,a.Captures,h.Captures,
+            a.FirstCaptureMs,h.FirstCaptureMs,a.InfantryStalls+a.VehicleStalls,h.InfantryStalls+h.VehicleStalls,
+            a.InfantryRecovered+a.VehicleRecovered,h.InfantryRecovered+h.VehicleRecovered,
+            a.Kills,h.Kills,a.BotDeaths,h.BotDeaths,a.Interrupts,h.Interrupts,a.Controls,h.Controls,
+            stats.Battles[0],stats.Battles[1],stats.AttackerWins[0],stats.AttackerWins[1]);
+    }
     // Remove relic
     if (!m_titansRelicGUID.IsEmpty())
         if (GameObject* relic = GetGameObject(m_titansRelicGUID))
@@ -855,7 +878,8 @@ void BattlefieldWG::OnCreatureCreate(Creature* creature)
                 Unit* summoner = summon ? summon->GetSummonerUnit() : nullptr;
                 Player* creator = summoner ? summoner->ToPlayer() : nullptr;
                 Creature* bot = summoner ? summoner->ToCreature() : nullptr;
-                bool botVehicle = bot && bot->GetEntry() >= 80501 && bot->GetEntry() <= 80508
+                bool botVehicle = bot && ((bot->GetEntry() >= 80501 && bot->GetEntry() <= 80508)
+                    || (bot->IsNPCBot() && bot->GetBotAI()->IsBattlefieldBot()))
                     && sConfigMgr->GetBoolDefault("Wintergrasp.BotWar.Enable", false, true);
                 if (!creator && !botVehicle)
                 {
@@ -874,6 +898,8 @@ void BattlefieldWG::OnCreatureCreate(Creature* creature)
                         UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_H, 1);
                         creature->AddAura(SPELL_HORDE_FLAG, creature);
                         m_vehicles[team].insert(creature->GetGUID());
+                        if (WintergraspBotWar::BotBattleStats.Active)
+                            ++WintergraspBotWar::BotBattleStats.Teams[team].Built;
                         UpdateVehicleCountWG();
                     }
                     else
@@ -889,6 +915,8 @@ void BattlefieldWG::OnCreatureCreate(Creature* creature)
                         UpdateData(BATTLEFIELD_WG_DATA_VEHICLE_A, 1);
                         creature->AddAura(SPELL_ALLIANCE_FLAG, creature);
                         m_vehicles[team].insert(creature->GetGUID());
+                        if (WintergraspBotWar::BotBattleStats.Active)
+                            ++WintergraspBotWar::BotBattleStats.Teams[team].Built;
                         UpdateVehicleCountWG();
                     }
                     else
@@ -962,6 +990,8 @@ void BattlefieldWG::HandleKill(Player* killer, Unit* victim)
         // Allow to Skin non-released corpse
         victim->SetUnitFlag(UNIT_FLAG_SKINNABLE);
     }
+    else
+        HandleBotWarPromotion(killer->GetTeamId(), victim); // Includes a player's pets and vehicle kills.
 
     /// @todoRecent PvP activity worldstate
 }
@@ -988,10 +1018,17 @@ bool BattlefieldWG::FindAndRemoveVehicleFromList(Unit* vehicle)
 
 void BattlefieldWG::OnUnitDeath(Unit* unit)
 {
-    if (IsWarTime())
-        if (unit->IsVehicle())
-            if (FindAndRemoveVehicleFromList(unit))
-                UpdateVehicleCountWG();
+    if (IsWarTime() && unit->IsVehicle())
+    {
+        // Registry membership is authoritative even while a player possesses
+        // the vehicle and temporarily changes its faction and AI.
+        if (WintergraspBotWar::BotBattleStats.Active)
+            for (uint32 team=0;team<PVP_TEAMS_COUNT;++team)
+                if (m_vehicles[team].find(unit->GetGUID())!=m_vehicles[team].end())
+                    ++WintergraspBotWar::BotBattleStats.Teams[team].Lost;
+        if (FindAndRemoveVehicleFromList(unit))
+            UpdateVehicleCountWG();
+    }
 }
 
 void BattlefieldWG::HandlePromotion(Player* playerKiller, Unit* unitKilled)
@@ -1002,6 +1039,30 @@ void BattlefieldWG::HandlePromotion(Player* playerKiller, Unit* unitKilled)
         if (Player* player = ObjectAccessor::FindPlayer(*iter))
             if (player->GetDistance2d(unitKilled) < 40.0f)
                 PromotePlayer(player);
+}
+
+// One generated BotWar GUID represents one life. Both native player/pet kills
+// and allied NPCBot finishing blows reach this path, without double promotions.
+void BattlefieldWG::HandleBotWarPromotion(TeamId team, Unit* killed)
+{
+    if (!IsWarTime() || team >= PVP_TEAMS_COUNT || !killed || killed->GetMapId() != 571
+        || killed->GetZoneId() != m_ZoneId || !sConfigMgr->GetBoolDefault("Wintergrasp.BotWar.Enable", false, true))
+        return;
+    Creature* bot = killed->ToCreature();
+    if (!bot || bot->GetFaction() != WintergraspFaction[TeamId(1-team)]
+        || !((bot->GetEntry() >= 80501 && bot->GetEntry() <= 80508)
+            || (bot->IsNPCBot() && bot->GetBotAI()->IsBattlefieldBot())))
+        return;
+    if (!m_promotedBotWarVictims.insert(killed->GetGUID()).second)
+        return;
+    for (ObjectGuid guid : m_PlayersInWar[team])
+        if (Player* player = ObjectAccessor::FindPlayer(guid))
+            if (player->GetMap() == killed->GetMap() && player->GetDistance2d(killed) < 40.f)
+            {
+                PromotePlayer(player);
+                TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=player_rank_credit team={} name={} victim={}",
+                    uint32(team), player->GetName(), killed->GetEntry());
+            }
 }
 
 // Update rank for player
@@ -1374,6 +1435,29 @@ GameObject* BattlefieldWG::GetBotWarWorkshopFlag(bool west)
     return cp ? cp->GetCapturePointGo() : nullptr;
 }
 
+GameObject* BattlefieldWG::GetBotWarWorkshopFlagForArea(uint32 area)
+{
+    uint32 entry;
+    switch (area)
+    {
+        case AREA_THE_BROKEN_TEMPLATE: entry = GO_WINTERGRASP_FACTORY_BANNER_NW; break;
+        case AREA_THE_SUNKEN_RING: entry = GO_WINTERGRASP_FACTORY_BANNER_NE; break;
+        case AREA_WESTPARK_WORKSHOP: entry = GO_WINTERGRASP_FACTORY_BANNER_SW; break;
+        case AREA_EASTPARK_WORKSHOP: entry = GO_WINTERGRASP_FACTORY_BANNER_SE; break;
+        default: return nullptr;
+    }
+    BfCapturePoint* cp = GetCapturePoint(entry);
+    return cp ? cp->GetCapturePointGo() : nullptr;
+}
+
+TeamId BattlefieldWG::GetBotWarWorkshopControl(uint8 id) const
+{
+    for (WintergraspWorkshop const* workshop : Workshops)
+        if (workshop->GetId() == id)
+            return workshop->GetTeamControl();
+    return TEAM_NEUTRAL;
+}
+
 uint32 WintergraspCapturePoint::GetScriptedParticipantCount(TeamId team)
 {
     if (!m_Bf->IsWarTime() || !sConfigMgr->GetBoolDefault("Wintergrasp.BotWar.Enable", false, true))
@@ -1385,15 +1469,13 @@ uint32 WintergraspCapturePoint::GetScriptedParticipantCount(TeamId team)
 
     uint32 count = 0;
     float radius = float(flag->GetGOInfo()->capturePoint.radius);
-    for (uint32 entry = 80501; entry <= 80508; ++entry)
-    {
-        std::list<Creature*> bots;
-        GetCreatureListWithEntryInGrid(bots, flag, entry, radius);
-        for (Creature* bot : bots)
-            if (bot->IsAlive() && bot->ToTempSummon() && !bot->GetVehicle()
-                && bot->GetFaction() == WintergraspFaction[team])
-                ++count;
-    }
+    std::list<Creature*> bots;
+    GetCreatureListWithEntryInGrid(bots, flag, 0, radius);
+    for (Creature* bot : bots)
+        if (bot->IsAlive() && !bot->GetVehicle() && bot->GetFaction() == WintergraspFaction[team]
+            && ((bot->GetEntry() >= 80501 && bot->GetEntry() <= 80508 && bot->ToTempSummon())
+                || (bot->IsNPCBot() && bot->GetBotAI()->IsBattlefieldBot())))
+            ++count;
     return count;
 }
 
@@ -1503,6 +1585,13 @@ void BfWGGameObjectBuilding::Damaged()
 
 void BfWGGameObjectBuilding::Destroyed()
 {
+    auto& stats=WintergraspBotWar::BotBattleStats;
+    uint32 entry=_buildGUID.GetEntry();
+    if (stats.Active && (entry==190375 || entry==190371 || entry==190372 || entry==191805 || entry==191810))
+    {
+        if (!stats.FirstBreachMs) stats.FirstBreachMs=stats.Elapsed;
+        TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=breach serial={} elapsed_ms={} building={}",stats.Serial,stats.Elapsed,entry);
+    }
     // Update worldstate
     _state = WintergraspGameObjectState(BATTLEFIELD_WG_OBJECTSTATE_ALLIANCE_DESTROY - (_teamControl * 3));
     _wg->SendUpdateWorldState(_worldState, _state);
@@ -1804,6 +1893,15 @@ uint8 WintergraspWorkshop::GetId() const
 
 void WintergraspWorkshop::GiveControlTo(TeamId teamId, bool init /*= false*/)
 {
+    auto& stats = WintergraspBotWar::BotBattleStats;
+    if (!init && stats.Active && teamId < TEAM_NEUTRAL && teamId != _teamControl)
+    {
+        auto& counter = stats.Teams[teamId];
+        ++counter.Captures;
+        if (!counter.FirstCaptureMs) counter.FirstCaptureMs = stats.Elapsed;
+        TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=capture serial={} elapsed_ms={} team={} workshop={}",
+            stats.Serial, stats.Elapsed, teamId, GetId());
+    }
     switch (teamId)
     {
         case TEAM_NEUTRAL:

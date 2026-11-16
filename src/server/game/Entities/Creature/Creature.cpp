@@ -2662,6 +2662,9 @@ bool Creature::CanCreatureAttack(Unit const* victim, bool /*force*/) const
         if (GetMap()->IsDungeon())
             return true;
 
+        if (IsNPCBot())
+            return true;
+
         // don't check distance to home position if recently damaged, this should include taunt auras
         if (!isWorldBoss() && (GetLastDamagedTime() > GameTime::GetGameTime() || HasAuraType(SPELL_AURA_MOD_TAUNT)))
             return true;
@@ -2754,14 +2757,31 @@ bool Creature::LoadCreaturesAddon()
     return true;
 }
 
-/// Send a message to LocalDefense channel for players opposition team in the zone
-void Creature::SendZoneUnderAttackMessage(Player* attacker)
+/// Send a message to LocalDefense / WorldDefense channel for players opposition team in the zone
+void Creature::SendZoneUnderAttackMessage(Unit* attacker)
 {
-    uint32 enemy_team = attacker->GetTeam();
+    if (!attacker || attacker->IsFriendlyTo(this))
+        return;
 
-    WorldPacket data(SMSG_ZONE_UNDER_ATTACK, 4);
-    data << (uint32)GetAreaId();
-    sWorld->SendGlobalMessage(&data, nullptr, (enemy_team == ALLIANCE ? HORDE : ALLIANCE));
+    uint32 enemy_team = TEAM_NEUTRAL;
+    if (Player* player = attacker->GetCharmerOrOwnerPlayerOrPlayerItself())
+        enemy_team = player->GetTeam();
+    else if (attacker->IsCreature() && attacker->ToCreature()->IsNPCBot())
+        enemy_team = BotDataMgr::GetTeamForFaction(attacker->GetFaction());
+    else if (FactionTemplateEntry const* fte = sFactionTemplateStore.LookupEntry(attacker->GetFaction()))
+    {
+        if (fte->FactionGroup & FACTION_MASK_ALLIANCE)
+            enemy_team = ALLIANCE;
+        else if (fte->FactionGroup & FACTION_MASK_HORDE)
+            enemy_team = HORDE;
+    }
+
+    if (enemy_team != ALLIANCE && enemy_team != HORDE)
+        return;
+
+    // Map workers enqueue values only. The world thread throttles and broadcasts
+    // after the map-update barrier, without racing the global session container.
+    sWorld->QueueZoneUnderAttack(GetAreaId(),enemy_team==ALLIANCE?HORDE:ALLIANCE);
 }
 
 uint32 Creature::GetShieldBlockValue() const                  //dunno mob block value

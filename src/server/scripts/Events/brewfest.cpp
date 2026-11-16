@@ -82,6 +82,8 @@ class spell_brewfest_giddyup : public AuraScript
         if (GetTargetApplication()->GetRemoveMode() == AURA_REMOVE_BY_DEFAULT)
         {
             target->RemoveAura(SPELL_RAM_TROT);
+            target->RemoveAura(SPELL_RAM_CANTER);
+            target->RemoveAura(SPELL_RAM_GALLOP);
             target->CastSpell(target, SPELL_RAM_LEVEL_NEUTRAL, true);
         }
     }
@@ -164,13 +166,14 @@ class spell_brewfest_ram_fatigue : public AuraScript
     {
         Unit* target = GetTarget();
 
-        if (GetStackAmount() == 101)
+        if (GetStackAmount() >= 100)
         {
             target->RemoveAura(SPELL_RAM_LEVEL_NEUTRAL);
             target->RemoveAura(SPELL_RAM_TROT);
             target->RemoveAura(SPELL_RAM_CANTER);
             target->RemoveAura(SPELL_RAM_GALLOP);
             target->RemoveAura(SPELL_GIDDYUP);
+            target->RemoveAura(GetId());
 
             target->CastSpell(target, SPELL_EXHAUSTED_RAM, true);
         }
@@ -248,6 +251,11 @@ class spell_brewfest_relay_race_turn_in : public SpellScript
             aura->SetDuration(aura->GetDuration() + 30 * IN_MILLISECONDS);
             GetCaster()->CastSpell(GetHitUnit(), SPELL_RELAY_RACE_TURN_IN, TRIGGERED_FULL_MASK);
         }
+        else if (Aura* aura = GetHitUnit()->GetAura(SPELL_RENTAL_RACING_RAM))
+        {
+            aura->SetDuration(aura->GetDuration() + 30 * IN_MILLISECONDS);
+            GetCaster()->CastSpell(GetHitUnit(), SPELL_RELAY_RACE_TURN_IN, TRIGGERED_FULL_MASK);
+        }
     }
 
     void Register() override
@@ -263,7 +271,17 @@ class spell_brewfest_dismount_ram : public SpellScript
 
     void HandleScript(SpellEffIndex /*effIndex*/)
     {
-        GetCaster()->RemoveAura(SPELL_RENTAL_RACING_RAM);
+        Unit* caster = GetCaster();
+        caster->RemoveAura(SPELL_RENTAL_RACING_RAM);
+        caster->RemoveAura(SPELL_SWIFT_WORK_RAM);
+        caster->RemoveAura(SPELL_RENTAL_RACING_RAM_AURA);
+        caster->RemoveAura(SPELL_RAM_LEVEL_NEUTRAL);
+        caster->RemoveAura(SPELL_RAM_TROT);
+        caster->RemoveAura(SPELL_RAM_CANTER);
+        caster->RemoveAura(SPELL_RAM_GALLOP);
+        caster->RemoveAura(SPELL_GIDDYUP);
+        caster->RemoveAura(SPELL_RAM_FATIGUE);
+        caster->RemoveAura(SPELL_EXHAUSTED_RAM);
     }
 
     void Register() override
@@ -323,24 +341,37 @@ class spell_brewfest_barker_bunny : public AuraScript
     void OnApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
         Player* target = GetTarget()->ToPlayer();
+        if (!target)
+            return;
+
+        if (!target->HasAura(SPELL_RENTAL_RACING_RAM) && !target->HasAura(SPELL_SWIFT_WORK_RAM))
+            return;
+
+        uint8 bunnyIndex = 0;
+        switch (GetId())
+        {
+            case 43259: bunnyIndex = 0; break;
+            case 43260: bunnyIndex = 1; break;
+            case 43261: bunnyIndex = 2; break;
+            case 43262: bunnyIndex = 3; break;
+            default: return;
+        }
+
+        static constexpr uint32 drohnTexts[4] = { SAY_DROHN_DISTILLERY_1, SAY_DROHN_DISTILLERY_2, SAY_DROHN_DISTILLERY_3, SAY_DROHN_DISTILLERY_4 };
+        static constexpr uint32 tchaliTexts[4] = { SAY_TCHALIS_VOODOO_1, SAY_TCHALIS_VOODOO_2, SAY_TCHALIS_VOODOO_3, SAY_TCHALIS_VOODOO_4 };
+        static constexpr uint32 barleybrewTexts[4] = { SAY_BARLEYBREW_1, SAY_BARLEYBREW_2, SAY_BARLEYBREW_3, SAY_BARLEYBREW_4 };
+        static constexpr uint32 thunderbrewTexts[4] = { SAY_THUNDERBREWS_1, SAY_THUNDERBREWS_2, SAY_THUNDERBREWS_3, SAY_THUNDERBREWS_4 };
 
         uint32 BroadcastTextId = 0;
 
-        if (target->GetQuestStatus(QUEST_BARK_FOR_DROHNS_DISTILLERY) == QUEST_STATUS_INCOMPLETE ||
-            target->GetQuestStatus(QUEST_BARK_FOR_DROHNS_DISTILLERY) == QUEST_STATUS_COMPLETE)
-            BroadcastTextId = RAND(SAY_DROHN_DISTILLERY_1, SAY_DROHN_DISTILLERY_2, SAY_DROHN_DISTILLERY_3, SAY_DROHN_DISTILLERY_4);
-
-        if (target->GetQuestStatus(QUEST_BARK_FOR_TCHALIS_VOODOO_BREWERY) == QUEST_STATUS_INCOMPLETE ||
-            target->GetQuestStatus(QUEST_BARK_FOR_TCHALIS_VOODOO_BREWERY) == QUEST_STATUS_COMPLETE)
-            BroadcastTextId = RAND(SAY_TCHALIS_VOODOO_1, SAY_TCHALIS_VOODOO_2, SAY_TCHALIS_VOODOO_3, SAY_TCHALIS_VOODOO_4);
-
-        if (target->GetQuestStatus(QUEST_BARK_BARLEYBREW) == QUEST_STATUS_INCOMPLETE ||
-            target->GetQuestStatus(QUEST_BARK_BARLEYBREW) == QUEST_STATUS_COMPLETE)
-            BroadcastTextId = RAND(SAY_BARLEYBREW_1, SAY_BARLEYBREW_2, SAY_BARLEYBREW_3, SAY_BARLEYBREW_4);
-
-        if (target->GetQuestStatus(QUEST_BARK_FOR_THUNDERBREWS) == QUEST_STATUS_INCOMPLETE ||
-            target->GetQuestStatus(QUEST_BARK_FOR_THUNDERBREWS) == QUEST_STATUS_COMPLETE)
-            BroadcastTextId = RAND(SAY_THUNDERBREWS_1, SAY_THUNDERBREWS_2, SAY_THUNDERBREWS_3, SAY_THUNDERBREWS_4);
+        if (target->GetQuestStatus(QUEST_BARK_FOR_DROHNS_DISTILLERY) == QUEST_STATUS_INCOMPLETE)
+            BroadcastTextId = drohnTexts[bunnyIndex];
+        else if (target->GetQuestStatus(QUEST_BARK_FOR_TCHALIS_VOODOO_BREWERY) == QUEST_STATUS_INCOMPLETE)
+            BroadcastTextId = tchaliTexts[bunnyIndex];
+        else if (target->GetQuestStatus(QUEST_BARK_BARLEYBREW) == QUEST_STATUS_INCOMPLETE)
+            BroadcastTextId = barleybrewTexts[bunnyIndex];
+        else if (target->GetQuestStatus(QUEST_BARK_FOR_THUNDERBREWS) == QUEST_STATUS_INCOMPLETE)
+            BroadcastTextId = thunderbrewTexts[bunnyIndex];
 
         if (BroadcastTextId)
             target->Talk(BroadcastTextId, CHAT_MSG_SAY, sWorld->getFloatConfig(CONFIG_LISTEN_RANGE_SAY), target);

@@ -37,6 +37,11 @@
 #include "botmgr.h"
 #include "World.h"
 //end npcbot
+#include "Config.h"
+#include "ObjectMgr.h"
+#include "QuestDef.h"
+#include <algorithm>
+#include <limits>
 
 void WorldSession::HandleAutostoreLootItemOpcode(WorldPackets::Loot::LootItem& packet)
 {
@@ -274,6 +279,473 @@ void WorldSession::HandleLootMoneyOpcode(WorldPackets::Loot::LootMoney& /*packet
     }
 }
 
+namespace
+{
+    constexpr size_t MAX_AOE_LOOT_ITEMS = 16;
+    constexpr uint32 AOE_LOOT_STACK_LIMIT = 200;
+
+    bool CanStackRegularLoot(LootItem const& existingItem, LootItem const& incomingItem)
+    {
+        return !existingItem.is_looted &&
+            !incomingItem.is_looted &&
+            !existingItem.freeforall &&
+            !incomingItem.freeforall &&
+            !existingItem.needs_quest &&
+            !incomingItem.needs_quest &&
+            !existingItem.is_blocked &&
+            !incomingItem.is_blocked &&
+            !existingItem.follow_loot_rules &&
+            !incomingItem.follow_loot_rules &&
+            existingItem.conditions.empty() &&
+            incomingItem.conditions.empty() &&
+            existingItem.rollWinnerGUID.IsEmpty() &&
+            incomingItem.rollWinnerGUID.IsEmpty() &&
+            existingItem.itemid == incomingItem.itemid &&
+            existingItem.randomPropertySeed == incomingItem.randomPropertySeed &&
+            existingItem.randomPropertyId == incomingItem.randomPropertyId &&
+            existingItem.is_underthreshold == incomingItem.is_underthreshold &&
+            existingItem.allowedGUIDs == incomingItem.allowedGUIDs;
+    }
+
+    uint32 AddOrStackRegularLoot(Loot* mainLoot, LootItem const& incomingItem, size_t reservedQuestRows)
+    {
+        ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(incomingItem.itemid);
+        uint32 stackLimit = itemTemplate ? std::min<uint32>(itemTemplate->GetMaxStackSize(), AOE_LOOT_STACK_LIMIT) : 1;
+
+        bool canStack = stackLimit > 1 &&
+            !incomingItem.freeforall &&
+            !incomingItem.needs_quest &&
+            !incomingItem.is_blocked &&
+            !incomingItem.follow_loot_rules &&
+            incomingItem.conditions.empty() &&
+            incomingItem.rollWinnerGUID.IsEmpty();
+
+        uint32 remaining = incomingItem.count;
+        uint32 transferred = 0;
+
+        if (canStack)
+        {
+            for (LootItem& existingItem : mainLoot->items)
+            {
+                if (!CanStackRegularLoot(existingItem, incomingItem) || existingItem.count >= stackLimit)
+                    continue;
+
+                uint32 amountToAdd = std::min<uint32>(remaining, stackLimit - existingItem.count);
+                existingItem.count = static_cast<uint8>(existingItem.count + amountToAdd);
+                remaining -= amountToAdd;
+                transferred += amountToAdd;
+
+                if (remaining == 0)
+                    return transferred;
+            }
+        }
+
+        while (remaining > 0)
+        {
+            if (mainLoot->items.size() + reservedQuestRows >= MAX_AOE_LOOT_ITEMS)
+                return transferred;
+
+            LootItem newItem = incomingItem;
+            uint32 newStackCount = canStack ? std::min<uint32>(remaining, stackLimit) : remaining;
+
+            newItem.count = static_cast<uint8>(newStackCount);
+            newItem.itemIndex = static_cast<uint32>(mainLoot->items.size());
+            newItem.is_looted = false;
+            newItem.is_counted = false;
+
+            mainLoot->items.push_back(newItem);
+            transferred += newStackCount;
+
+            if (!newItem.freeforall && newItem.conditions.empty() && !newItem.needs_quest)
+                ++mainLoot->unlootedCount;
+
+            remaining -= newStackCount;
+
+            if (!canStack)
+                break;
+        }
+
+        return transferred;
+    }
+
+    uint8 GetLootSortPriority(LootItem const& item)
+    {
+        ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item.itemid);
+        if (!itemTemplate)
+            return 5;
+
+        switch (itemTemplate->Quality)
+        {
+            case ITEM_QUALITY_HEIRLOOM:
+            case ITEM_QUALITY_ARTIFACT:
+            case ITEM_QUALITY_LEGENDARY:
+                return 0;
+            case ITEM_QUALITY_EPIC:
+                return 1;
+            case ITEM_QUALITY_RARE:
+                return 2;
+            case ITEM_QUALITY_UNCOMMON:
+                return 3;
+            case ITEM_QUALITY_POOR:
+                return 6;
+            case ITEM_QUALITY_NORMAL:
+            default:
+                break;
+        }
+
+        if (itemTemplate->Class == ITEM_CLASS_TRADE_GOODS ||
+            itemTemplate->Class == ITEM_CLASS_REAGENT ||
+            itemTemplate->Class == ITEM_CLASS_GEM)
+            return 4;
+
+        if (itemTemplate->Class == ITEM_CLASS_CONSUMABLE &&
+            itemTemplate->SubClass == ITEM_SUBCLASS_FOOD_DRINK)
+            return 7;
+
+        if (itemTemplate->Class == ITEM_CLASS_RECIPE)
+            return 8;
+
+        return 5;
+    }
+
+    bool HasSimpleRegularLootRules(LootItem const& item)
+    {
+        return !item.freeforall &&
+            !item.needs_quest &&
+            !item.is_blocked &&
+            !item.follow_loot_rules &&
+            item.conditions.empty() &&
+            item.rollWinnerGUID.IsEmpty();
+    }
+
+    bool CanSafelySortLootItem(LootItem const& item)
+    {
+        return !item.is_looted && HasSimpleRegularLootRules(item);
+    }
+
+    bool HasPendingRoll(Loot const& loot)
+    {
+        auto isPending = [](LootItem const& item)
+        {
+            return !item.is_looted && (item.is_blocked || !item.rollWinnerGUID.IsEmpty());
+        };
+
+        return std::any_of(loot.items.begin(), loot.items.end(), isPending) ||
+            std::any_of(loot.quest_items.begin(), loot.quest_items.end(), isPending);
+    }
+
+    bool IsReservedByGroupLootRules(Player const* player, Loot const& loot, LootItem const& item)
+    {
+        Group const* group = player->GetGroup();
+        if (!group || group->GetLootMethod() == FREE_FOR_ALL)
+            return false;
+
+        // Check if there are other real players in the group
+        bool hasOtherRealPlayers = false;
+        for (GroupReference const* itr = group->GetFirstMember(); itr != nullptr; itr = itr->next())
+        {
+            Player const* member = itr->GetSource();
+            if (member && member != player)
+            {
+                hasOtherRealPlayers = true;
+                break;
+            }
+        }
+        if (!hasOtherRealPlayers)
+            return false;
+
+        if (group->GetLootMethod() != ROUND_ROBIN && !item.is_underthreshold)
+            return true;
+
+        if (loot.roundRobinPlayer.IsEmpty() || loot.roundRobinPlayer == player->GetGUID())
+            return false;
+
+        return group->GetLootMethod() == ROUND_ROBIN || item.is_underthreshold;
+    }
+
+    void CompactTransferredRegularLoot(Loot* loot)
+    {
+        if (!loot || !std::all_of(loot->items.begin(), loot->items.end(), HasSimpleRegularLootRules))
+            return;
+
+        loot->items.erase(
+            std::remove_if(loot->items.begin(), loot->items.end(),
+                [](LootItem const& item) { return item.is_looted; }),
+            loot->items.end());
+
+        for (size_t i = 0; i < loot->items.size(); ++i)
+            loot->items[i].itemIndex = static_cast<uint32>(i);
+    }
+
+    void SortRegularLoot(Loot* loot)
+    {
+        if (!loot || !std::all_of(loot->items.begin(), loot->items.end(), CanSafelySortLootItem))
+            return;
+
+        std::stable_sort(loot->items.begin(), loot->items.end(),
+            [](LootItem const& left, LootItem const& right)
+            {
+                return GetLootSortPriority(left) < GetLootSortPriority(right);
+            });
+
+        for (size_t i = 0; i < loot->items.size(); ++i)
+            loot->items[i].itemIndex = static_cast<uint32>(i);
+    }
+
+    void ProcessAoELoot(Player* player, Creature* mainCreature)
+    {
+        if (!sConfigMgr->GetBoolDefault("AOELoot.Enable", true))
+            return;
+
+        if (!mainCreature || !mainCreature->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE))
+            return;
+
+        if (mainCreature->loot.loot_type == LOOT_SKINNING || mainCreature->loot.loot_type == LOOT_PICKPOCKETING)
+            return;
+
+        if (HasPendingRoll(mainCreature->loot))
+            return;
+
+        float range = sConfigMgr->GetFloatDefault("AOELoot.Range", 40.0f);
+        if (range < 5.0f) range = 5.0f;
+        if (range > 100.0f) range = 100.0f;
+
+        uint32 maxCorpses = sConfigMgr->GetIntDefault("AOELoot.MaxCorpses", 30);
+        if (maxCorpses < 1) maxCorpses = 1;
+
+        std::list<Creature*> nearbyCorpses;
+        mainCreature->GetCreatureListWithEntryInGrid(nearbyCorpses, 0, range);
+
+        nearbyCorpses.remove_if([&](Creature* c)
+        {
+            return !c ||
+                c == mainCreature ||
+                !c->isDead() ||
+                !c->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE) ||
+                c->loot.loot_type == LOOT_SKINNING ||
+                c->loot.loot_type == LOOT_PICKPOCKETING ||
+                HasPendingRoll(c->loot) ||
+                !player->isAllowedToLoot(c);
+        });
+
+        if (nearbyCorpses.empty())
+            return;
+
+        if (nearbyCorpses.size() > maxCorpses)
+            nearbyCorpses.resize(maxCorpses);
+
+        Loot* mainLoot = &mainCreature->loot;
+        uint32 totalGold = mainLoot->gold;
+
+        struct RegularLootCandidate
+        {
+            Creature* sourceCreature;
+            size_t sourceIndex;
+            LootItem item;
+        };
+
+        struct QuestLootCandidate
+        {
+            Creature* sourceCreature;
+            size_t sourceIndex;
+            LootItem item;
+        };
+
+        std::vector<Creature*> processedCreatures;
+        std::vector<RegularLootCandidate> regularCandidates;
+        std::vector<QuestLootCandidate> questCandidates;
+
+        for (Creature* creature : nearbyCorpses)
+        {
+            if (!creature)
+                continue;
+
+            Loot* loot = &creature->loot;
+            if (loot->isLooted())
+                continue;
+
+            processedCreatures.push_back(creature);
+
+            // Merge gold
+            if (loot->gold > 0)
+            {
+                if (loot->gold <= std::numeric_limits<uint32>::max() - totalGold)
+                {
+                    totalGold += loot->gold;
+                    loot->gold = 0;
+                }
+            }
+
+            // Collect regular item candidates
+            for (size_t i = 0; i < loot->items.size(); ++i)
+            {
+                LootItem const& item = loot->items[i];
+                if (!CanSafelySortLootItem(item))
+                    continue;
+
+                if (!item.AllowedForPlayer(player, mainLoot->lootOwnerGUID))
+                    continue;
+
+                if (IsReservedByGroupLootRules(player, *loot, item) ||
+                    IsReservedByGroupLootRules(player, *mainLoot, item))
+                    continue;
+
+                regularCandidates.push_back({ creature, i, item });
+            }
+
+            // Collect quest items needed by player
+            for (size_t i = 0; i < loot->quest_items.size(); ++i)
+            {
+                LootItem const& questItem = loot->quest_items[i];
+                if (questItem.is_looted)
+                    continue;
+
+                if (!player->HasQuestForItem(questItem.itemid))
+                    continue;
+
+                if (questItem.freeforall || questItem.is_blocked || questItem.follow_loot_rules ||
+                    !questItem.conditions.empty() || !questItem.rollWinnerGUID.IsEmpty())
+                    continue;
+
+                if (!questItem.AllowedForPlayer(player, loot->lootOwnerGUID) ||
+                    !questItem.GetAllowedLooters().count(player->GetGUID()))
+                    continue;
+
+                uint32 maxNeeded = 0;
+                for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+                {
+                    uint32 questId = player->GetQuestSlotQuestId(slot);
+                    if (!questId)
+                        continue;
+
+                    Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
+                    if (!quest)
+                        continue;
+
+                    for (uint8 j = 0; j < QUEST_ITEM_OBJECTIVES_COUNT; ++j)
+                    {
+                        if (quest->RequiredItemId[j] == questItem.itemid && quest->RequiredItemCount[j] > maxNeeded)
+                            maxNeeded = quest->RequiredItemCount[j];
+                    }
+                }
+
+                if (maxNeeded == 0)
+                    continue;
+
+                uint32 ownedCount = player->GetItemCount(questItem.itemid, true);
+                for (QuestLootCandidate const& pending : questCandidates)
+                {
+                    if (pending.item.itemid == questItem.itemid)
+                        ownedCount += pending.item.count;
+                }
+
+                for (LootItem const& mainQuestItem : mainLoot->quest_items)
+                {
+                    if (mainQuestItem.itemid == questItem.itemid)
+                        ownedCount += mainQuestItem.count;
+                }
+
+                if (ownedCount >= maxNeeded)
+                    continue;
+
+                uint32 stillNeeded = maxNeeded - ownedCount;
+                LootItem cappedItem = questItem;
+                cappedItem.count = static_cast<uint8>(std::min(static_cast<uint32>(questItem.count), stillNeeded));
+                questCandidates.push_back({ creature, i, cappedItem });
+            }
+        }
+
+        // Sort regular candidates by priority (high quality first)
+        std::stable_sort(regularCandidates.begin(), regularCandidates.end(),
+            [](RegularLootCandidate const& left, RegularLootCandidate const& right)
+            {
+                return GetLootSortPriority(left.item) < GetLootSortPriority(right.item);
+            });
+
+        size_t reservedQuestRows = mainLoot->quest_items.size();
+
+        // Transfer regular items
+        for (RegularLootCandidate const& candidate : regularCandidates)
+        {
+            Loot* sourceLoot = &candidate.sourceCreature->loot;
+            if (candidate.sourceIndex >= sourceLoot->items.size())
+                continue;
+
+            LootItem& sourceItem = sourceLoot->items[candidate.sourceIndex];
+            if (sourceItem.is_looted)
+                continue;
+
+            uint32 sourceCount = sourceItem.count;
+            uint32 transferred = AddOrStackRegularLoot(mainLoot, sourceItem, reservedQuestRows);
+
+            if (transferred == 0)
+                continue;
+
+            if (transferred >= sourceCount)
+            {
+                sourceItem.is_looted = true;
+                if (sourceLoot->unlootedCount > 0)
+                    --sourceLoot->unlootedCount;
+            }
+            else
+            {
+                sourceItem.count = static_cast<uint8>(sourceCount - transferred);
+            }
+        }
+
+        // Add quest items directly to player's inventory
+        for (QuestLootCandidate const& candidate : questCandidates)
+        {
+            if (!player->HasQuestForItem(candidate.item.itemid))
+                continue;
+
+            Loot* sourceLoot = &candidate.sourceCreature->loot;
+            if (candidate.sourceIndex >= sourceLoot->quest_items.size())
+                continue;
+
+            LootItem& sourceItem = sourceLoot->quest_items[candidate.sourceIndex];
+            if (sourceItem.is_looted)
+                continue;
+
+            uint32 amountToAdd = std::min<uint32>(candidate.item.count, sourceItem.count);
+            if (amountToAdd == 0 || !player->AddItem(sourceItem.itemid, amountToAdd))
+                continue;
+
+            if (amountToAdd >= sourceItem.count)
+            {
+                sourceItem.is_looted = true;
+                if (sourceLoot->unlootedCount > 0)
+                    --sourceLoot->unlootedCount;
+            }
+            else
+            {
+                sourceItem.count = static_cast<uint8>(sourceItem.count - amountToAdd);
+            }
+        }
+
+        // Set merged gold
+        mainLoot->gold = totalGold;
+
+        // Clean up emptied source corpses
+        for (Creature* creature : processedCreatures)
+        {
+            Loot* loot = &creature->loot;
+            CompactTransferredRegularLoot(loot);
+
+            if (!loot->isLooted())
+                continue;
+
+            creature->RemoveDynamicFlag(UNIT_DYNFLAG_LOOTABLE);
+            if (!creature->IsAlive())
+                creature->AllLootRemovedFromCorpse();
+            loot->clear();
+        }
+
+        // Sort regular loot on main creature
+        SortRegularLoot(mainLoot);
+    }
+}
+
 void WorldSession::HandleLootOpcode(WorldPackets::Loot::LootUnit& packet)
 {
     TC_LOG_DEBUG("network", "WORLD: CMSG_LOOT");
@@ -287,6 +759,9 @@ void WorldSession::HandleLootOpcode(WorldPackets::Loot::LootUnit& packet)
         GetPlayer()->InterruptNonMeleeSpells(false);
 
     GetPlayer()->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_LOOTING);
+
+    if (Creature* mainCreature = GetPlayer()->GetMap()->GetCreature(packet.Unit))
+        ProcessAoELoot(GetPlayer(), mainCreature);
 
     GetPlayer()->SendLoot(packet.Unit, LOOT_CORPSE);
 }

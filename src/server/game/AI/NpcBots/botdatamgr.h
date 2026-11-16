@@ -240,7 +240,13 @@ public:
 
     static void DespawnDungeonBot(uint32 entry);
     static void DespawnWandererBot(uint32 entry);
-    static uint32 SpawnDynamicZoneBot(uint8 level, WanderNode const* spawnLoc);
+    static void SpawnBotBones(Creature const* bot);
+    static uint32 SpawnDynamicZoneBot(uint8 level, WanderNode const* spawnLoc, int32 preferredTeam = -1);
+    static uint32 SpawnBattlefieldBot(uint8 level, WanderNode const* spawnLoc, Position const& pos,
+        uint32 team, uint32 faction, uint8 botClass, uint8 spec);
+    static uint32 SpawnCityRaidBot(uint8 level, uint32 mapId, Position const& pos,
+        int32 team, uint32 faction, uint8 botClass = 0, uint8 spec = 0, uint32 roles = 0);
+    static void DespawnCityRaidBot(uint32 entry);
     static void LoadWanderMap(bool reload = false, bool force_all_maps = false);
     static void GenerateWanderingBots();
     static bool ReserveDungeonBots(Player const* leader, std::array<uint8, 3> const& roles);

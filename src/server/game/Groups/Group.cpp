@@ -156,9 +156,10 @@ void Group::SelectNewPartyOrRaidLeader()
 }
 
 //npcbot
-bool Group::Create(Creature* leader)
+bool Group::Create(Creature* leader, bool temporaryBotRaid)
 {
-    ASSERT(isBGGroup());
+    ASSERT(leader && (isBGGroup() || temporaryBotRaid));
+    m_temporaryBotRaid = temporaryBotRaid;
 
     ObjectGuid leaderGuid = leader->GetGUID();
 
@@ -166,7 +167,7 @@ bool Group::Create(Creature* leader)
     m_leaderGuid = leaderGuid;
     m_leaderName = leader->GetName();
 
-    m_groupType = GROUPTYPE_BGRAID;
+    m_groupType = temporaryBotRaid ? GROUPTYPE_RAID : GROUPTYPE_BGRAID;
 
     _initRaidSubGroupsCounter();
 
@@ -211,7 +212,7 @@ bool Group::Create(Player* leader)
     m_dungeonDifficulty = DUNGEON_DIFFICULTY_NORMAL;
     m_raidDifficulty = RAID_DIFFICULTY_10MAN_NORMAL;
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         m_dungeonDifficulty = leader->GetDungeonDifficultyID();
         m_raidDifficulty = leader->GetRaidDifficultyID();
@@ -346,7 +347,7 @@ void Group::ConvertToLFG()
 {
     m_groupType = GroupType(m_groupType | GROUPTYPE_LFG | GROUPTYPE_LFG_RESTRICTED);
     m_lootMethod = NEED_BEFORE_GREED;
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_TYPE);
 
@@ -365,7 +366,7 @@ void Group::ConvertToRaid()
 
     _initRaidSubGroupsCounter();
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_TYPE);
 
@@ -500,7 +501,7 @@ bool Group::AddMember(Creature* creature)
     }
 
     // insert into the table if we're not a battleground group
-    if (!isBGGroup() && !isBFGroup() && !creature->IsSummon())
+    if (IsPersistentGroup() && !creature->IsSummon())
     {
         //INSERT INTO characters_npcbot_group_member (guid, entry, memberFlags, subgroup, roles) VALUES(?, ?, ?, ?, ?), CONNECTION_ASYNC
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_NPCBOT_GROUP_MEMBER);
@@ -573,7 +574,7 @@ bool Group::AddMember(Player* player)
     }
 
     // insert into the table if we're not a battleground group
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_INS_GROUP_MEMBER);
 
@@ -589,7 +590,7 @@ bool Group::AddMember(Player* player)
     SendUpdate();
     sScriptMgr->OnGroupAddMember(this, player->GetGUID());
 
-    if (!IsLeader(player->GetGUID()) && !isBGGroup() && !isBFGroup())
+    if (!IsLeader(player->GetGUID()) && IsPersistentGroup())
     {
         // reset the new member's instances, unless he is currently in one of them
         // including raid/heroic instances that they are not permanently bound to!
@@ -689,7 +690,7 @@ bool Group::RemoveMember(ObjectGuid guid, RemoveMethod const& method /*= GROUP_R
             }
 
             // Remove bot from group in DB
-            if (!isBGGroup() && !isBFGroup())
+            if (IsPersistentGroup())
             {
                 //DELETE FROM characters_npcbot_group_member WHERE entry = ?, CONNECTION_ASYNC
                 CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_NPCBOT_GROUP_MEMBER);
@@ -811,7 +812,7 @@ bool Group::RemoveMember(ObjectGuid guid, RemoveMethod const& method /*= GROUP_R
         }
 
         // Remove player from group in DB
-        if (!isBGGroup() && !isBFGroup())
+        if (IsPersistentGroup())
         {
             CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_GROUP_MEMBER);
             stmt->setUInt32(0, guid.GetCounter());
@@ -911,7 +912,7 @@ void Group::ChangeLeader(ObjectGuid newLeaderGuid)
 
     sScriptMgr->OnGroupChangeLeader(this, newLeaderGuid, m_leaderGuid);
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
 
@@ -1094,7 +1095,7 @@ void Group::Disband(bool hideDestroy /* = false */)
 
     RemoveAllInvites();
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
 
@@ -2141,7 +2142,7 @@ bool Group::_setMembersGroup(ObjectGuid guid, uint8 group)
 
     SubGroupCounterIncrease(group);
 
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_MEMBER_SUBGROUP);
 
@@ -2192,7 +2193,7 @@ void Group::ChangeMembersGroup(ObjectGuid guid, uint8 group)
     SubGroupCounterDecrease(prevSubGroup);
 
     // Preserve new sub group in database for non-raid groups
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_MEMBER_SUBGROUP);
 
@@ -2209,7 +2210,7 @@ void Group::ChangeMembersGroup(ObjectGuid guid, uint8 group)
         if (Creature* bot = cbot ? const_cast<Creature*>(cbot) : nullptr)
         {
             if (bot->GetBotGroup() == this)
-                bot->SetOriginalSubGroup(group);
+                bot->SetSubGroup(group);
             else
             {
                 // If player is in BG raid, it is possible that he is also in normal raid - and that normal raid is stored in m_originalGroup reference
@@ -2422,7 +2423,7 @@ void Roll::targetObjectBuildLink()
 void Group::SetDungeonDifficultyID(Difficulty difficulty)
 {
     m_dungeonDifficulty = difficulty;
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_DIFFICULTY);
 
@@ -2438,7 +2439,7 @@ void Group::SetDungeonDifficultyID(Difficulty difficulty)
 void Group::SetRaidDifficultyID(Difficulty difficulty)
 {
     m_raidDifficulty = difficulty;
-    if (!isBGGroup() && !isBFGroup())
+    if (IsPersistentGroup())
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_RAID_DIFFICULTY);
 
@@ -2612,7 +2613,7 @@ InstanceGroupBind* Group::GetBoundInstance(Difficulty difficulty, uint32 mapId)
 
 InstanceGroupBind* Group::BindToInstance(InstanceSave* save, bool permanent, bool load)
 {
-    if (!save || isBGGroup() || isBFGroup())
+    if (!save || !IsPersistentGroup())
         return nullptr;
 
     InstanceGroupBind& bind = m_boundInstances[save->GetDifficultyID()][save->GetMapId()];
@@ -2888,27 +2889,23 @@ void Group::SetGroupMemberFlag(ObjectGuid guid, bool apply, GroupMemberFlags fla
     // Switch the actual flag
     ToggleGroupMemberFlag(slot, flag, apply);
 
-    // Preserve the new setting in the db
-    //npcbot
-    if (!guid.IsPlayer())
+    if (IsPersistentGroup())
     {
-        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_NPCBOT_GROUP_MEMBER_FLAG);
-        stmt->setUInt8(0, slot->flags);
-        stmt->setUInt32(1, guid.GetEntry());
-        CharacterDatabase.Execute(stmt);
+        if (!guid.IsPlayer())
+        {
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_NPCBOT_GROUP_MEMBER_FLAG);
+            stmt->setUInt8(0, slot->flags);
+            stmt->setUInt32(1, guid.GetEntry());
+            CharacterDatabase.Execute(stmt);
+        }
+        else
+        {
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_MEMBER_FLAG);
+            stmt->setUInt8(0, slot->flags);
+            stmt->setUInt32(1, guid.GetCounter());
+            CharacterDatabase.Execute(stmt);
+        }
     }
-    else
-    {
-    //end npcbot
-    CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_GROUP_MEMBER_FLAG);
-
-    stmt->setUInt8(0, slot->flags);
-    stmt->setUInt32(1, guid.GetCounter());
-
-    CharacterDatabase.Execute(stmt);
-    //npcbot
-    }
-    //end npcbot
 
     // Broadcast the changes to the group
     SendUpdate();

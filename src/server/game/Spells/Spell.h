@@ -356,6 +356,11 @@ class TC_GAME_API Spell
         void DelayedChannel();
         uint32 getState() const { return m_spellState; }
         void setState(uint32 state) { m_spellState = state; }
+        void ClientUpdatedTrajectory()
+        {
+            if (_trajWaitedForClient && m_spellState == SPELL_STATE_PREPARING)
+                m_timer = 0;
+        }
 
         void DoCreateItem(uint32 itemId);
         void UpdateSpellCastDataTargets(WorldPackets::Spells::SpellCastData& data);
@@ -721,6 +726,7 @@ class TC_GAME_API Spell
         std::unique_ptr<PathGenerator> m_preGeneratedPath;
 
         ByteBuffer* m_effectExecuteData[MAX_SPELL_EFFECTS];
+        bool _trajWaitedForClient = false;
 
         Spell(Spell const& right) = delete;
         Spell& operator=(Spell const& right) = delete;

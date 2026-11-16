@@ -7,6 +7,7 @@
 #include "botdatamgr.h"
 #include "botdpstracker.h"
 #include "botlog.h"
+#include "botlimits.h"
 #include "botmgr.h"
 #include "botspell.h"
 #include "bottext.h"
@@ -900,10 +901,16 @@ BotAddResult BotMgr::AddBot(Creature* bot)
         ch.PSendSysMessage(bot_ai::LocalizedNpcText(GetOwner(), BOT_TEXT_BOTADDFAIL_OWNED).c_str(), bot->GetName(), bot->GetBotOwner()->GetName());
         return BOT_ADD_NOT_AVAILABLE;
     }
-    if (!owned && owned_count >= BotCfg::GetMaxNpcBots(_owner->GetLevel()))
+    uint8 personalLimit = BotCfg::GetMaxNpcBots(_owner);
+    std::size_t activePersonalBots = std::ranges::count_if(_bots, [](BotMap::value_type const& entry) {
+        return !entry.second->IsSummon() && !entry.second->IsTempBot();
+    });
+    if ((!owned && owned_count >= personalLimit) ||
+        !NPCBots::Limits::CanAttach(personalLimit, activePersonalBots, bot->IsSummon() || bot->IsTempBot(),
+            _owner->GetSession()->GetSecurity() >= SEC_GAMEMASTER))
     {
         ChatHandler ch(_owner->GetSession());
-        ch.PSendSysMessage(bot_ai::LocalizedNpcText(GetOwner(), BOT_TEXT_HIREFAIL_MAXBOTS).c_str(), BotCfg::GetMaxNpcBots(_owner->GetLevel()));
+        ch.PSendSysMessage(bot_ai::LocalizedNpcText(GetOwner(), BOT_TEXT_HIREFAIL_MAXBOTS).c_str(), personalLimit);
         return BOT_ADD_MAX_EXCEED;
     }
     if (!owned && BotCfg::GetMaxClassBots() && class_count >= BotCfg::GetMaxClassBots())

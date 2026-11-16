@@ -327,6 +327,8 @@ class BattlefieldWG : public Battlefield
         GameObject* GetRelic() { return GetGameObject(m_titansRelicGUID); }
         GameObject* GetBotWarBuilding(uint32 entry);
         GameObject* GetBotWarWorkshopFlag(bool west);
+        GameObject* GetBotWarWorkshopFlagForArea(uint32 area);
+        TeamId GetBotWarWorkshopControl(uint8 id) const;
         uint32 GetBotWarBattleSerial() const { return m_botWarBattleSerial; }
 
         /// Define relic object
@@ -340,6 +342,7 @@ class BattlefieldWG : public Battlefield
 
         void UpdateVehicleCountWG();
         void UpdateCounterVehicle(bool init);
+        GuidUnorderedSet const& GetVehicleGuids(TeamId team) const { return m_vehicles[team]; }
 
         void SendInitWorldStatesToAll() override;
         void FillInitialWorldStates(WorldPackets::WorldState::InitWorldStates& packet) override;
@@ -347,6 +350,7 @@ class BattlefieldWG : public Battlefield
         void HandleKill(Player* killer, Unit* victim) override;
         void OnUnitDeath(Unit* unit) override;
         void HandlePromotion(Player* killer, Unit* killed);
+        void HandleBotWarPromotion(TeamId team, Unit* killed);
         void PromotePlayer(Player* killer);
 
         void UpdateTenacity();
@@ -362,6 +366,7 @@ class BattlefieldWG : public Battlefield
     protected:
         bool m_isRelicInteractible;
         uint32 m_botWarBattleSerial = 0;
+        GuidUnorderedSet m_promotedBotWarVictims;
 
         WorkshopVect Workshops;
 

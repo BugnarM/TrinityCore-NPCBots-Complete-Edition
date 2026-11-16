@@ -45,7 +45,7 @@ public:
                 me->BotStopMovement();
 
             AddGossipItemFor(player, GOSSIP_ICON_TALK, bot_ai::LocalizedNpcText(player, BOT_TEXT_BOTGIVER_SERVICE), HIRE, GOSSIP_ACTION_INFO_DEF + 1);
-
+            AddGossipItemFor(player, GOSSIP_ICON_DOT, "Obtine Piatra Insotitorului (Companion Hearthstone)", 70901, GOSSIP_ACTION_INFO_DEF + 99);
             AddGossipItemFor(player, GOSSIP_ICON_CHAT, bot_ai::LocalizedNpcText(player, BOT_TEXT_NEVERMIND), 0, GOSSIP_ACTION_INFO_DEF + 2);
 
             player->PlayerTalkClass->SendGossipMenu(GOSSIP_BOTGIVER_GREET, me->GetGUID());
@@ -63,6 +63,19 @@ public:
             uint32 sender = player->PlayerTalkClass->GetGossipOptionSender(gossipListId);
             uint32 action = player->PlayerTalkClass->GetGossipOptionAction(gossipListId);
 
+            if (sender == 70901)
+            {
+                if (!player->HasItemCount(70901, 1))
+                {
+                    player->AddItem(70901, 1);
+                    WhisperTo(player, "Ai primit Piatra Insotitorului! Foloseste-o din inventar pentru a chema sau retrage un companion.");
+                }
+                else
+                    WhisperTo(player, "Ai deja o Piatra a Insotitorului in inventar!");
+                player->PlayerTalkClass->SendCloseGossip();
+                return true;
+            }
+
             player->PlayerTalkClass->ClearMenus();
             bool subMenu = false;
 
@@ -78,7 +91,7 @@ public:
                 {
                     gossipTextId = GOSSIP_BOTGIVER_HIRE;
 
-                    if (player->GetNpcBotsCount() >= BotCfg::GetMaxNpcBots(player->GetLevel()))
+                    if (player->GetNpcBotsCount() >= BotCfg::GetMaxNpcBots(player))
                     {
                         WhisperTo(player, bot_ai::LocalizedNpcText(player, BOT_TEXT_BOTGIVER_TOO_MANY_BOTS).c_str());
                         break;

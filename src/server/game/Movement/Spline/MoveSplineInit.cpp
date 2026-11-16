@@ -25,6 +25,7 @@
 #include "bot_ai.h"
 #include "botbgtactics.h"
 #include "BattlegroundIC.h"
+#include "BattlegroundSA.h"
 
 namespace Movement
 {
@@ -89,6 +90,39 @@ namespace Movement
 
         // corrent first vertex
         args.path[0] = real_position;
+        Creature const* siegeBot = unit->IsNPCBot() ? unit->ToCreature() :
+            (unit->GetCharmer() && unit->GetCharmer()->IsNPCBot() ? unit->GetCharmer()->ToCreature() : nullptr);
+        Battleground* siegeBG = siegeBot ? siegeBot->GetBotBG() : nullptr;
+        if (siegeBG && siegeBG->GetTypeID() == BATTLEGROUND_SA && siegeBot->IsWandererBot() &&
+            !transport && !unit->GetVehicle())
+        {
+            // Launch is also reached by chase/follow/MovebyPath and direct
+            // movements. Checking only MoveTo leaves combat paths unprotected.
+            auto* sa = static_cast<BattlegroundSA*>(siegeBG);
+            bool safe = true;
+            if (args.flags.parabolic && args.path.size() == 2 && args.time_perc == 0.f)
+            {
+                Vector3 previous = args.path.front();
+                for (unsigned sample = 1; sample <= 16 && safe; ++sample)
+                {
+                    float t = float(sample) / 16.f;
+                    Vector3 next = args.path.front() + (args.path.back() - args.path.front()) * t;
+                    next.z += 4.f * args.parabolic_amplitude * t * (1.f - t);
+                    safe = sa->IsBotGateSegmentClear(previous, next, unit->GetBoundingRadius(), unit->GetPhaseMask());
+                    previous = next;
+                }
+            }
+            else
+                for (std::size_t i = 1; safe && i < args.path.size(); ++i)
+                    safe = sa->IsBotGateSegmentClear(args.path[i - 1], args.path[i], unit->GetBoundingRadius(), unit->GetPhaseMask());
+            if (!safe)
+                {
+                    Stop();
+                    args.path.clear();
+                    return 0;
+                }
+            args.flags.catmullrom = false; // Curves must not cut across a checked corner.
+        }
         args.initialOrientation = real_position.orientation;
         args.flags.enter_cycle = args.flags.cyclic;
         move_spline.onTransport = transport;
@@ -266,19 +300,22 @@ namespace Movement
             Battleground* bg = bot ? bot->GetBotBG() : nullptr;
             bool const strictIC = bg && bg->GetTypeID() == BATTLEGROUND_IC &&
                 bot->IsWandererBot() && !unit->GetTransport() && !unit->GetVehicle();
+            bool const strictSA = bg && bg->GetTypeID() == BATTLEGROUND_SA &&
+                bot->IsWandererBot() && !unit->GetTransport() && !unit->GetVehicle();
             PathGenerator path(unit);
-            if (strictIC) path.SetUseStraightPath(true); // Long road edges must not become 74-point shortcuts.
-            bool result = path.CalculatePath(dest.x, dest.y, dest.z, strictIC ? false : forceDestination);
-            if (strictIC)
+            if (strictIC || strictSA) path.SetUseStraightPath(true); // Long road edges must not become 74-point shortcuts.
+            bool result = path.CalculatePath(dest.x, dest.y, dest.z, strictIC || strictSA ? false : forceDestination);
+            if (strictIC || strictSA)
             {
                 static_assert(PATHFIND_NORMAL == 1);
                 static_assert(PATHFIND_INCOMPLETE == 4);
                 bool safe = result && NPCBots::SiegeBG::VerifiedSiegePath(path.GetPathType(), path.GetPath().size());
                 uint32 gates = 0;
-                for (uint8 i = 0; i < 6; ++i)
-                    if (static_cast<BattlegroundIC*>(bg)->GetGateState(i) == BG_IC_GATE_DESTROYED) gates |= 1u << i;
+                if (strictIC)
+                    for (uint8 i = 0; i < 6; ++i)
+                        if (static_cast<BattlegroundIC*>(bg)->GetGateState(i) == BG_IC_GATE_DESTROYED) gates |= 1u << i;
                 auto const& points = path.GetPath();
-                for (std::size_t i = 1; safe && i < points.size(); ++i)
+                for (std::size_t i = 1; strictIC && safe && i < points.size(); ++i)
                     safe = NPCBots::SiegeBG::ICSegmentOpen(points[i-1].x, points[i-1].y, points[i].x, points[i].y, gates);
                 if (!safe)
                 {

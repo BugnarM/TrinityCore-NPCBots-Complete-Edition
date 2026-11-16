@@ -746,8 +746,8 @@ public:
 
         for (auto const& pop : activeZones)
         {
-            handler->PSendSysMessage("- Zone %u %s (Map %u): %zu/%u bots, %u players [Level %u-%u]",
-                pop.zoneId, pop.zoneName.c_str(), pop.mapId, pop.activeBots.size(), pop.target, pop.players, pop.minLevel, pop.maxLevel);
+            handler->PSendSysMessage("- Zone %u %s (Map %u): %zu/%u bots, %zu Dark Knights, %u players [Level %u-%u]",
+                pop.zoneId, pop.zoneName.c_str(), pop.mapId, pop.activeBots.size(), pop.target, pop.darkKnights.size(), pop.players, pop.minLevel, pop.maxLevel);
         }
         return true;
     }

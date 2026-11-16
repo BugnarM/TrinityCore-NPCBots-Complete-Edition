@@ -17,6 +17,7 @@
 
 #include "ScriptMgr.h"
 #include "DBCStructure.h"
+#include "GameEventMgr.h"
 #include "GameObject.h"
 #include "GameTime.h"
 #include "MotionMaster.h"
@@ -238,9 +239,17 @@ enum Brewfest
     AT_BREWFEST_DUROTAR         = 4829,
     AT_BREWFEST_DUN_MOROGH      = 4820,
 
+    EVENT_BREWFESTDWARF01       = 11810,
+    EVENT_BREWFESTDWARF02       = 11812,
+    EVENT_BREWFESTDWARF03       = 11813,
+    EVENT_BREWFESTGOBLIN01      = 11811,
+    EVENT_BREWFESTGOBLIN02      = 11814,
+    EVENT_BREWFESTGOBLIN03      = 11815,
+
     SAY_WELCOME                 = 4,
 
     AREATRIGGER_TALK_COOLDOWN   = 5, // in seconds
+    BREWFEST_MUSIC_COOLDOWN     = 30 // in seconds
 };
 
 class AreaTrigger_at_brewfest : public AreaTriggerScript
@@ -254,31 +263,62 @@ class AreaTrigger_at_brewfest : public AreaTriggerScript
 
         bool OnTrigger(Player* player, AreaTriggerEntry const* trigger) override
         {
-            uint32 triggerId = trigger->ID;
-            // Second trigger happened too early after first, skip for now
-            if (GameTime::GetGameTime() - _triggerTimes[triggerId] < AREATRIGGER_TALK_COOLDOWN)
+            if (!player || !player->IsAlive())
                 return false;
 
-            switch (triggerId)
+            uint32 triggerId = trigger->ID;
+            time_t now = GameTime::GetGameTime();
+
+            // Play camp-specific music on entry if Brewfest is active
+            if (IsHolidayActive(HOLIDAY_BREWFEST))
             {
-                case AT_BREWFEST_DUROTAR:
-                    if (Creature* tapper = player->FindNearestCreature(NPC_TAPPER_SWINDLEKEG, 20.0f))
-                        tapper->AI()->Talk(SAY_WELCOME, player);
-                    break;
-                case AT_BREWFEST_DUN_MOROGH:
-                    if (Creature* ipfelkofer = player->FindNearestCreature(NPC_IPFELKOFER_IRONKEG, 20.0f))
-                        ipfelkofer->AI()->Talk(SAY_WELCOME, player);
-                    break;
-                default:
-                    break;
+                if (now - _playerMusicTimes[player->GetGUID()] >= BREWFEST_MUSIC_COOLDOWN)
+                {
+                    _playerMusicTimes[player->GetGUID()] = now;
+
+                    uint32 musicId = 0;
+                    if (triggerId == AT_BREWFEST_DUROTAR)
+                    {
+                        static constexpr uint32 goblinTracks[3] = { EVENT_BREWFESTGOBLIN01, EVENT_BREWFESTGOBLIN02, EVENT_BREWFESTGOBLIN03 };
+                        musicId = goblinTracks[urand(0, 2)];
+                    }
+                    else if (triggerId == AT_BREWFEST_DUN_MOROGH)
+                    {
+                        static constexpr uint32 dwarfTracks[3] = { EVENT_BREWFESTDWARF01, EVENT_BREWFESTDWARF02, EVENT_BREWFESTDWARF03 };
+                        musicId = dwarfTracks[urand(0, 2)];
+                    }
+
+                    if (musicId)
+                        player->PlayDirectMusic(musicId, player);
+                }
             }
 
-            _triggerTimes[triggerId] = GameTime::GetGameTime();
+            // Welcome announcement by the camp organizer
+            if (now - _triggerTimes[triggerId] >= AREATRIGGER_TALK_COOLDOWN)
+            {
+                switch (triggerId)
+                {
+                    case AT_BREWFEST_DUROTAR:
+                        if (Creature* tapper = player->FindNearestCreature(NPC_TAPPER_SWINDLEKEG, 25.0f))
+                            tapper->AI()->Talk(SAY_WELCOME, player);
+                        break;
+                    case AT_BREWFEST_DUN_MOROGH:
+                        if (Creature* ipfelkofer = player->FindNearestCreature(NPC_IPFELKOFER_IRONKEG, 25.0f))
+                            ipfelkofer->AI()->Talk(SAY_WELCOME, player);
+                        break;
+                    default:
+                        break;
+                }
+
+                _triggerTimes[triggerId] = now;
+            }
+
             return false;
         }
 
     private:
         std::map<uint32, time_t> _triggerTimes;
+        std::map<ObjectGuid, time_t> _playerMusicTimes;
 };
 
 /*######

@@ -203,12 +203,18 @@ bool Corpse::LoadCorpseFromDB(ObjectGuid::LowType guid, Field* fields)
 
 bool Corpse::IsExpired(time_t t) const
 {
-    // Deleted character
-    if (!sCharacterCache->HasCharacterCacheEntry(GetOwnerGUID()))
-        return true;
+    if (GetOwnerGUID().IsPlayer())
+    {
+        // Deleted character
+        if (!sCharacterCache->HasCharacterCacheEntry(GetOwnerGUID()))
+            return true;
 
-    if (m_type == CORPSE_BONES)
-        return m_time < t - 60 * MINUTE;
-    else
-        return m_time < t - 3 * DAY;
+        if (m_type == CORPSE_BONES)
+            return m_time < t - 60 * MINUTE;
+        else
+            return m_time < t - 3 * DAY;
+    }
+
+    // NPCBot skeleton bones: decay cleanly after 30 minutes (1800 seconds)
+    return m_time < t - 30 * MINUTE;
 }

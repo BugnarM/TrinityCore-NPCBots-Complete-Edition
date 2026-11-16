@@ -209,6 +209,9 @@ void CreatureAI::JustEnteredCombat(Unit* who)
 {
     if (!IsEngaged() && !me->CanHaveThreatList())
         EngagementStart(who);
+
+    if (who && (me->IsGuard() || me->IsCivilian() || me->IsRacialLeader()))
+        me->SendZoneUnderAttackMessage(who);
 }
 
 void CreatureAI::EnterEvadeMode(EvadeReason why)

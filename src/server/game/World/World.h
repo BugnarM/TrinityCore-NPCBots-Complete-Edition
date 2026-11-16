@@ -33,6 +33,8 @@
 #include <atomic>
 #include <list>
 #include <map>
+#include <mutex>
+#include <set>
 #include <unordered_map>
 
 class Player;
@@ -663,6 +665,7 @@ class TC_GAME_API World
         void SendServerMessage(ServerMessageType messageID, std::string stringParam = "", Player* player = nullptr);
         void SendGlobalMessage(WorldPacket const* packet, WorldSession* self = nullptr, uint32 team = 0);
         void SendGlobalGMMessage(WorldPacket const* packet, WorldSession* self = nullptr, uint32 team = 0);
+        void QueueZoneUnderAttack(uint32 areaId, uint32 defendingTeam);
 
         /// Are we in the middle of a shutdown?
         bool IsShuttingDown() const { return m_ShutdownTimer > 0; }
@@ -876,6 +879,11 @@ class TC_GAME_API World
         AutobroadcastsWeightMap m_AutobroadcastsWeights;
 
         void ProcessQueryCallbacks();
+        void SendQueuedZoneUnderAttack();
+        std::mutex _zoneAttackLock;
+        std::set<std::pair<uint32,uint32>> _zoneAttackQueue;
+        std::map<std::pair<uint32,uint32>,time_t> _zoneAttackCooldowns; // world thread only
+
 
         void SendGuidWarning();
         void DoGuidWarningRestart();
