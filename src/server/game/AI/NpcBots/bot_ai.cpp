@@ -1352,11 +1352,41 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
                 targets3.push_back(c);
             }
 
-            if (!targets3.empty() && HealTarget(Bcore::Containers::SelectRandomContainerElement(targets3), diff))
-                return;
+            if (!targets3.empty())
+            {
+                auto getHealPriority = [this](Unit const* u) -> int32
+                {
+                    if (!u) return -1000;
+                    uint8 hp = GetHealthPCT(u);
+                    int32 score = (100 - hp);
+                    if (hp <= 35) score += 250;
+                    else if (hp <= 60) score += 120;
+                    else if (hp <= 85) score += 50;
+                    if (IsPointedHealTarget(u)) score += 150;
+                    if (u == master) score += 100;
+                    else if (u == me) score += (hp <= 45 ? 90 : 30);
+                    else if (u->IsPlayer()) score += 80;
+                    else if (IsTank(u)) score += 50;
+                    else if (u->IsPet() || (u->IsCreature() && u->ToCreature()->IsPet())) score -= 40;
+                    if (u->IsInCombat() && !u->getAttackers().empty()) score += 20;
+                    return score;
+                };
+
+                targets3.sort([&getHealPriority](Unit const* a, Unit const* b) {
+                    return getHealPriority(a) > getHealPriority(b);
+                });
+
+                for (Unit* target : targets3)
+                {
+                    if (HealTarget(target, diff))
+                        return;
+                }
+            }
         }
         //buffs
-        std::list<Unit*> targets4;
+        if (!me->IsInCombat() && (!master->IsInCombat() || master->GetMap()->IsRaid()))
+        {
+            std::list<Unit*> targets4;
         if (master->IsAlive() && me->GetDistance(master) < 30)
             targets4.push_back(master);
         for (auto const& [_, bot] : *master->GetBotMgr()->GetBotMap())
@@ -1380,6 +1410,7 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
 
         if (!targets4.empty() && BuffTarget(Bcore::Containers::SelectRandomContainerElement(targets4), diff))
             return;
+        }
 
         return;
     }
@@ -1466,56 +1497,87 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
                 }
             }
         }
-        if (!targets5.empty() && HealTarget(Bcore::Containers::SelectRandomContainerElement(targets5), diff))
-            return;
-    }
-    //buffs
-    std::list<Unit*> targets6;
-    for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
-    {
-        Player* tPlayer = itr->GetSource();
-        if (tPlayer == nullptr) continue;
-        if (me->GetMap() != tPlayer->FindMap()) continue;
-        if (tPlayer->HaveBot() && !Bots)
-            Bots = true;
-        if (!tPlayer->IsAlive() || tPlayer->HasUnitState(UNIT_STATE_ISOLATED)) continue;
-        if (me->GetDistance(tPlayer) > 30) continue;
-        targets6.push_back(tPlayer);
-    }
-    if (Bots)
-    {
-        for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
+        if (!targets5.empty())
         {
-            Player const* tPlayer = itr->GetSource();
-            if (tPlayer == nullptr) continue;
-            if (me->GetMap() != tPlayer->FindMap()) continue;
-
-            if (tPlayer->HaveBot())
+            auto getHealPriority = [this](Unit const* u) -> int32
             {
-                for (auto const& [_, bot] : *tPlayer->GetBotMgr()->GetBotMap())
-                {
-                    if (!(!bot->IsInWorld() || me->GetMap() != bot->FindMap() || !bot->IsAlive() || bot->HasUnitState(UNIT_STATE_ISOLATED) ||
-                        bot->IsTotem() || me->GetDistance(bot) > 30))
-                        targets6.push_back(bot);
+                if (!u) return -1000;
+                uint8 hp = GetHealthPCT(u);
+                int32 score = (100 - hp);
+                if (hp <= 35) score += 250;
+                else if (hp <= 60) score += 120;
+                else if (hp <= 85) score += 50;
+                if (IsPointedHealTarget(u)) score += 150;
+                if (u == master) score += 100;
+                else if (u == me) score += (hp <= 45 ? 90 : 30);
+                else if (u->IsPlayer()) score += 80;
+                else if (IsTank(u)) score += 50;
+                else if (u->IsPet() || (u->IsCreature() && u->ToCreature()->IsPet())) score -= 40;
+                if (u->IsInCombat() && !u->getAttackers().empty()) score += 20;
+                return score;
+            };
 
-                    //u = bitr->second->GetBotsPet();
+            targets5.sort([&getHealPriority](Unit const* a, Unit const* b) {
+                return getHealPriority(a) > getHealPriority(b);
+            });
 
-                    //if (!(!u || !u->IsAlive() || u->HasUnitState(UNIT_STATE_ISOLATED) || me->GetDistance(u) > 30))
-                    //    targets6.push_back(u);
-                }
-            }
-            for (Unit* c : tPlayer->m_Controlled)
+            for (Unit* target : targets5)
             {
-                if (!c || !c->IsPet() || me->GetMap() != c->FindMap() || !c->IsAlive() || c->HasUnitState(UNIT_STATE_ISOLATED) ||
-                    c->IsTotem() || me->GetDistance(c) > 30) continue;
-
-                targets6.push_back(c);
+                if (HealTarget(target, diff))
+                    return;
             }
         }
     }
+    //buffs
+    if (!me->IsInCombat() && (!master->IsInCombat() || master->GetMap()->IsRaid()))
+    {
+        std::list<Unit*> targets6;
+        for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
+        {
+            Player* tPlayer = itr->GetSource();
+            if (tPlayer == nullptr) continue;
+            if (me->GetMap() != tPlayer->FindMap()) continue;
+            if (tPlayer->HaveBot() && !Bots)
+                Bots = true;
+            if (!tPlayer->IsAlive() || tPlayer->HasUnitState(UNIT_STATE_ISOLATED)) continue;
+            if (me->GetDistance(tPlayer) > 30) continue;
+            targets6.push_back(tPlayer);
+        }
+        if (Bots)
+        {
+            for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
+            {
+                Player const* tPlayer = itr->GetSource();
+                if (tPlayer == nullptr) continue;
+                if (me->GetMap() != tPlayer->FindMap()) continue;
 
-    if (!targets6.empty() && BuffTarget(Bcore::Containers::SelectRandomContainerElement(targets6), diff))
-        return;
+                if (tPlayer->HaveBot())
+                {
+                    for (auto const& [_, bot] : *tPlayer->GetBotMgr()->GetBotMap())
+                    {
+                        if (!(!bot->IsInWorld() || me->GetMap() != bot->FindMap() || !bot->IsAlive() || bot->HasUnitState(UNIT_STATE_ISOLATED) ||
+                            bot->IsTotem() || me->GetDistance(bot) > 30))
+                            targets6.push_back(bot);
+
+                        //u = bitr->second->GetBotsPet();
+
+                        //if (!(!u || !u->IsAlive() || u->HasUnitState(UNIT_STATE_ISOLATED) || me->GetDistance(u) > 30))
+                        //    targets6.push_back(u);
+                    }
+                }
+                for (Unit* c : tPlayer->m_Controlled)
+                {
+                    if (!c || !c->IsPet() || me->GetMap() != c->FindMap() || !c->IsAlive() || c->HasUnitState(UNIT_STATE_ISOLATED) ||
+                        c->IsTotem() || me->GetDistance(c) > 30) continue;
+
+                    targets6.push_back(c);
+                }
+            }
+        }
+
+        if (!targets6.empty() && BuffTarget(Bcore::Containers::SelectRandomContainerElement(targets6), diff))
+            return;
+    }
 }
 // Attempt to resurrect dead players and bots
 // Target is either bot, player or player corpse
@@ -18635,6 +18697,25 @@ bool bot_ai::GlobalUpdate(uint32 diff)
                     interrupt = true; //LoS
                 else if (info->Id == 64382 && !target->HasAuraWithMechanic(1u<<MECHANIC_IMMUNE_SHIELD))
                     interrupt = true; //Shattering Throw wasting
+                else if (HasRole(BOT_ROLE_HEAL) && !HasBotCommandState(BOT_COMMAND_ISSUED_ORDER))
+                {
+                    if (master && master->IsAlive() && GetHealthPCT(master) < 60)
+                        interrupt = true;
+                    else if (Group const* grp = master ? master->GetGroup() : nullptr)
+                    {
+                        for (GroupReference const* gitr = grp->GetFirstMember(); gitr != nullptr; gitr = gitr->next())
+                        {
+                            if (Player* gPlayer = gitr->GetSource())
+                            {
+                                if (gPlayer->IsAlive() && me->GetMap() == gPlayer->FindMap() && me->GetDistance(gPlayer) < 40.0f && GetHealthPCT(gPlayer) < 50)
+                                {
+                                    interrupt = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if (!interrupt && !(target == master && me->GetDistance(target) < INTERACTION_DISTANCE) &&
                 info->HasEffect(SPELL_EFFECT_HEAL) && GetHealthPCT(target) > 90 && !IsPointedHealTarget(target))

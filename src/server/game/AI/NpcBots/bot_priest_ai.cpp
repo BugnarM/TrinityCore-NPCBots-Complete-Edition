@@ -276,7 +276,9 @@ public:
 
         bool ShieldGroup(uint32 diff)
         {
-            if (!IsSpellReady(PW_SHIELD_1, false, diff) || IsCasting() || Rand() > 65 + 100 * (me->GetMap()->IsRaid()))
+            if (!IsSpellReady(PW_SHIELD_1, false, diff) || IsCasting())
+                return false;
+            if (master && master->IsAlive() && GetHealthPCT(master) >= 85 && Rand() > 65 + 100 * (me->GetMap()->IsRaid()))
                 return false;
             if (!IAmFree() && !(me->GetLevel() >= 30 && _spec == BOT_SPEC_PRIEST_DISCIPLINE) &&
                 master->GetBotMgr()->HasBotWithSpec(BOT_SPEC_PRIEST_DISCIPLINE))
@@ -286,7 +288,7 @@ public:
             if (!gr)
             {
                 Unit* u = master;
-                if (u->IsAlive() && !u->getAttackers().empty() && (IsTank(u) || GetHealthPCT(u) < 75) && me->GetDistance(u) < 40 &&
+                if (u->IsAlive() && (IsTank(u) || GetHealthPCT(u) < 85 || !u->getAttackers().empty()) && me->GetDistance(u) < 40 &&
                     ShieldTarget(u, diff))
                     return true;
                 if (!IAmFree())
@@ -518,6 +520,14 @@ public:
                 SetSpellCooldown(SHADOWFIEND_1, 180000); // (5 - 2) min with Veiled Shadows
             }
 
+            if (HasRole(BOT_ROLE_HEAL))
+            {
+                if (master && master->IsAlive() && GetHealthPCT(master) < 85)
+                    return;
+                if (GetHealthPCT(me) < 70)
+                    return;
+            }
+
             if (!HasRole(BOT_ROLE_HEAL) || GetManaPCT(me) > 35 || botPet)
             {
                 if (IsSpellReady(SW_DEATH_1, diff) && can_do_shadow && Rand() < 90 && GetHealthPCT(me) > 50 &&
@@ -598,7 +608,7 @@ public:
             int32 xppct = hp + hppctps * (me->GetLevel() < 60 ? 2.5f : 2.0f);
             //BOT_LOG_ERROR("entities.player", "priest_bot:HealTarget(): {}'s pct {}, hppctps {}, epct {}",
             //    target->GetName(), uint32(hp), int32(hppctps), int32(xppct));
-            if (xppct >= 95 && hp >= 25 && !pointed)
+            if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
 
             //GUARDIAN SPIRIT no GCD
@@ -658,14 +668,14 @@ public:
             bool tanking = u && IsTank(target) && u->IsCreature() && u->ToCreature()->isWorldBoss();
 
             //Penance
-            if (IsSpellReady(PENANCE_1, diff) && !target->IsCharmed() && !target->isPossessed() && hp <= 80 &&
-                Rand() < 90 && xphploss > _heals[PENANCE_1])
+            if (IsSpellReady(PENANCE_1, diff) && !target->IsCharmed() && !target->isPossessed() && hp <= 85 &&
+                Rand() < 95 && (xphploss > _heals[PENANCE_1] || ((target->IsPlayer() || target == master) && hp <= 85)))
             {
                 if (doCast(target, GetSpell(PENANCE_1)))
                     return true;
             }
             //Big Heal
-            if (IsSpellReady(HEAL, diff) && (xppct > 15 || !GetSpell(FLASH_HEAL_1)) && (tanking || xphploss > _heals[HEAL]))
+            if (IsSpellReady(HEAL, diff) && (xppct > 15 || !GetSpell(FLASH_HEAL_1)) && (tanking || xphploss > _heals[HEAL] || ((target->IsPlayer() || target == master) && hp <= 65)))
             {
                 if (me->IsInCombat() && IsSpellReady(INNER_FOCUS_1, diff) && GetManaPCT(me) < 70 &&
                     doCast(me, GetSpell(INNER_FOCUS_1)))
@@ -674,7 +684,7 @@ public:
                     return true;
             }
             //Renew
-            if (IsSpellReady(RENEW_1, diff) && (tanking || !target->getAttackers().empty() || me->GetMap()->IsDungeon()) &&
+            if (IsSpellReady(RENEW_1, diff) && (tanking || !target->getAttackers().empty() || me->GetMap()->IsDungeon() || ((target->IsPlayer() || target == master) && hp <= 90)) &&
                 !target->GetAuraEffect(SPELL_AURA_PERIODIC_HEAL, SPELLFAMILY_PRIEST, 0x40, 0x0, 0x0, me->GetGUID())
                 /*!target->HasAura(GetSpell(RENEW_1), me->GetGUID())*/)
             {
@@ -682,7 +692,7 @@ public:
                     return true;
             }
             //Flash Heal
-            if (IsSpellReady(FLASH_HEAL_1, diff) && xphploss > _heals[FLASH_HEAL_1])
+            if (IsSpellReady(FLASH_HEAL_1, diff) && (xphploss > _heals[FLASH_HEAL_1] || ((target->IsPlayer() || target == master) && hp <= 85)))
             {
                 if (doCast(target, GetSpell(FLASH_HEAL_1)))
                     return true;

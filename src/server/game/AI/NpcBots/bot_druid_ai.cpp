@@ -1043,8 +1043,15 @@ public:
         {
             MoveBehind(mytar);
 
-            if (HasRole(BOT_ROLE_HEAL) && GetManaPCT(me) < 25)
-                return;
+            if (HasRole(BOT_ROLE_HEAL))
+            {
+                if (GetManaPCT(me) < 25)
+                    return;
+                if (master && master->IsAlive() && GetHealthPCT(master) < 85)
+                    return;
+                if (GetHealthPCT(me) < 70)
+                    return;
+            }
 
             //BOT_ROLE_DPS is checked in Attack(uint32)
 
@@ -1203,7 +1210,7 @@ public:
             int32 hppctps = int32(hps * 100.f / float(target->GetMaxHealth()));
             int32 xphploss = xphp > int32(target->GetMaxHealth()) ? 0 : abs(int32(xphp - target->GetMaxHealth()));
             int32 xppct = hp + hppctps * 2;
-            if (xppct >= 95 && hp >= 25 && !pointed)
+            if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
 
             if (IsTank() && xppct > 25)
@@ -1256,8 +1263,8 @@ public:
             //maintain HoTs
             Unit const* u = target->GetVictim();
             bool tanking = u && IsTank(target) && u->ToCreature() && u->ToCreature()->isWorldBoss();
-            if (IsSpellReady(REGROWTH_1, diff) && Rand() < 80 && (tanking || xphploss > _heals[REGROWTH_1]) &&
-                (xppct <= 45 || !target->GetAuraEffect(SPELL_AURA_PERIODIC_HEAL, SPELLFAMILY_DRUID, 0x40, 0x0, 0x0, me->GetGUID()))
+            if (IsSpellReady(REGROWTH_1, diff) && Rand() < 80 && (tanking || xphploss > _heals[REGROWTH_1] || ((target->IsPlayer() || target == master) && hp <= 85)) &&
+                (xppct <= 45 || ((target->IsPlayer() || target == master) && hp <= 85) || !target->GetAuraEffect(SPELL_AURA_PERIODIC_HEAL, SPELLFAMILY_DRUID, 0x40, 0x0, 0x0, me->GetGUID()))
                 /*!HasAuraName(target, REGROWTH_1, me->GetGUID())*/)
             {
                 if (doCast(target, GetSpell(REGROWTH_1)))
@@ -1273,11 +1280,11 @@ public:
                     return true;
             }
             if (IsSpellReady(HEALING_TOUCH_1, diff) && (xppct > 15 || !GetSpell(REGROWTH_1)) &&
-                xphploss > _heals[HEALING_TOUCH_1] &&
+                (xphploss > _heals[HEALING_TOUCH_1] || ((target->IsPlayer() || target == master) && hp <= 65)) &&
                 doCast(target, GetSpell(HEALING_TOUCH_1)))
                 return true;
-            if (IsSpellReady(REJUVENATION_1, diff) && xppct > 45 &&
-                (tanking || xphploss > _heals[REJUVENATION_1]) &&
+            if (IsSpellReady(REJUVENATION_1, diff) && (xppct > 45 || ((target->IsPlayer() || target == master) && hp <= 90)) &&
+                (tanking || xphploss > _heals[REJUVENATION_1] || ((target->IsPlayer() || target == master) && hp <= 90)) &&
                 !target->GetAuraEffect(SPELL_AURA_PERIODIC_HEAL, SPELLFAMILY_DRUID, 0x10, 0x0, 0x0, me->GetGUID())
                 /*!HasAuraName(target, REJUVENATION_1, me->GetGUID())*/)
             {
