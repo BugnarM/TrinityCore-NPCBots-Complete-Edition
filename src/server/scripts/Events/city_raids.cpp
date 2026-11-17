@@ -249,9 +249,15 @@ public:
         if (!_runtime->Running.load() || !me || !target || !target->IsInWorld() || !target->IsAlive() || target->IsCritter()
             || !me->IsInWorld() || target->GetMap() != me->GetMap() || target->IsFriendlyTo(me)) return false;
         if (_order.Mode == State::Retreating || _order.Mode == State::Celebrating || _order.Mode == State::Spawning) return false;
-        // Reinforcements keep running toward the city instead of starting fights
-        // around the graveyard. Native healing/dispels remain available in transit.
-        if (_reinforcing) return false;
+        // Reinforcements keep running toward the destination instead of starting fights
+        // around the graveyard. Defenders engage immediately if near the boss or attacked.
+        if (_reinforcing)
+        {
+            if (_side == ROLE_DEFENDER && (me->GetExactDist2d(&_cfg.CheckpointSpawns[2]) < 35.f || target->GetVictim() == me))
+                const_cast<CityRaidBotAI*>(this)->_reinforcing = false;
+            else
+                return false;
+        }
         if (!_order.Engage && target->GetVictim() != me) return false;
         if (_side == ROLE_DEFENDER)
         {
@@ -342,13 +348,9 @@ public:
             }
             else
             {
-                uint8 targetCp = _checkpoint;
-                if (_order.Frontline >= 9) targetCp = 2;
-                else if (_order.Frontline >= 6 && targetCp < 2) targetCp = 2;
-                else if (_order.Frontline >= 3 && targetCp < 1) targetCp = 1;
-
-                goal = _cfg.CheckpointSpawns[targetCp];
-                if (me->GetExactDist2d(&goal) < 8.f) _reinforcing = false;
+                // Defenders reinforce directly to the City Boss (Thrall / King Varian Wrynn)!
+                goal = _cfg.CheckpointSpawns[2];
+                if (me->GetExactDist2d(&goal) < 15.f) _reinforcing = false;
             }
         }
         if (me->HasUnitState(UNIT_STATE_CONTROLLED | UNIT_STATE_ROOT | UNIT_STATE_CASTING)) return;
@@ -701,9 +703,18 @@ private:
                 if (bot->GetMaxPower(POWER_MANA)>1) bot->SetPower(POWER_MANA,bot->GetMaxPower(POWER_MANA));
                 bot->CombatStop(true);
                 bot->GetThreatManager().ClearAllThreat();
-                // Revived bots stay at the graveyard and do NOT march back into the city piecemeal
-                if (auto* ai=AI(bot))
-                    ai->Order({State::Idle, graveyard, ObjectGuid::Empty, _wp, false, false});
+                if (&members == &_attackers)
+                {
+                    // Revived attackers stay at the graveyard and do NOT march back into the city piecemeal
+                    if (auto* ai=AI(bot))
+                        ai->Order({State::Idle, graveyard, ObjectGuid::Empty, _wp, false, false});
+                }
+                else
+                {
+                    // Revived defenders rush back to the city boss to reinforce the defense!
+                    if (auto* ai=AI(bot))
+                        ai->Reinforce();
+                }
                 ++revived;
             }
             m.IsDead=false;
