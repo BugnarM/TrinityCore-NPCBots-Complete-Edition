@@ -2481,6 +2481,13 @@ Rate.Reputation.RecruitAFriendBonus = 0.1
 Rate.MoveSpeed = 1
 
 #
+#    Rate.Ghost.MoveSpeed
+#        Description: Movement speed rate for players in ghost (spirit) form.
+#        Default:     3.0 (3x movement speed)
+#
+Rate.Ghost.MoveSpeed = 3.0
+
+#
 #    Rate.InstanceResetTime
 #        Description: Multiplier for the rate between global raid/heroic instance resets
 #                     (dbc value). Higher value increases the time between resets,
@@ -5127,3 +5134,19 @@ AOELoot.Range = 120.0
 #        Default:     30
 
 AOELoot.MaxCorpses = 60
+
+#
+#    AutoLearnSpells.Enable
+#        Description: Automatically learn all available class spells and ranks on level-up and login.
+#        Default:     1 - Enabled
+#                     0 - Disabled
+#
+AutoLearnSpells.Enable = 1
+
+#
+#    AutoLearnSpells.Announce
+#        Description: Announce in chat when new spells are learned.
+#        Default:     1 - Enabled
+#                     0 - Disabled
+#
+AutoLearnSpells.Announce = 1

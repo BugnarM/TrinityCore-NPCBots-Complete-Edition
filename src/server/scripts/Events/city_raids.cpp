@@ -143,7 +143,7 @@ namespace CityRaidConstants
             {
                 Position(-8953.95f, 521.02f, 96.54f, 4.14f), // CP 0: Valley of Heroes Bridge
                 Position(-8831.8f, 596.4f, 95.8f, 3.54f),    // CP 1: Trade District Center
-                Position(-8534.0f, 367.13f, 108.57f, 2.15f)  // CP 2: Stormwind Keep Courtyard
+                Position(-8441.42f, 333.10f, 122.58f, 5.2f)  // CP 2: King Varian Wrynn Throne Room
             },
             "Stormwind City",
             "Horde",
@@ -179,7 +179,7 @@ namespace CityRaidConstants
             {
                 Position(1537.4f, -4380.8f, 16.8f, 3.14f),    // CP 0: Valley of Strength Plaza
                 Position(1800.66f, -4374.51f, -17.12f, 1.57f), // CP 1: The Drag Center
-                Position(1922.2f, -4204.4f, 42.3f, 5.71f)     // CP 2: Grommash Hold Courtyard
+                Position(1920.01f, -4123.95f, 43.60f, 1.57f)  // CP 2: Grommash Hold (Thrall Throne)
             },
             "Orgrimmar",
             "Alliance",
@@ -253,8 +253,15 @@ public:
         // around the graveyard. Native healing/dispels remain available in transit.
         if (_reinforcing) return false;
         if (!_order.Engage && target->GetVictim() != me) return false;
-        if (_side==ROLE_DEFENDER) return target->GetExactDist2d(&_order.Destination)<=65.f;
-        if (_order.Mode==State::Boss) return target->GetExactDist2d(&_order.Destination)<=65.f;
+        if (_side == ROLE_DEFENDER)
+        {
+            if (target->GetVictim() && target->GetVictim()->GetEntry() == _cfg.BossEntry)
+                return true;
+            if (!_order.Focus.IsEmpty() && target->GetGUID() == _order.Focus)
+                return true;
+            return target->GetExactDist2d(&_order.Destination) <= 65.f;
+        }
+        if (_order.Mode == State::Boss) return target->GetExactDist2d(&_order.Destination) <= 65.f;
         size_t current=std::min<size_t>(_order.Frontline,_cfg.Waypoints.size()-1);
         size_t previous=current?current-1:0;
         auto const& a=_cfg.Waypoints[previous];
@@ -533,6 +540,25 @@ public:
         bool defenderWave = Tactics::WaveTick(_defendWave,30000,decisionDiff);
         Resurrect(map,_attackers,attackerWave,_graveyards[0]);
         Resurrect(map,_defenders,defenderWave,_graveyards[1]);
+        if (_state == State::Marching || _state == State::Boss)
+        {
+            uint32 activeAttackersInCity = 0;
+            for (auto const& m : _attackers)
+            {
+                if (Creature* b = GetBot(map, m))
+                {
+                    if (b->IsAlive() && b->GetExactDist2d(&_graveyards[0]) > 50.f)
+                        ++activeAttackersInCity;
+                }
+            }
+
+            if (activeAttackersInCity == 0)
+            {
+                TC_LOG_INFO("npcbots", "City raid {}: All attacking forces in {} defeated! Raid failed.", _cfg.EventId, _cfg.CityName);
+                BeginRetreat();
+                return;
+            }
+        }
         if (_elapsed >= _sampleAt) { _sampleAt = _elapsed+1000; SampleParticipants(map); }
         if (_state == State::Boss) BossOrders(map);
         else MarchOrders(map);
@@ -675,7 +701,9 @@ private:
                 if (bot->GetMaxPower(POWER_MANA)>1) bot->SetPower(POWER_MANA,bot->GetMaxPower(POWER_MANA));
                 bot->CombatStop(true);
                 bot->GetThreatManager().ClearAllThreat();
-                if (auto* ai=AI(bot)) ai->Reinforce();
+                // Revived bots stay at the graveyard and do NOT march back into the city piecemeal
+                if (auto* ai=AI(bot))
+                    ai->Order({State::Idle, graveyard, ObjectGuid::Empty, _wp, false, false});
                 ++revived;
             }
             m.IsDead=false;
@@ -743,17 +771,78 @@ private:
     }
     void DefenderOrders(Map* map)
     {
-        for (auto const& m:_defenders) if (Creature* b=GetBot(map,m)) if (b->IsAlive())
+        Creature* boss = _boss.IsEmpty() ? nullptr : map->GetCreature(_boss);
+        if (!boss)
         {
-            uint8 targetCp = m.Checkpoint;
-            if (_wp >= 9) targetCp = 2;
-            else if (_wp >= 6 && targetCp < 2) targetCp = 2;
-            else if (_wp >= 3 && targetCp < 1) targetCp = 1;
+            for (auto const& m : _defenders)
+            {
+                if (m.Checkpoint == 2)
+                {
+                    if (Creature* b = GetBot(map, m))
+                    {
+                        if (Creature* foundBoss = b->FindNearestCreature(_cfg.BossEntry, 80.f, true))
+                        {
+                            boss = foundBoss;
+                            _boss = boss->GetGUID();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
-            Position goal=_cfg.CheckpointSpawns[targetCp];
-            float a=float(m.Index)*2.399963f;
-            goal.m_positionX+=4.f*std::cos(a); goal.m_positionY+=4.f*std::sin(a);
-            Publish(b,{State::Marching,goal,ObjectGuid::Empty,_wp,!b->GetBotAI()->HasRole(BOT_ROLE_HEAL),true});
+        Unit* bossThreat = nullptr;
+        if (boss && boss->IsAlive())
+        {
+            if (Unit* victim = boss->GetVictim())
+                if (victim->IsAlive() && victim->GetMap() == map)
+                    bossThreat = victim;
+
+            if (!bossThreat)
+            {
+                float closestDist = 50.f;
+                for (auto const& m : _attackers)
+                {
+                    if (Creature* b = GetBot(map, m))
+                    {
+                        if (b->IsAlive() && b->GetMap() == map && b->GetExactDist2d(boss) < closestDist)
+                        {
+                            closestDist = b->GetExactDist2d(boss);
+                            bossThreat = b;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (auto const& m : _defenders) if (Creature* b = GetBot(map, m)) if (b->IsAlive())
+        {
+            bool defendBoss = (_state == State::Boss || _wp >= 8 || m.Checkpoint == 2);
+
+            Position goal;
+            if (defendBoss)
+            {
+                goal = boss ? boss->GetPosition() : _cfg.CheckpointSpawns[2];
+                float a = float(m.Index) * 2.399963f;
+                float r = (b->GetBotAI() && b->GetBotAI()->HasRole(BOT_ROLE_HEAL)) ? 14.f :
+                          (b->GetBotAI() && b->GetBotAI()->HasRole(BOT_ROLE_RANGED)) ? 9.f : 3.5f;
+                goal.m_positionX += r * std::cos(a);
+                goal.m_positionY += r * std::sin(a);
+            }
+            else
+            {
+                uint8 targetCp = m.Checkpoint;
+                if (_wp >= 6 && targetCp < 2) targetCp = 2;
+                else if (_wp >= 3 && targetCp < 1) targetCp = 1;
+
+                goal = _cfg.CheckpointSpawns[targetCp];
+                float a = float(m.Index) * 2.399963f;
+                goal.m_positionX += 4.f * std::cos(a);
+                goal.m_positionY += 4.f * std::sin(a);
+            }
+
+            ObjectGuid focus = bossThreat ? bossThreat->GetGUID() : ObjectGuid::Empty;
+            Publish(b, {defendBoss ? State::Boss : State::Marching, goal, focus, _wp, !b->GetBotAI()->HasRole(BOT_ROLE_HEAL), true});
         }
     }
     void BossOrders(Map* map)
@@ -870,7 +959,7 @@ private:
     }
     void BeginRetreat()
     {
-        _state=State::Retreating; _finish=90000;
+        _state=State::Retreating; _finish=15000;
         Announce("The invasion of "+std::string(_cfg.CityName)+" has been repelled. The surviving raiders are withdrawing!");
         if (Map* map=GetMap())
             for (auto* roster:{&_attackers,&_defenders}) for (auto const& m:*roster)

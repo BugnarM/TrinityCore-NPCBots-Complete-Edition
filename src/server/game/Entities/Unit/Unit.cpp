@@ -30,6 +30,7 @@
 #include "CombatLogPackets.h"
 #include "CombatPackets.h"
 #include "Common.h"
+#include "Config.h"
 #include "ConditionMgr.h"
 #include "Containers.h"
 #include "CreatureAI.h"
@@ -9039,6 +9040,15 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
         float min_speed = CalculatePct(baseMinSpeed, minSpeedMod);
         if (speed < min_speed)
             speed = min_speed;
+    }
+
+    if (GetTypeId() == TYPEID_PLAYER && ToPlayer()->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST))
+    {
+        if (mtype == MOVE_RUN || mtype == MOVE_SWIM || mtype == MOVE_FLIGHT)
+        {
+            float ghostSpeed = sConfigMgr->GetFloatDefault("Rate.Ghost.MoveSpeed", 3.0f);
+            speed *= ghostSpeed;
+        }
     }
 
     SetSpeedRate(mtype, speed);

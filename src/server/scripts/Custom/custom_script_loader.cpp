@@ -22,6 +22,10 @@
 #include "GameTime.h"
 #include "SpellHistory.h"
 #include "SpellPackets.h"
+#include "Trainer.h"
+#include "DBCStores.h"
+#include "Config.h"
+#include "ObjectMgr.h"
 #include <cmath>
 #include <vector>
 #include <unordered_map>
@@ -1377,6 +1381,75 @@ public:
     }
 };
 
+/*
+ * Auto Learn Spells on Level Up and Login
+ * Automatically learns all available class spells and ranks from class trainers
+ * whenever the player gains a level or logs into the game, without needing an NPC trainer.
+ */
+class AutoLearnSpellsScript : public PlayerScript
+{
+public:
+    AutoLearnSpellsScript() : PlayerScript("AutoLearnSpellsScript") { }
+
+    static void LearnClassSpells(Player* player)
+    {
+        if (!player || !player->IsInWorld())
+            return;
+
+        if (!sConfigMgr->GetBoolDefault("AutoLearnSpells.Enable", true))
+            return;
+
+        ChrClassesEntry const* classEntry = sChrClassesStore.LookupEntry(player->GetClass());
+        if (!classEntry)
+            return;
+
+        std::vector<Trainer::Trainer const*> const& trainers = sObjectMgr->GetClassTrainers(player->GetClass());
+
+        bool hadNew;
+        uint32 iterations = 0;
+        uint32 totalLearned = 0;
+        do
+        {
+            hadNew = false;
+            ++iterations;
+            for (Trainer::Trainer const* trainer : trainers)
+            {
+                if (!trainer || !trainer->IsTrainerValidForPlayer(player))
+                    continue;
+
+                for (Trainer::Spell const& trainerSpell : trainer->GetSpells())
+                {
+                    if (!trainer->CanTeachSpell(player, &trainerSpell))
+                        continue;
+
+                    if (trainerSpell.IsCastable())
+                        player->CastSpell(player, trainerSpell.SpellId, true);
+                    else
+                        player->LearnSpell(trainerSpell.SpellId, false);
+
+                    hadNew = true;
+                    ++totalLearned;
+                }
+            }
+        } while (hadNew && iterations < 15);
+
+        if (totalLearned > 0 && sConfigMgr->GetBoolDefault("AutoLearnSpells.Announce", true))
+        {
+            ChatHandler(player->GetSession()).SendSysMessage(Trinity::StringFormat("|cff00ff00[Auto Learn]|r Ai invatat automat {} abilitati noi de clasa!", totalLearned));
+        }
+    }
+
+    void OnLevelChanged(Player* player, uint8 /*oldLevel*/) override
+    {
+        LearnClassSpells(player);
+    }
+
+    void OnLogin(Player* player, bool /*firstLogin*/) override
+    {
+        LearnClassSpells(player);
+    }
+};
+
 void AddCustomScripts()
 {
     new boss_dark_knight_nemesis_script();
@@ -1384,5 +1457,6 @@ void AddCustomScripts()
     new companion_commandscript();
     new companion_playerscript();
     new boss_illidan_worldboss_script();
+    new AutoLearnSpellsScript();
 }
 

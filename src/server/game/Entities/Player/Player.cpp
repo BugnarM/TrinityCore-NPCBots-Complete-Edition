@@ -4483,6 +4483,10 @@ void Player::BuildPlayerRepop()
 
     StopMirrorTimers();                                     //disable timers(bars)
 
+    UpdateSpeed(MOVE_RUN);
+    UpdateSpeed(MOVE_SWIM);
+    UpdateSpeed(MOVE_FLIGHT);
+
     // OnPlayerRepop hook
     sScriptMgr->OnPlayerRepop(this);
 }
@@ -4501,6 +4505,10 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
     // This must be called always even on Players with race != RACE_NIGHTELF in case of faction change
     RemoveAurasDueToSpell(20584);                           // RACE_NIGHTELF speed bonuses
     RemoveAurasDueToSpell(8326);                            // SPELL_AURA_GHOST
+
+    UpdateSpeed(MOVE_RUN);
+    UpdateSpeed(MOVE_SWIM);
+    UpdateSpeed(MOVE_FLIGHT);
 
     if (GetSession()->IsARecruiter() || (GetSession()->GetRecruiterId() != 0))
         SetDynamicFlag(UNIT_DYNFLAG_REFER_A_FRIEND);
