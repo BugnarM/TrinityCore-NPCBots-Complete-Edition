@@ -224,6 +224,7 @@ class LootValidatorRefManager : public RefManager<Loot, LootValidatorRef>
 
 struct TC_GAME_API Loot
 {
+    NotNormalLootItemMap& GetPlayerQuestItems() { return PlayerQuestItems; }
     NotNormalLootItemMap const& GetPlayerQuestItems() const { return PlayerQuestItems; }
     NotNormalLootItemMap const& GetPlayerFFAItems() const { return PlayerFFAItems; }
     NotNormalLootItemMap const& GetPlayerNonQuestNonFFAConditionalItems() const { return PlayerNonQuestNonFFAConditionalItems; }

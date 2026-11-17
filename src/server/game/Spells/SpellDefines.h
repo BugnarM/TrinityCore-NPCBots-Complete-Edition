@@ -248,6 +248,7 @@ public:
 
     ObjectGuid GetCorpseTargetGUID() const;
     Corpse* GetCorpseTarget() const;
+    void SetCorpseTarget(Corpse* target);
 
     WorldObject* GetObjectTarget() const;
     ObjectGuid GetObjectTargetGUID() const;

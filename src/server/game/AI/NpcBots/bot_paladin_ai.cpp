@@ -882,10 +882,11 @@ public:
 
         void DoNonCombatActions(uint32 diff)
         {
-            if (GC_Timer > diff || me->IsMounted() || IsCasting())
+            if (GC_Timer > diff || IsCasting())
                 return;
 
-            ResurrectGroup(GetSpell(REDEMPTION_1));
+            if (!me->IsMounted() || IsWanderer())
+                ResurrectGroup(GetSpell(REDEMPTION_1));
         }
 
         void CheckSeal(uint32 diff)

@@ -951,7 +951,7 @@ class NearbyFriendlyUnitCheck
                 return false;
             if (!me->CanSeeOrDetect(u))
                 return false;
-            if (!me->IsValidAssistTarget(u))
+            if (!me->IsValidAssistTarget(u) && !(u->IsPlayer() && u->ToPlayer()->IsGameMaster() && me->IsFriendlyTo(u)))
                 return false;
 
             return true;
@@ -1090,7 +1090,7 @@ class NearbyRezTargetCheck
                 return false;
             if (!me->IsWithinDistInMap(u, max_range))
                 return false;
-            if (!me->CanSeeOrDetect(u))
+            if (!me->CanSeeOrDetect(u) && !(u->IsPlayer() && u->ToPlayer()->IsGameMaster()))
                 return false;
             if (Player const* p = u->IsPlayer() ? u->ToPlayer() : ObjectAccessor::FindPlayer(u->ToCorpse()->GetOwnerGUID()))
             {
@@ -1100,7 +1100,7 @@ class NearbyRezTargetCheck
                     return false;
                 if (p->GetUInt32Value(PLAYER_SELF_RES_SPELL))
                     return false;
-                if (!ai->IsInBotParty(p))
+                if (!ai->IsInBotParty(p) && !(ai->IsWanderer() && me->IsFriendlyTo(p)))
                     return false;
             }
             else

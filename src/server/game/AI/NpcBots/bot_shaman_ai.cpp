@@ -1166,10 +1166,14 @@ public:
 
         void DoNonCombatActions(uint32 diff)
         {
-            if (GC_Timer > diff || me->IsMounted() || IsCasting() || Rand() > 25)
+            if (GC_Timer > diff || IsCasting())
                 return;
 
-            ResurrectGroup(GetSpell(ANCESTRAL_SPIRIT_1));
+            if ((!me->IsMounted() || IsWanderer()) && (IsWanderer() || Rand() <= 25))
+                ResurrectGroup(GetSpell(ANCESTRAL_SPIRIT_1));
+
+            if (me->IsMounted() || Rand() > 25)
+                return;
 
             if (mhEnchantExpireTimer > 0 && mhEnchantExpireTimer <= diff)
                 RemoveItemClassEnchantment(BOT_SLOT_MAINHAND);

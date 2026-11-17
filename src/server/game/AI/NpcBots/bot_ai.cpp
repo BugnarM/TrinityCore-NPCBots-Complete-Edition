@@ -825,7 +825,10 @@ bool bot_ai::doCast(Unit* victim, uint32 spellId, TriggerCastFlags flags)
 
     bool triggered = !!(flags & TRIGGERED_CAST_DIRECTLY);
     SpellCastTargets targets;
-    targets.SetUnitTarget(victim);
+    if (victim->GetTypeId() == TYPEID_CORPSE)
+        targets.SetCorpseTarget(reinterpret_cast<Corpse*>(victim));
+    else
+        targets.SetUnitTarget(victim);
     Spell* spell = new Spell(me, m_botSpellInfo, flags);
     SpellCastResult result = spell->prepare(targets);
 
@@ -1248,26 +1251,61 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
 
     if (IAmFree())
     {
-        if (BuffTarget(me, diff))
-            return;
-
-        if (HealTarget(me, diff))
+        // 1. Critical self heal
+        if (GetHealthPCT(me) < 70 && HealTarget(me, diff))
             return;
 
         if (me->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE || me->HasAura(BERSERK))
             return;
 
+        // 2. Scan nearby friendly targets up to 40 yards
         std::list<Unit*> targets2;
-        GetNearbyFriendlyTargetsList(targets2, 30);
+        GetNearbyFriendlyTargetsList(targets2, 40.0f);
         std::erase_if(targets2, BOTAI_PRED::BuffTargetExclude());
         std::erase_if(targets2, [this](Unit const* unit) {
             return !unit->IsPlayer() && !(IsWanderer() && unit->IsNPCBot() && unit->ToCreature()->GetBotAI()->IsWanderer());
         });
+
+        // 3. PRIORITIZE HEALING: Check players first, then wanderers
+        Unit* mostInjured = nullptr;
+        uint8 lowestHp = 100;
+        for (Unit* candidate : targets2)
+        {
+            uint8 hp = GetHealthPCT(candidate);
+            if (candidate->IsPlayer() && hp < 95)
+            {
+                if (hp < lowestHp)
+                {
+                    lowestHp = hp;
+                    mostInjured = candidate;
+                }
+            }
+            else if (hp < lowestHp && hp < 85)
+            {
+                lowestHp = hp;
+                mostInjured = candidate;
+            }
+        }
+
+        if (mostInjured && lowestHp < 95)
+        {
+            if (me->IsMounted())
+                DismountBot();
+            if (HealTarget(mostInjured, diff))
+                return;
+        }
+
+        // 4. Normal self heal top-off
+        if (HealTarget(me, diff))
+            return;
+
+        // 5. Self buffs
+        if (BuffTarget(me, diff))
+            return;
+
+        // 6. Ally buffs if no one needed healing
         if (!targets2.empty() && CanDoNonCombatActions() && BuffTarget(targets2.size() == 1 ? targets2.front() : Bcore::Containers::SelectRandomContainerElement(targets2), diff))
             return;
-        for (Unit* heal_target : targets2)
-            if (GetHealthPCT(heal_target) < 95 && urand(1, 100) <= (30 + 30*uint32(!!GetBG())) && HealTarget(heal_target, diff))
-                break;
 
         return;
     }
@@ -1485,7 +1523,7 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
 void bot_ai::ResurrectGroup(uint32 spell_id)
 {
     if (_cityRaidAI) return; // Preserve the event's 20s/30s wave cadence.
-    if (!spell_id || Rand() > 10 || me->GetMap()->IsBattlegroundOrArena())
+    if (!spell_id || (!IsWanderer() && Rand() > 10) || me->GetMap()->IsBattlegroundOrArena())
         return;
 
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spell_id);
@@ -1505,9 +1543,20 @@ void bot_ai::ResurrectGroup(uint32 spell_id)
         if (me->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE || me->HasAura(BERSERK))
             return;
 
-        WorldObject* playerOrCorpse = GetNearbyRezTarget();
+        WorldObject* playerOrCorpse = GetNearbyRezTarget(40.0f);
         if (!playerOrCorpse)
             return;
+
+        if (me->IsMounted())
+            DismountBot();
+
+        me->BotStopMovement();
+
+        if (me->GetDistance(playerOrCorpse) > 25.0f)
+        {
+            BotMovement(BOT_MOVE_POINT, playerOrCorpse);
+            return;
+        }
 
         if (!playerOrCorpse->IsWithinLOSInMap(me, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::M2))
             me->Relocate(*playerOrCorpse);
@@ -3501,6 +3550,18 @@ bool bot_ai::IsInBotParty(Unit const* unit) const
 {
     if (!unit)
         return false;
+
+    // Handle corpse object safely if passed through resurrection
+    if (unit->GetTypeId() == TYPEID_CORPSE)
+    {
+        if (Corpse const* corpse = reinterpret_cast<Corpse const*>(unit))
+        {
+            if (Player const* owner = ObjectAccessor::FindPlayer(corpse->GetOwnerGUID()))
+                return IsInBotParty(owner);
+        }
+        return false;
+    }
+
     if (unit == master || unit == me || unit == botPet)
         return true;
 

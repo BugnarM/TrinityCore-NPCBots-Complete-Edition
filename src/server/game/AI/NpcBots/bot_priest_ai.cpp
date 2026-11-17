@@ -738,10 +738,14 @@ public:
 
         void DoNonCombatActions(uint32 diff)
         {
-            if (GC_Timer > diff || me->IsMounted() || IsCasting())
+            if (GC_Timer > diff || IsCasting())
                 return;
 
-            ResurrectGroup(GetSpell(RESURRECTION_1));
+            if (!me->IsMounted() || IsWanderer())
+                ResurrectGroup(GetSpell(RESURRECTION_1));
+
+            if (me->IsMounted())
+                return;
 
             if (GetSpell(LEVITATE_1) && !IAmFree() && Rand() < 30)
             {

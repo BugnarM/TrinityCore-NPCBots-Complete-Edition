@@ -5,6 +5,7 @@
 #include "bottext.h"
 #include "bottraits.h"
 #include "Containers.h"
+#include "Corpse.h"
 #include "Group.h"
 #include "Log.h"
 #include "Map.h"
@@ -1409,10 +1410,14 @@ public:
 
         void DoNonCombatActions(uint32 diff)
         {
-            if (GC_Timer > diff || me->IsMounted() || IsCasting())
+            if (GC_Timer > diff || IsCasting())
                 return;
 
-            ResurrectGroup(GetSpell(REVIVE_1));
+            if (!me->IsMounted() || IsWanderer())
+                ResurrectGroup(GetSpell(REVIVE_1));
+
+            if (me->IsMounted())
+                return;
 
             if (!IAmFree() && HasBotCommandState(BOT_COMMAND_FOLLOW) && !master->IsMounted() && Rand() < 35)
             {
@@ -1518,8 +1523,23 @@ public:
 
         void CheckBattleRez(uint32 diff)
         {
-            if (!IsSpellReady(REBIRTH_1, diff, false) || IAmFree() || me->IsMounted() ||
+            if (!IsSpellReady(REBIRTH_1, diff, false) || me->IsMounted() ||
                 IsTank() || IsCasting() || Rand() > 20) return;
+
+            if (IAmFree())
+            {
+                WorldObject* playerOrCorpse = GetNearbyRezTarget(30.0f);
+                if (!playerOrCorpse)
+                    return;
+
+                Unit* target = playerOrCorpse->IsPlayer() ? playerOrCorpse->ToUnit() : (Unit*)playerOrCorpse->ToCorpse();
+                if (doCast(target, GetSpell(REBIRTH_1)))
+                {
+                    if (Player const* player = playerOrCorpse->IsPlayer() ? playerOrCorpse->ToPlayer() : ObjectAccessor::FindPlayer(playerOrCorpse->ToCorpse()->GetOwnerGUID()))
+                        BotWhisper(LocalizedNpcText(player, BOT_TEXT_REZZING_YOU), player);
+                }
+                return;
+            }
 
             Group const* gr = master->GetGroup();
             std::list<Unit*> targets;

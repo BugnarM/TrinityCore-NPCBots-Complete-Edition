@@ -368,6 +368,76 @@ namespace
         return transferred;
     }
 
+    uint32 AddOrStackQuestLoot(Loot* mainLoot, LootItem const& incomingItem, Player* player)
+    {
+        ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(incomingItem.itemid);
+        uint32 stackLimit = itemTemplate ? std::min<uint32>(itemTemplate->GetMaxStackSize(), AOE_LOOT_STACK_LIMIT) : 1;
+
+        uint32 remaining = incomingItem.count;
+        uint32 transferred = 0;
+
+        // 1. Try to stack into an existing unlooted quest item in mainLoot
+        if (stackLimit > 1)
+        {
+            for (LootItem& existingItem : mainLoot->quest_items)
+            {
+                if (!existingItem.is_looted && existingItem.itemid == incomingItem.itemid && existingItem.count < stackLimit)
+                {
+                    uint32 amountToAdd = std::min<uint32>(remaining, stackLimit - existingItem.count);
+                    existingItem.count = static_cast<uint8>(existingItem.count + amountToAdd);
+                    remaining -= amountToAdd;
+                    transferred += amountToAdd;
+
+                    if (remaining == 0)
+                        return transferred;
+                }
+            }
+        }
+
+        // 2. Add as a new quest item slot in mainLoot
+        while (remaining > 0)
+        {
+            NotNormalLootItemList* qlist = nullptr;
+            NotNormalLootItemMap& qmap = mainLoot->GetPlayerQuestItems();
+            auto itr = qmap.find(player->GetGUID());
+            if (itr != qmap.end())
+                qlist = itr->second;
+            else
+            {
+                qlist = new NotNormalLootItemList();
+                qmap[player->GetGUID()] = qlist;
+            }
+
+            size_t totalSlots = mainLoot->items.size() + (qlist ? qlist->size() : 0);
+            if (totalSlots >= MAX_AOE_LOOT_ITEMS || mainLoot->quest_items.size() >= MAX_NR_QUEST_ITEMS)
+                return transferred;
+
+            uint32 newStackCount = (stackLimit > 1) ? std::min<uint32>(remaining, stackLimit) : 1;
+            uint32 newIndex = static_cast<uint32>(mainLoot->quest_items.size());
+
+            LootItem newItem = incomingItem;
+            newItem.count = static_cast<uint8>(newStackCount);
+            newItem.itemIndex = newIndex;
+            newItem.is_looted = false;
+            newItem.is_counted = false;
+
+            if (!player->GetGroup() || (player->GetGroup()->GetLootMethod() != GROUP_LOOT && player->GetGroup()->GetLootMethod() != ROUND_ROBIN))
+                newItem.is_blocked = true;
+
+            mainLoot->quest_items.push_back(newItem);
+            qlist->push_back(NotNormalLootItem(static_cast<uint8>(newIndex)));
+            ++mainLoot->unlootedCount;
+
+            transferred += newStackCount;
+            remaining -= newStackCount;
+
+            if (stackLimit <= 1)
+                break;
+        }
+
+        return transferred;
+    }
+
     uint8 GetLootSortPriority(LootItem const& item)
     {
         ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item.itemid);
@@ -603,12 +673,10 @@ namespace
                 if (!player->HasQuestForItem(questItem.itemid))
                     continue;
 
-                if (questItem.freeforall || questItem.is_blocked || questItem.follow_loot_rules ||
-                    !questItem.conditions.empty() || !questItem.rollWinnerGUID.IsEmpty())
+                if (!questItem.AllowedForPlayer(player, loot->lootOwnerGUID))
                     continue;
 
-                if (!questItem.AllowedForPlayer(player, loot->lootOwnerGUID) ||
-                    !questItem.GetAllowedLooters().count(player->GetGUID()))
+                if (!questItem.rollWinnerGUID.IsEmpty() && questItem.rollWinnerGUID != player->GetGUID())
                     continue;
 
                 uint32 maxNeeded = 0;
@@ -629,9 +697,6 @@ namespace
                     }
                 }
 
-                if (maxNeeded == 0)
-                    continue;
-
                 uint32 ownedCount = player->GetItemCount(questItem.itemid, true);
                 for (QuestLootCandidate const& pending : questCandidates)
                 {
@@ -641,21 +706,51 @@ namespace
 
                 for (LootItem const& mainQuestItem : mainLoot->quest_items)
                 {
-                    if (mainQuestItem.itemid == questItem.itemid)
+                    if (mainQuestItem.itemid == questItem.itemid && !mainQuestItem.is_looted)
                         ownedCount += mainQuestItem.count;
                 }
 
-                if (ownedCount >= maxNeeded)
+                if (maxNeeded > 0 && ownedCount >= maxNeeded)
                     continue;
 
-                uint32 stillNeeded = maxNeeded - ownedCount;
+                uint32 stillNeeded = (maxNeeded > 0 && maxNeeded > ownedCount) ? (maxNeeded - ownedCount) : static_cast<uint32>(questItem.count);
                 LootItem cappedItem = questItem;
                 cappedItem.count = static_cast<uint8>(std::min(static_cast<uint32>(questItem.count), stillNeeded));
-                questCandidates.push_back({ creature, i, cappedItem });
+                if (cappedItem.count > 0)
+                    questCandidates.push_back({ creature, i, cappedItem });
             }
         }
 
-        // Sort regular candidates by priority (high quality first)
+        // 1. Transfer quest items into mainLoot (consolidating and stacking into corpse loot window)
+        for (QuestLootCandidate const& candidate : questCandidates)
+        {
+            Loot* sourceLoot = &candidate.sourceCreature->loot;
+            if (candidate.sourceIndex >= sourceLoot->quest_items.size())
+                continue;
+
+            LootItem& sourceItem = sourceLoot->quest_items[candidate.sourceIndex];
+            if (sourceItem.is_looted)
+                continue;
+
+            uint32 sourceCount = sourceItem.count;
+            uint32 transferred = AddOrStackQuestLoot(mainLoot, candidate.item, player);
+
+            if (transferred == 0)
+                continue;
+
+            if (transferred >= sourceCount)
+            {
+                sourceItem.is_looted = true;
+                if (sourceLoot->unlootedCount > 0)
+                    --sourceLoot->unlootedCount;
+            }
+            else
+            {
+                sourceItem.count = static_cast<uint8>(sourceCount - transferred);
+            }
+        }
+
+        // 2. Sort regular candidates by priority (high quality first)
         std::stable_sort(regularCandidates.begin(), regularCandidates.end(),
             [](RegularLootCandidate const& left, RegularLootCandidate const& right)
             {
@@ -664,7 +759,7 @@ namespace
 
         size_t reservedQuestRows = mainLoot->quest_items.size();
 
-        // Transfer regular items
+        // 3. Transfer regular items into mainLoot
         for (RegularLootCandidate const& candidate : regularCandidates)
         {
             Loot* sourceLoot = &candidate.sourceCreature->loot;
@@ -690,36 +785,6 @@ namespace
             else
             {
                 sourceItem.count = static_cast<uint8>(sourceCount - transferred);
-            }
-        }
-
-        // Add quest items directly to player's inventory
-        for (QuestLootCandidate const& candidate : questCandidates)
-        {
-            if (!player->HasQuestForItem(candidate.item.itemid))
-                continue;
-
-            Loot* sourceLoot = &candidate.sourceCreature->loot;
-            if (candidate.sourceIndex >= sourceLoot->quest_items.size())
-                continue;
-
-            LootItem& sourceItem = sourceLoot->quest_items[candidate.sourceIndex];
-            if (sourceItem.is_looted)
-                continue;
-
-            uint32 amountToAdd = std::min<uint32>(candidate.item.count, sourceItem.count);
-            if (amountToAdd == 0 || !player->AddItem(sourceItem.itemid, amountToAdd))
-                continue;
-
-            if (amountToAdd >= sourceItem.count)
-            {
-                sourceItem.is_looted = true;
-                if (sourceLoot->unlootedCount > 0)
-                    --sourceLoot->unlootedCount;
-            }
-            else
-            {
-                sourceItem.count = static_cast<uint8>(sourceItem.count - amountToAdd);
             }
         }
 
