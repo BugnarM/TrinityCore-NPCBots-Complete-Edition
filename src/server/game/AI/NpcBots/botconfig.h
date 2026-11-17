@@ -2,6 +2,7 @@
 #define BOTCONFIG_H
 
 #include "botcommon.h"
+#include "bothealingpolicy.h"
 
 class Map;
 class Player;
@@ -36,6 +37,7 @@ class TC_GAME_API BotCfg
 {
 public:
     static void ReloadConfig();
+    static NPCBots::Healing::Settings const& GetHealingSettings();
 
     static bool IsNpcBotModEnabled();
     static bool IsNpcBotLogEnabled();

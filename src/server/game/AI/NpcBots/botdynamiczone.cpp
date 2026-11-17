@@ -30,12 +30,10 @@ void DynamicZoneMgr::Update(uint32 diff)
         return;
     }
     uint32 const interval = BotCfg::GetDynamicZoneUpdateInterval() * 1000;
-    if (diff < interval - std::min(_scanTimer, interval))
-    {
-        _scanTimer += diff;
+    auto const scanElapsed = ScanElapsed(_scanTimer, diff, interval);
+    if (!scanElapsed)
         return;
-    }
-    _scanTimer = 0;
+    uint32 const elapsed = *scanElapsed;
 
     std::map<uint64, std::vector<Player*>> active;
     for (auto const& [_, session] : sWorld->GetAllSessions())
@@ -51,8 +49,8 @@ void DynamicZoneMgr::Update(uint32 diff)
         active[ZoneKey(player->GetMapId(), player->GetZoneId())].push_back(player);
     }
 
-    float const proximityRadius = sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.ProximityRadius", 400.0f);
-    float const despawnRadius = sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.DespawnRadius", proximityRadius > 0.0f ? proximityRadius * 2.5f : 0.0f);
+    float const proximityRadius = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.ProximityRadius", 400.0f), 400.f, 0.f, 5000.f);
+    float const despawnRadius = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.DespawnRadius", proximityRadius * 2.5f), proximityRadius * 2.5f, proximityRadius, 15000.f);
 
     // Queue removals through BotDataMgr: never delete map-owned creatures here.
     for (auto it = _populatedZones.begin(); it != _populatedZones.end();)
@@ -63,8 +61,8 @@ void DynamicZoneMgr::Update(uint32 diff)
         pop.target = 0; // Also retire bots if this zone loses its usable nodes.
 
         Map* map = sMapMgr->FindBaseNonInstanceMap(pop.mapId);
-        if (pop.darkKnightRespawnTimer > diff)
-            pop.darkKnightRespawnTimer -= diff;
+        if (pop.darkKnightRespawnTimer > elapsed)
+            pop.darkKnightRespawnTimer -= elapsed;
         else
             pop.darkKnightRespawnTimer = 0;
 
@@ -168,7 +166,7 @@ void DynamicZoneMgr::Update(uint32 diff)
         if (entry.nodes.empty() && proximityRadius > 0.0f)
         {
             WanderNode const* closestWP = nullptr;
-            float minD = 50000.0f;
+            float minD = despawnRadius > 0.f ? despawnRadius : proximityRadius;
             WanderNode::DoForAllZoneWPs(zone, [&](WanderNode const* wp) {
                 auto const [min, max] = wp->GetLevels();
                 if (wp->GetMapId() != map || wp->HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT) ||

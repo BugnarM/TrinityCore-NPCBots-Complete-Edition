@@ -31,6 +31,7 @@
 #include "CombatPackets.h"
 #include "Common.h"
 #include "Config.h"
+#include "botconfig.h"
 #include "ConditionMgr.h"
 #include "Containers.h"
 #include "CreatureAI.h"
@@ -9046,7 +9047,7 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
     {
         if (mtype == MOVE_RUN || mtype == MOVE_SWIM || mtype == MOVE_FLIGHT)
         {
-            float ghostSpeed = sConfigMgr->GetFloatDefault("Rate.Ghost.MoveSpeed", 3.0f);
+            float ghostSpeed = BotCfg::GetHealingSettings().ghostSpeed;
             speed *= ghostSpeed;
         }
     }

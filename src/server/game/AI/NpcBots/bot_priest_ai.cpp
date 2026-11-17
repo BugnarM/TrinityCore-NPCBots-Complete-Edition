@@ -1,4 +1,5 @@
 #include "bot_ai.h"
+#include "botconfig.h"
 #include "botdatamgr.h"
 #include "botlogtraits.h"
 #include "botmgr.h"
@@ -590,31 +591,32 @@ public:
 
         bool HealTarget(Unit* target, uint32 diff) override
         {
-            if (!target || !target->IsAlive() || target->GetShapeshiftForm() == FORM_SPIRITOFREDEMPTION || me->GetDistance(target) > 40)
+            if (!CanEvaluateHealTarget(target))
                 return false;
 
             uint8 hp = GetHealthPCT(target);
             if (hp > GetHealHpPctThreshold())
+                return false;
+            if (IsIdlePlayerHeal(target) && (hp >= GetTopOffThreshold() || (hp > 85 && !ShouldTopOff(target))))
                 return false;
             bool pointed = IsPointedHealTarget(target);
             if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) && !(target->IsPlayer() || target == master) &&
                 (!target->IsInCombat() || target->getAttackers().empty() || !IsTank(target) || !me->GetMap()->IsRaid()))
                 return false;
 
-            int32 hps = GetHPS(target);
-            int32 xphp = target->GetHealth() + hps * (me->GetLevel() < 60 ? 2.5f : 2.0f);
-            int32 hppctps = int32(hps * 100.f / float(target->GetMaxHealth()));
-            int32 xphploss = xphp > int32(target->GetMaxHealth()) ? 0 : abs(int32(xphp - target->GetMaxHealth()));
-            int32 xppct = hp + hppctps * (me->GetLevel() < 60 ? 2.5f : 2.0f);
+            int32 const hps = GetHPS(target);
+            auto const projected = NPCBots::Healing::Project(target->GetHealth(), target->GetMaxHealth(), hps, (me->GetLevel() < 60 ? 2.5 : 2.0));
+            double const hppctps = projected.percentPerSecond;
+            int32 const xphploss = projected.missing;
+            int32 const xppct = projected.percent;
             //BOT_LOG_ERROR("entities.player", "priest_bot:HealTarget(): {}'s pct {}, hppctps {}, epct {}",
             //    target->GetName(), uint32(hp), int32(hppctps), int32(xppct));
-            if (xppct >= 95 && !me->IsInCombat() && (target->IsPlayer() || target == master))
-            {
-                if (hp >= 95)
-                    return false;
-            }
-            else if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
+            if (xppct >= (IsIdlePlayerHeal(target) ? GetTopOffThreshold() : 95) &&
+                hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
+            if (hp > 85 && ShouldTopOff(target))
+                return TryTopOffHeal(target, diff, {FLASH_HEAL_1, HEAL});
+
 
             //GUARDIAN SPIRIT no GCD
             if (IsSpellReady(GUARDIAN_SPIRIT_1, diff, false) && !IAmFree() && target->IsInCombat() && !target->getAttackers().empty() &&
@@ -681,7 +683,7 @@ public:
             }
             //Big Heal
             if (IsSpellReady(HEAL, diff) && (xppct > 15 || !GetSpell(FLASH_HEAL_1)) &&
-                (tanking || xphploss > _heals[HEAL] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
+                (tanking || xphploss > _heals[HEAL] || ((target->IsPlayer() || target == master) && (hp <= 85 || ShouldTopOff(target)))))
             {
                 if (me->IsInCombat() && IsSpellReady(INNER_FOCUS_1, diff) && GetManaPCT(me) < 70 &&
                     doCast(me, GetSpell(INNER_FOCUS_1)))
@@ -698,7 +700,7 @@ public:
                     return true;
             }
             //Flash Heal
-            if (IsSpellReady(FLASH_HEAL_1, diff) && (xphploss > _heals[FLASH_HEAL_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
+            if (IsSpellReady(FLASH_HEAL_1, diff) && (xphploss > _heals[FLASH_HEAL_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || ShouldTopOff(target)))))
             {
                 if (doCast(target, GetSpell(FLASH_HEAL_1)))
                     return true;

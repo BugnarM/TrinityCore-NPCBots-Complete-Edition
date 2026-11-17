@@ -57,11 +57,13 @@
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
 #include "SpellAuraEffects.h"
+#include "SpellHistory.h"
 #include "TemporarySummon.h"
 #include "Transport.h"
 #include "World.h"
 
 #include "G3DPosition.hpp"
+#include <unordered_set>
 /*
 NpcBot System by Trickerer (https://github.com/trickerer/Trinity-Bots; onlysuffering@gmail.com)
 Version 5.2.77a
@@ -465,6 +467,9 @@ void bot_ai::InitUnitFlags()
 
 void bot_ai::ResetBotAI(uint8 resetType)
 {
+    _healScanTimer = 0;
+    _healRetryTimers.clear();
+    _healCandidates.clear();
     _botCommandState = 0;
     _botAwaitState = BOT_AWAIT_NONE;
     _reviveTimer = 0;
@@ -1240,343 +1245,186 @@ bool bot_ai::IsPointedAnyAttackTarget(Unit const* target) const
 {
     return IsPointedTarget(target, BotCfg::GetOffTankTargetIconFlags() | BotCfg::GetDPSTargetIconFlags() | BotCfg::GetRangedDPSTargetIconFlags());
 }
-// Buffs And Heal (really)
-// Priority as follows: 1) heal players 2) buff players 3) heal bots 4) buff bots
-// Priority adjustments to be considered
+bool bot_ai::IsIdlePlayerHeal(Unit const* target) const
+{
+    return target && target->IsPlayer() && !me->IsInCombat() && !target->IsInCombat();
+}
+uint8 bot_ai::GetTopOffThreshold() const
+{
+    return uint8(std::min<unsigned>(GetHealHpPctThreshold(), BotCfg::GetHealingSettings().topOffPct));
+}
+bool bot_ai::ShouldTopOff(Unit const* target) const
+{
+    auto const& cfg = BotCfg::GetHealingSettings();
+    return NPCBots::Healing::StartTopOff(cfg.topOff, target && target->IsPlayer(), me->IsInCombat(),
+        !target || target->IsInCombat(), GetHealthPCT(target), GetHealHpPctThreshold(), cfg.topOffPct) &&
+        me->GetPowerPct(POWER_MANA) >= cfg.minManaPct;
+}
+bool bot_ai::TryTopOffHeal(Unit* target, uint32 diff, std::initializer_list<uint32> spells)
+{
+    if (!CanEvaluateHealTarget(target) || !ShouldTopOff(target))
+        return false;
+    uint32 selected = 0;
+    std::tuple<int32, uint32, uint32> best{INT32_MAX, UINT32_MAX, UINT32_MAX};
+    for (uint32 base : spells)
+        if (uint32 id = GetSpell(base); id && IsSpellReady(base, diff))
+            if (SpellInfo const* info = sSpellMgr->GetSpellInfo(id))
+            {
+                int32 const cost = std::max<int32>(0, info->CalcPowerCost(me, info->GetSchoolMask()));
+                if (int32(me->GetPower(info->PowerType)) < cost || me->GetSpellHistory()->IsSchoolLocked(info->GetSchoolMask()))
+                    continue;
+                auto const key = std::tuple{cost, info->CalcCastTime(), id};
+                if (key < best) { best = key; selected = id; }
+            }
+    return selected && doCast(target, selected);
+}
+bool bot_ai::CanEvaluateHealTarget(Unit const* target) const
+{
+    if (!target || !me->IsInWorld() || !target->IsInWorld() || target->FindMap() != me->FindMap() ||
+        !target->IsAlive() || !target->InSamePhase(me) || target->HasUnitState(UNIT_STATE_ISOLATED) ||
+        target->GetShapeshiftForm() == FORM_SPIRITOFREDEMPTION ||
+        !me->IsWithinDistInMap(target, 40.f) || !me->CanSeeOrDetect(target) || !me->IsValidAssistTarget(target))
+        return false;
+    if (IAmFree() && target != me)
+    {
+        auto const& cfg = BotCfg::GetHealingSettings();
+        if ((target->IsPlayer() && !cfg.playerAid) ||
+            (!cfg.allowStealthedAid && (me->HasStealthAura() || me->HasInvisibilityAura())))
+            return false;
+        if (target->IsPlayer() && !me->IsWithinDistInMap(target, cfg.aidRange))
+            return false;
+        if (Player const* player = target->GetAffectingPlayer(); player && player->duel && !cfg.allowDuelAid)
+            return false;
+    }
+    return true;
+}
+bool bot_ai::TryHealCandidates(std::vector<Unit*> const& targets, uint32 diff)
+{
+    _healCandidates.clear();
+    ++_healDecisions;
+    std::unordered_set<ObjectGuid> seen;
+    seen.reserve(targets.size());
+    for (Unit* target : targets)
+    {
+        if (!CanEvaluateHealTarget(target) || target->IsFullHealth() || GetHealthPCT(target) > GetHealHpPctThreshold())
+            continue;
+        auto const guid = target->GetGUID();
+        if (!seen.insert(guid).second)
+            continue;
+        if (IsIdlePlayerHeal(target) && (GetHealthPCT(target) >= GetTopOffThreshold() ||
+            (GetHealthPCT(target) > 85 && !ShouldTopOff(target))))
+            continue;
+        if (_healRetryTimers.contains(guid) && GetHealthPCT(target) > 35)
+            continue;
+        auto const [tier, score] = NPCBots::Healing::Priority(GetHealthPCT(target), !IAmFree() && target == master,
+            target->IsPlayer(), IsPointedHealTarget(target), IsTank(target), target->IsPet() || target->IsNPCBotPet(),
+            target->IsInCombat() && !target->getAttackers().empty());
+        _healCandidates.push_back({guid, {tier, score}});
+    }
+    _healCandidatesSeen += _healCandidates.size();
+    std::ranges::sort(_healCandidates, [](auto const& a, auto const& b) {
+        return a.second != b.second ? a.second > b.second : a.first < b.first;
+    });
+    for (size_t index = 0; index < _healCandidates.size(); ++index)
+    {
+        ObjectGuid const guid = _healCandidates[index].first;
+        Unit* target = ObjectAccessor::GetUnit(*me, guid);
+        if (!CanEvaluateHealTarget(target))
+            continue;
+        if (me->IsMounted())
+            DismountBot();
+        if (HealTarget(target, diff))
+            return true;
+        if (!me->IsAlive() || !me->IsInWorld())
+            return false;
+        ++_healCastFailures;
+        if (_healRetryTimers.size() < 256)
+            _healRetryTimers[guid] = BotCfg::GetHealingSettings().retryMs;
+    }
+    return false;
+}
 void bot_ai::BuffAndHealGroup(uint32 diff)
 {
-    if (GC_Timer > diff) return;
-    if (me->IsMounted() && !IsWanderer()) return;
-    if (IsCasting() || Feasting()) return;
+    if (GC_Timer > diff || IsCasting() || Feasting() || (me->IsMounted() && !IsWanderer()))
+        return;
+    if (!IAmFree() && (!master || !master->IsInWorld() || master->FindMap() != me->FindMap()))
+        return;
+    auto const& cfg = BotCfg::GetHealingSettings();
+    bool const emergency = GetHealthPCT(me) <= 35 || (!IAmFree() && GetHealthPCT(master) < cfg.ownerEmergencyPct);
+    if (_healScanTimer && !emergency)
+        return;
+    NPCBots::Healing::DecisionScope decisionScope(cfg.diagnostics ? &_healingMetrics : nullptr);
+    _healScanTimer = (me->IsInCombat() ? cfg.combatScanMs : cfg.idleScanMs) + me->GetGUID().GetCounter() % 97;
 
+    std::vector<Unit*> heals, buffs;
+    auto collect = [&](Unit* unit) {
+        if (!CanEvaluateHealTarget(unit) || unit->IsTotem() || unit->GetEntry() == SHAMAN_EARTH_ELEMENTAL ||
+            (unit->IsCreature() && unit->ToCreature()->GetCreatureTemplate()->type == CREATURE_TYPE_MECHANICAL))
+            return;
+        if (!unit->IsFullHealth())
+            heals.push_back(unit);
+        buffs.push_back(unit);
+    };
     if (IAmFree())
     {
-        // 1. Critical self heal
-        if (GetHealthPCT(me) < 70 && HealTarget(me, diff))
+        if (CanEvaluateHealTarget(me) && GetHealthPCT(me) < 70 && HealTarget(me, diff))
             return;
-
-        if (me->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE || me->HasAura(BERSERK))
+        if (me->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE || me->HasAura(BERSERK) ||
+            (!cfg.allowStealthedAid && (me->HasStealthAura() || me->HasInvisibilityAura())))
             return;
-
-        // 2. Scan nearby friendly targets up to 40 yards
-        std::list<Unit*> targets2;
-        GetNearbyFriendlyTargetsList(targets2, 40.0f);
-        std::erase_if(targets2, BOTAI_PRED::BuffTargetExclude());
-        std::erase_if(targets2, [this](Unit const* unit) {
-            return !unit->IsPlayer() && !(IsWanderer() && unit->IsNPCBot() && unit->ToCreature()->GetBotAI()->IsWanderer());
-        });
-
-        // 3. PRIORITIZE HEALING: Check players first, then wanderers
-        Unit* mostInjured = nullptr;
-        uint8 lowestHp = 100;
-        for (Unit* candidate : targets2)
-        {
-            uint8 hp = GetHealthPCT(candidate);
-            if (candidate->IsPlayer() && hp < 95)
-            {
-                if (hp < lowestHp)
-                {
-                    lowestHp = hp;
-                    mostInjured = candidate;
-                }
-            }
-            else if (hp < lowestHp && hp < 85)
-            {
-                lowestHp = hp;
-                mostInjured = candidate;
-            }
-        }
-
-        if (mostInjured && lowestHp < 95)
-        {
-            if (me->IsMounted())
-                DismountBot();
-            if (HealTarget(mostInjured, diff))
-                return;
-        }
-
-        // 4. Normal self heal top-off
-        if (HealTarget(me, diff))
+        std::list<Unit*> nearby;
+        GetNearbyFriendlyTargetsList(nearby, 40.f);
+        for (Unit* unit : nearby)
+            if (unit->IsPlayer() || (IsWanderer() && unit->IsNPCBot() && unit->ToCreature()->GetBotAI()->IsWanderer()))
+                collect(unit);
+        if (TryHealCandidates(heals, diff) || !me->IsAlive())
             return;
-
-        // 5. Self buffs
+        if (CanEvaluateHealTarget(me) && HealTarget(me, diff))
+            return;
         if (BuffTarget(me, diff))
             return;
-
-        // 6. Ally buffs if no one needed healing
-        if (!targets2.empty() && CanDoNonCombatActions() && BuffTarget(targets2.size() == 1 ? targets2.front() : Bcore::Containers::SelectRandomContainerElement(targets2), diff))
-            return;
-
-        return;
     }
-
-    Group const* pGroup = master->GetGroup();
-    uint8 hppctthreshold = GetHealHpPctThreshold();
-    if (!pGroup)
+    else
     {
-        //heals
-        if (HasRole(BOT_ROLE_HEAL))
-        {
-            std::list<Unit*> targets3;
-            if (master->IsAlive() && !master->HasUnitState(UNIT_STATE_ISOLATED) && GetHealthPCT(master) <= hppctthreshold && me->GetDistance(master) < 40)
-                targets3.push_back(master);
-            if (master->GetVehicleBase() && !(master->GetVehicleBase()->IsCreature() &&
-                master->GetVehicleCreatureBase()->GetCreatureTemplate()->type == CREATURE_TYPE_MECHANICAL) &&
-                !master->GetVehicleBase()->HasUnitState(UNIT_STATE_ISOLATED) && GetHealthPCT(master->GetVehicleBase()) <= hppctthreshold &&
-                me->GetDistance(master->GetVehicleBase()) < 40)
-                targets3.push_back(master->GetVehicleBase());
-            for (auto const& [_, bot] : *master->GetBotMgr()->GetBotMap())
+        auto collectPlayer = [&](Player* player) {
+            if (!player || !player->IsInWorld() || player->FindMap() != me->FindMap())
+                return;
+            collect(player);
+            collect(player->GetVehicleBase());
+            for (auto const& [_, bot] : *player->GetBotMgr()->GetBotMap())
             {
-                if (!(!bot->IsInWorld() || me->GetMap() != bot->FindMap() || !bot->IsAlive() || bot->HasUnitState(UNIT_STATE_ISOLATED) ||
-                    bot->ToCreature()->IsTempBot() || me->GetDistance(bot) > 40 ||
-                    (GetHealthPCT(bot) > hppctthreshold && !IsTank(bot))))
-                    targets3.push_back(bot);
-
-                Unit* bpet = bot->GetBotsPet();
-
-                if (!(!bpet || !bpet->IsAlive() || bpet->HasUnitState(UNIT_STATE_ISOLATED) || me->GetDistance(bpet) > 40 || GetHealthPCT(bpet) > hppctthreshold))
-                    targets3.push_back(bpet);
-
-                Unit* veh = bot->GetVehicleBase();
-                if (veh && !(veh->IsCreature() && veh->ToCreature()->GetCreatureTemplate()->type == CREATURE_TYPE_MECHANICAL) &&
-                    !veh->HasUnitState(UNIT_STATE_ISOLATED) && GetHealthPCT(veh) <= hppctthreshold && me->GetDistance(veh) < 40)
-                    targets3.push_back(veh);
-            }
-            for (Unit* c : master->m_Controlled)
-            {
-                if (!c->IsInWorld() || me->GetMap() != c->FindMap() || !c->IsAlive() || c->HasUnitState(UNIT_STATE_ISOLATED) ||
-                    c->IsTotem() || c->GetEntry() == SHAMAN_EARTH_ELEMENTAL || me->GetDistance(c) > 40 ||
-                    (GetHealthPCT(c) > hppctthreshold && !IsTank(c)))
+                if (!bot || !bot->IsInWorld() || bot->FindMap() != me->FindMap() || bot->IsTempBot())
                     continue;
-
-                targets3.push_back(c);
+                collect(bot);
+                collect(bot->GetBotsPet());
+                collect(bot->GetVehicleBase());
             }
-
-            if (!targets3.empty())
-            {
-                auto getHealPriority = [this](Unit const* u) -> int32
-                {
-                    if (!u) return -1000;
-                    uint8 hp = GetHealthPCT(u);
-                    int32 score = (100 - hp);
-                    if (hp <= 35) score += 250;
-                    else if (hp <= 60) score += 120;
-                    else if (hp <= 85) score += 50;
-                    if (IsPointedHealTarget(u)) score += 150;
-                    if (u == master) score += 100;
-                    else if (u == me) score += (hp <= 45 ? 90 : 30);
-                    else if (u->IsPlayer()) score += 80;
-                    else if (IsTank(u)) score += 50;
-                    else if (u->IsPet() || (u->IsCreature() && u->ToCreature()->IsPet())) score -= 40;
-                    if (u->IsInCombat() && !u->getAttackers().empty()) score += 20;
-                    return score;
-                };
-
-                targets3.sort([&getHealPriority](Unit const* a, Unit const* b) {
-                    return getHealPriority(a) > getHealPriority(b);
-                });
-
-                for (Unit* target : targets3)
-                {
-                    if (HealTarget(target, diff))
-                        return;
-                }
-            }
-        }
-        //buffs
-        if (!me->IsInCombat() && (!master->IsInCombat() || master->GetMap()->IsRaid()))
+            for (Unit* unit : player->m_Controlled)
+                collect(unit);
+        };
+        Group const* group = master->GetGroup();
+        if (group)
         {
-            std::list<Unit*> targets4;
-        if (master->IsAlive() && me->GetDistance(master) < 30)
-            targets4.push_back(master);
-        for (auto const& [_, bot] : *master->GetBotMgr()->GetBotMap())
-        {
-            if (!(!bot->IsInWorld() || me->GetMap() != bot->FindMap() || !bot->IsAlive() || bot->HasUnitState(UNIT_STATE_ISOLATED) ||
-                bot->IsTotem() || me->GetDistance(bot) > 30))
-                targets4.push_back(bot);
-
-            //u = itr->second->GetBotsPet();
-
-            //if (!(!u || !u->IsAlive() || u->HasUnitState(UNIT_STATE_ISOLATED) || me->GetDistance(u) > 30))
-            //    targets4.push_back(u);
+            for (GroupReference const* it = group->GetFirstMember(); it; it = it->next())
+                collectPlayer(it->GetSource());
+            for (auto i : NPCBots::index_array<uint8, TARGET_ICONS_COUNT>)
+                if (BotCfg::GetHealTargetIconFlags() & GroupIconsFlags[i])
+                    if (Unit* unit = ObjectAccessor::GetUnit(*me, group->GetTargetIcons()[i]); unit &&
+                        master->GetVictim() != unit && !IsInBotParty(unit->GetVictim()) && unit->GetReactionTo(master) >= REP_NEUTRAL)
+                        collect(unit);
         }
-        for (Unit* c : master->m_Controlled)
-        {
-            if (!c || !c->IsPet() || me->GetMap() != c->FindMap() || !c->IsAlive() || c->HasUnitState(UNIT_STATE_ISOLATED) ||
-                c->IsTotem() || me->GetDistance(c) > 30) continue;
-
-            targets4.push_back(c);
-        }
-
-        if (!targets4.empty() && BuffTarget(Bcore::Containers::SelectRandomContainerElement(targets4), diff))
+        else
+            collectPlayer(master);
+        if ((HasRole(BOT_ROLE_HEAL) && TryHealCandidates(heals, diff)) || !me->IsAlive())
             return;
-        }
-
-        return;
-    }
-    bool Bots = false;
-    //heals
-    if (HasRole(BOT_ROLE_HEAL))
-    {
-        std::list<Unit*> targets5;
-        for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
-        {
-            Player* tPlayer = itr->GetSource();
-            if (tPlayer == nullptr) continue;
-            if (me->GetMap() != tPlayer->FindMap()) continue;
-            if (tPlayer->HaveBot() && !Bots)
-                Bots = true;
-            if (!tPlayer->IsAlive() || tPlayer->HasUnitState(UNIT_STATE_ISOLATED)) continue;
-            if (me->GetDistance(tPlayer) > 40) continue;
-            if (GetHealthPCT(tPlayer) <= hppctthreshold || IsTank(tPlayer))
-                targets5.push_back(tPlayer);
-            if (tPlayer->GetVehicleBase() && !(tPlayer->GetVehicleBase()->IsCreature() &&
-                tPlayer->GetVehicleCreatureBase()->GetCreatureTemplate()->type == CREATURE_TYPE_MECHANICAL) &&
-                !tPlayer->GetVehicleBase()->HasUnitState(UNIT_STATE_ISOLATED) && GetHealthPCT(tPlayer->GetVehicleBase()) <= hppctthreshold &&
-                me->GetDistance(tPlayer->GetVehicleBase()) < 40)
-                targets5.push_back(tPlayer->GetVehicleBase());
-        }
-        if (Bots)
-        {
-            for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
-            {
-                Player const* tPlayer = itr->GetSource();
-                if (tPlayer == nullptr) continue;
-                if (me->GetMap() != tPlayer->FindMap()) continue;
-
-                if (tPlayer->HaveBot())
-                {
-                    for (auto const& [_, bot] : *tPlayer->GetBotMgr()->GetBotMap())
-                    {
-                        if (!(!bot->IsInWorld() || me->GetMap() != bot->FindMap() || !bot->IsAlive() || bot->HasUnitState(UNIT_STATE_ISOLATED) ||
-                            bot->ToCreature()->IsTempBot() || me->GetDistance(bot) > 40 ||
-                            (GetHealthPCT(bot) > hppctthreshold && !IsTank(bot))))
-                            targets5.push_back(bot);
-
-                        Unit* bpet = bot->GetBotsPet();
-
-                        if (!(!bpet || !bpet->IsAlive() || bpet->HasUnitState(UNIT_STATE_ISOLATED) || me->GetDistance(bpet) > 40 || GetHealthPCT(bpet) > hppctthreshold))
-                            targets5.push_back(bpet);
-
-                        Unit* veh = bot->GetVehicleBase();
-                        if (veh && !(veh->IsCreature() && veh->ToCreature()->GetCreatureTemplate()->type == CREATURE_TYPE_MECHANICAL) &&
-                            !veh->HasUnitState(UNIT_STATE_ISOLATED) && GetHealthPCT(veh) <= hppctthreshold && me->GetDistance(veh) < 40)
-                            targets5.push_back(veh);
-                    }
-                }
-                for (Unit* c : tPlayer->m_Controlled)
-                {
-                    if (!c || !c->IsInWorld() || me->GetMap() != c->FindMap() || !c->IsAlive() || c->HasUnitState(UNIT_STATE_ISOLATED) ||
-                        c->IsTotem() || c->GetEntry() == SHAMAN_EARTH_ELEMENTAL || me->GetDistance(c) > 40 ||
-                        (GetHealthPCT(c) > hppctthreshold && !IsTank(c)))
-                        continue;
-
-                    targets5.push_back(c);
-                }
-            }
-        }
-
-        //check if we have pointed heal target
-        for (auto i : NPCBots::index_array<uint8, TARGET_ICONS_COUNT>)
-        {
-            if (BotCfg::GetHealTargetIconFlags() & GroupIconsFlags[i])
-            {
-                if (ObjectGuid guid = pGroup->GetTargetIcons()[i]; !guid.IsEmpty())
-                {
-                    if (Unit* unit = ObjectAccessor::GetUnit(*me, guid))
-                    {
-                        if (unit->IsAlive() && !unit->HasUnitState(UNIT_STATE_ISOLATED) && me->GetMap() == unit->FindMap() && me->GetDistance(unit) < 40 &&
-                            !unit->IsFullHealth() && master->GetVictim() != unit && !IsInBotParty(unit->GetVictim()) &&
-                            unit->GetEntry() != SHAMAN_EARTH_ELEMENTAL &&
-                            !(unit->IsCreature() && unit->ToCreature()->GetCreatureTemplate()->type == CREATURE_TYPE_MECHANICAL) &&
-                            unit->GetReactionTo(master) >= REP_NEUTRAL)
-                        {
-                            targets5.push_back(unit);
-                        }
-                    }
-                }
-            }
-        }
-        if (!targets5.empty())
-        {
-            auto getHealPriority = [this](Unit const* u) -> int32
-            {
-                if (!u) return -1000;
-                uint8 hp = GetHealthPCT(u);
-                int32 score = (100 - hp);
-                if (hp <= 35) score += 250;
-                else if (hp <= 60) score += 120;
-                else if (hp <= 85) score += 50;
-                if (IsPointedHealTarget(u)) score += 150;
-                if (u == master) score += 100;
-                else if (u == me) score += (hp <= 45 ? 90 : 30);
-                else if (u->IsPlayer()) score += 80;
-                else if (IsTank(u)) score += 50;
-                else if (u->IsPet() || (u->IsCreature() && u->ToCreature()->IsPet())) score -= 40;
-                if (u->IsInCombat() && !u->getAttackers().empty()) score += 20;
-                return score;
-            };
-
-            targets5.sort([&getHealPriority](Unit const* a, Unit const* b) {
-                return getHealPriority(a) > getHealPriority(b);
-            });
-
-            for (Unit* target : targets5)
-            {
-                if (HealTarget(target, diff))
-                    return;
-            }
-        }
-    }
-    //buffs
-    if (!me->IsInCombat() && (!master->IsInCombat() || master->GetMap()->IsRaid()))
-    {
-        std::list<Unit*> targets6;
-        for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
-        {
-            Player* tPlayer = itr->GetSource();
-            if (tPlayer == nullptr) continue;
-            if (me->GetMap() != tPlayer->FindMap()) continue;
-            if (tPlayer->HaveBot() && !Bots)
-                Bots = true;
-            if (!tPlayer->IsAlive() || tPlayer->HasUnitState(UNIT_STATE_ISOLATED)) continue;
-            if (me->GetDistance(tPlayer) > 30) continue;
-            targets6.push_back(tPlayer);
-        }
-        if (Bots)
-        {
-            for (GroupReference const* itr = pGroup->GetFirstMember(); itr != nullptr; itr = itr->next())
-            {
-                Player const* tPlayer = itr->GetSource();
-                if (tPlayer == nullptr) continue;
-                if (me->GetMap() != tPlayer->FindMap()) continue;
-
-                if (tPlayer->HaveBot())
-                {
-                    for (auto const& [_, bot] : *tPlayer->GetBotMgr()->GetBotMap())
-                    {
-                        if (!(!bot->IsInWorld() || me->GetMap() != bot->FindMap() || !bot->IsAlive() || bot->HasUnitState(UNIT_STATE_ISOLATED) ||
-                            bot->IsTotem() || me->GetDistance(bot) > 30))
-                            targets6.push_back(bot);
-
-                        //u = bitr->second->GetBotsPet();
-
-                        //if (!(!u || !u->IsAlive() || u->HasUnitState(UNIT_STATE_ISOLATED) || me->GetDistance(u) > 30))
-                        //    targets6.push_back(u);
-                    }
-                }
-                for (Unit* c : tPlayer->m_Controlled)
-                {
-                    if (!c || !c->IsPet() || me->GetMap() != c->FindMap() || !c->IsAlive() || c->HasUnitState(UNIT_STATE_ISOLATED) ||
-                        c->IsTotem() || me->GetDistance(c) > 30) continue;
-
-                    targets6.push_back(c);
-                }
-            }
-        }
-
-        if (!targets6.empty() && BuffTarget(Bcore::Containers::SelectRandomContainerElement(targets6), diff))
+        if (me->IsInCombat() || (master->IsInCombat() && !me->GetMap()->IsRaid()))
             return;
+    }
+    if (!buffs.empty() && CanDoNonCombatActions())
+    {
+        Unit* target = Bcore::Containers::SelectRandomContainerElement(buffs);
+        if (CanEvaluateHealTarget(target))
+            BuffTarget(target, diff);
     }
 }
 // Attempt to resurrect dead players and bots
@@ -1602,10 +1450,13 @@ void bot_ai::ResurrectGroup(uint32 spell_id)
 
     if (IAmFree())
     {
+        auto const& cfg = BotCfg::GetHealingSettings();
+        if (!cfg.playerAid || (!cfg.allowStealthedAid && (me->HasStealthAura() || me->HasInvisibilityAura())))
+            return;
         if (me->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE || me->HasAura(BERSERK))
             return;
 
-        WorldObject* playerOrCorpse = GetNearbyRezTarget(40.0f);
+        WorldObject* playerOrCorpse = GetNearbyRezTarget(BotCfg::GetHealingSettings().aidRange);
         if (!playerOrCorpse)
             return;
 
@@ -1621,7 +1472,10 @@ void bot_ai::ResurrectGroup(uint32 spell_id)
         }
 
         if (!playerOrCorpse->IsWithinLOSInMap(me, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::M2))
-            me->Relocate(*playerOrCorpse);
+        {
+            BotMovement(BOT_MOVE_POINT, playerOrCorpse);
+            return;
+        }
 
         Unit* target = playerOrCorpse->IsPlayer() ? playerOrCorpse->ToUnit() : (Unit*)playerOrCorpse->ToCorpse();
         if (doCast(target, spell_id)) //rezzing it
@@ -16672,7 +16526,7 @@ void bot_ai::JustDied(Unit* u)
             IsWanderer() ? _travel_node_cur->GetName() : "''");
     }
 
-    _reviveTimer = IsWanderer() ? 300000 : // Wanderers release spirit after 5 minutes (300 seconds)
+    _reviveTimer = IsWanderer() ? BotCfg::GetHealingSettings().reviveMs :
         IAmFree() ? REVIVE_TIMER_DEFAULT : master->InBattleground() ? REVIVE_TIMER_BG : REVIVE_TIMER_SHORT;
     _atHome = false;
     _evadeMode = false;
@@ -18637,6 +18491,47 @@ bool bot_ai::GlobalUpdate(uint32 diff)
     //if (me->HasInvisibilityAura() || me->HasStealthAura())
     //    return false;
 
+    // Do not rescan the group every tick while an appropriate positive heal is already in flight.
+    auto offensiveCast = [this](CurrentSpellTypes slot) {
+        Spell const* spell = me->GetCurrentSpell(slot);
+        return spell && !spell->GetSpellInfo()->IsPositive();
+    };
+    // This path must precede the probabilistic cast cleanup and never treats a free bot as a Player.
+    if (me->HasUnitState(UNIT_STATE_CASTING) && HasRole(BOT_ROLE_HEAL) && !IAmFree() && master && master->IsInWorld() && master->FindMap() == me->FindMap() &&
+        !HasBotCommandState(BOT_COMMAND_ISSUED_ORDER) && !CCed(me, true) &&
+        (offensiveCast(CURRENT_GENERIC_SPELL) || offensiveCast(CURRENT_CHANNELED_SPELL)))
+    {
+        auto threatened = [&](Unit const* unit, unsigned threshold) {
+            return CanEvaluateHealTarget(unit) && GetHealthPCT(unit) < threshold &&
+                me->IsWithinLOSInMap(unit, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::M2);
+        };
+        bool needHeal = threatened(master, BotCfg::GetHealingSettings().ownerEmergencyPct);
+        if (!needHeal)
+            if (Group const* group = master->GetGroup())
+                for (GroupReference const* it = group->GetFirstMember(); it; it = it->next())
+                    if (threatened(it->GetSource(), BotCfg::GetHealingSettings().groupEmergencyPct))
+                    { needHeal = true; break; }
+        bool usableHeal = false;
+        if (needHeal)
+            for (auto const& [base, spell] : _spells)
+                if (spell.enabled && spell.spellId && IsSpellReady(base, diff, false))
+                    if (SpellInfo const* info = sSpellMgr->GetSpellInfo(spell.spellId); info && info->IsPositive() &&
+                        info->HasEffect(SPELL_EFFECT_HEAL) && !me->GetSpellHistory()->IsSchoolLocked(info->GetSchoolMask()) &&
+                        int32(me->GetPower(info->PowerType)) >= info->CalcPowerCost(me, info->GetSchoolMask()))
+                    { usableHeal = true; break; }
+        if (needHeal && usableHeal)
+        {
+            _healScanTimer = 0;
+            for (CurrentSpellTypes slot : {CURRENT_GENERIC_SPELL, CURRENT_CHANNELED_SPELL})
+                if (Spell const* spell = me->GetCurrentSpell(slot); spell && !spell->GetSpellInfo()->IsPositive())
+                {
+                    me->InterruptSpell(slot);
+                    GC_Timer = 0;
+                    ++_healEmergencyInterrupts;
+                }
+        }
+    }
+
     //Check current cast state: interrupt casts that became pointless
     if (me->HasUnitState(UNIT_STATE_CASTING) && !HasBotCommandState(BOT_COMMAND_ISSUED_ORDER) && urand(1,100) <= 75)
     {
@@ -18658,8 +18553,7 @@ bool bot_ai::GlobalUpdate(uint32 diff)
             {
                 // not interrupted yet, next checks require target, ensure validity
                 // kidna expensive but prevents invalid targets
-                if (spell->m_targets.GetObjectTargetGUID().IsAnyTypeCreature())
-                    spell->m_targets.Update(me);
+                spell->m_targets.Update(me);
                 target = spell->m_targets.GetUnitTarget(); // can be nullptr
                 if (!target)
                     continue;
@@ -18697,28 +18591,11 @@ bool bot_ai::GlobalUpdate(uint32 diff)
                     interrupt = true; //LoS
                 else if (info->Id == 64382 && !target->HasAuraWithMechanic(1u<<MECHANIC_IMMUNE_SHIELD))
                     interrupt = true; //Shattering Throw wasting
-                else if (HasRole(BOT_ROLE_HEAL) && !HasBotCommandState(BOT_COMMAND_ISSUED_ORDER))
-                {
-                    if (master && master->IsAlive() && GetHealthPCT(master) < 60)
-                        interrupt = true;
-                    else if (Group const* grp = master ? master->GetGroup() : nullptr)
-                    {
-                        for (GroupReference const* gitr = grp->GetFirstMember(); gitr != nullptr; gitr = gitr->next())
-                        {
-                            if (Player* gPlayer = gitr->GetSource())
-                            {
-                                if (gPlayer->IsAlive() && me->GetMap() == gPlayer->FindMap() && me->GetDistance(gPlayer) < 40.0f && GetHealthPCT(gPlayer) < 50)
-                                {
-                                    interrupt = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
+
             }
             if (!interrupt && !(target == master && me->GetDistance(target) < INTERACTION_DISTANCE) &&
-                info->HasEffect(SPELL_EFFECT_HEAL) && GetHealthPCT(target) > 90 && !IsPointedHealTarget(target))
+                info->HasEffect(SPELL_EFFECT_HEAL) && NPCBots::Healing::CancelDirectHeal(IsIdlePlayerHeal(target),
+                    GetHealthPCT(target), GetHealHpPctThreshold(), BotCfg::GetHealingSettings().topOffPct) && !IsPointedHealTarget(target))
             {
                 bool isAreaSpell = false;
                 for (uint8 j = 0; j != 3 && isAreaSpell == false; ++j)
@@ -18766,6 +18643,7 @@ bool bot_ai::GlobalUpdate(uint32 diff)
             if (interrupt)
             {
                 me->InterruptSpell(CurrentSpellTypes(i));
+                ++_healUnneededInterrupts;
                 GC_Timer = 0;
                 break;
             }
@@ -19360,6 +19238,23 @@ bool bot_ai::GlobalUpdate(uint32 diff)
 
 void bot_ai::CommonTimers(uint32 diff)
 {
+    _healScanTimer = _healScanTimer > diff ? _healScanTimer - diff : 0;
+    for (auto it = _healRetryTimers.begin(); it != _healRetryTimers.end();)
+        if (it->second <= diff) it = _healRetryTimers.erase(it);
+        else { it->second -= diff; ++it; }
+    if (_healDiagnosticsTimer <= diff)
+    {
+        if (BotCfg::GetHealingSettings().diagnostics && _healDecisions)
+            BOT_LOG_INFO("npcbots", "Healing {} decisions={} candidates={} failed={} emergency_interrupts={} cleanup_interrupts={}",
+                me->GetGUID().ToString(), _healDecisions, _healCandidatesSeen, _healCastFailures, _healEmergencyInterrupts, _healUnneededInterrupts);
+        if (BotCfg::GetHealingSettings().diagnostics && _healingMetrics.count)
+            BOT_LOG_INFO("npcbots", "Healing {} decision_us p50<={} p95<={} p99<={} max={}",
+                me->GetGUID().ToString(), _healingMetrics.Percentile(50), _healingMetrics.Percentile(95), _healingMetrics.Percentile(99), _healingMetrics.maximum);
+        _healingMetrics = {};
+        _healDiagnosticsTimer = 60000;
+        _healDecisions = _healCandidatesSeen = _healCastFailures = _healEmergencyInterrupts = _healUnneededInterrupts = 0;
+    }
+    else _healDiagnosticsTimer -= diff;
     Events.Update(diff);
     SpellTimers(diff);
 
@@ -21846,7 +21741,7 @@ int32 bot_ai::GetHPSTaken(Unit const* u) const
 //Health per second
 int32 bot_ai::GetHPS(Unit const* u) const
 {
-    return IAmFree() ? 0 : GetHPSTaken(u) - GetDPSTaken(u);
+    return IAmFree() ? 0 : int32(std::clamp<int64>(int64(GetHPSTaken(u)) - GetDPSTaken(u), INT32_MIN, INT32_MAX));
 }
 //Health percent per second
 int32 bot_ai::GetHPPCTPS(Unit const* u) const

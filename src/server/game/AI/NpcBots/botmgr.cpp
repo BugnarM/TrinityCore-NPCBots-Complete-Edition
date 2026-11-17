@@ -27,6 +27,7 @@
 #include "MapManager.h"
 #include "MotionMaster.h"
 #include "ObjectMgr.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "SpellAuraEffects.h"
@@ -185,6 +186,7 @@ bool BotMgr::IsWanderingWorldBot(Creature const* bot)
 
 void BotMgr::Update(uint32 diff)
 {
+    _healingSnapshotReady = false;
     _dpstracker->Update(diff);
 
     if (!HaveBot())
@@ -801,6 +803,7 @@ void BotMgr::RemoveBot(ObjectGuid guid, uint8 removetype)
             bpet->SetCreator(nullptr);
         bot->GetBotAI()->ResetBotAI(BOTAI_RESET_LOGOUT | BOTAI_RESET_DISMISS);
         BotDataMgr::DespawnDungeonBot(bot->GetEntry());
+        _healingSnapshotReady = false;
         _bots.erase(itr);
         return;
     }
@@ -814,6 +817,7 @@ void BotMgr::RemoveBot(ObjectGuid guid, uint8 removetype)
     //if (GetNpcBotsCount() <= 1 && !_owner->GetPetGUID() && _owner->m_Controlled.empty())
     //    _owner->SendRemoveControlBar();
 
+    _healingSnapshotReady = false;
     _bots.erase(itr);
 
     if (bot->GetBotAI()->IsTempBot())
@@ -880,12 +884,12 @@ BotAddResult BotMgr::AddDungeonBot(Creature* bot)
     return BOT_ADD_SUCCESS;
 }
 
-BotAddResult BotMgr::AddBot(Creature* bot)
+BotAddResult BotMgr::AddBot(Creature* bot, bool companion)
 {
     ASSERT(bot->IsNPCBot());
     ASSERT(bot->GetBotAI() != nullptr);
 
-    bool owned = bot->IsSummon() || bot->GetBotAI()->HasOwner(_owner->GetGUID().GetCounter());
+    bool owned = companion || bot->IsSummon() || bot->GetBotAI()->HasOwner(_owner->GetGUID().GetCounter());
     uint8 owned_count = BotDataMgr::GetOwnedBotsCount(_owner->GetGUID(), 0, true);
     uint8 class_count = BotDataMgr::GetOwnedBotsCount(_owner->GetGUID(), bot->GetClassMask(), true);
 
@@ -944,6 +948,7 @@ BotAddResult BotMgr::AddBot(Creature* bot)
 
     bot->GetBotAI()->UnsummonAll(false);
 
+    _healingSnapshotReady = false;
     _bots[bot->GetGUID()] = bot;
 
     ASSERT(!bot->GetCreator());
@@ -1782,49 +1787,34 @@ int32 BotMgr::GetHPSTaken(Unit const* unit) const
     if (!HaveBot())
         return 0;
 
-    std::list<Unit*> unitList;
     Group const* gr = _owner->GetGroup();
-    if (!gr)
+    if (!_update_lock || !_healingSnapshotReady || _healingSnapshotGroup != gr)
     {
-        if (_owner->HasUnitState(UNIT_STATE_CASTING))
-            unitList.push_back(_owner);
-        for (auto const& [_, bot] : _bots)
-            if (bot->GetTarget() == unit->GetGUID() && bot->HasUnitState(UNIT_STATE_CASTING))
-                unitList.push_back(bot);
+        _healingCasterGuids.clear();
+        auto addPlayer = [&](Player const* player) {
+            if (!player || !player->IsInWorld() || player->FindMap() != _owner->FindMap()) return;
+            _healingCasterGuids.push_back(player->GetGUID());
+            for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
+                if (bot && bot->IsInWorld() && bot->FindMap() == _owner->FindMap())
+                    _healingCasterGuids.push_back(guid);
+        };
+        if (gr)
+            for (GroupReference const* it = gr->GetFirstMember(); it; it = it->next())
+                addPlayer(it->GetSource());
+        else
+            addPlayer(_owner);
+        std::ranges::sort(_healingCasterGuids);
+        auto const duplicate = std::ranges::unique(_healingCasterGuids);
+        _healingCasterGuids.erase(duplicate.begin(), duplicate.end());
+        _healingSnapshotGroup = gr;
+        _healingSnapshotReady = _update_lock;
     }
-    else
+    int64 amount = 0;
+    for (ObjectGuid guid : _healingCasterGuids)
     {
-        bool Bots = false;
-        for (GroupReference const* itr = gr->GetFirstMember(); itr != nullptr; itr = itr->next())
-        {
-            Player* player = itr->GetSource();
-            if (player == nullptr) continue;
-            if (_owner->GetMap() != player->FindMap()) continue;
-            if (!Bots)
-                Bots = true;
-            if (player->HasUnitState(UNIT_STATE_CASTING))
-                unitList.push_back(player);
-        }
-        if (Bots)
-        {
-            for (GroupReference const* gitr = gr->GetFirstMember(); gitr != nullptr; gitr = gitr->next())
-            {
-                if (gitr->GetSource() == nullptr) continue;
-                if (_owner->GetMap() != gitr->GetSource()->FindMap()) continue;
-
-                if (gitr->GetSource()->HaveBot())
-                {
-                    for (auto const& [_, bot] : *gitr->GetSource()->GetBotMgr()->GetBotMap())
-                        if (bot->GetTarget() == unit->GetGUID() && bot->HasUnitState(UNIT_STATE_CASTING))
-                            unitList.push_back(bot);
-                }
-            }
-        }
-    }
-
-    int32 amount = 0;
-    for (Unit* u : unitList)
-    {
+        Unit* u = ObjectAccessor::GetUnit(*_owner, guid);
+        if (!u || !u->IsInWorld() || u->FindMap() != unit->FindMap() || !u->HasUnitState(UNIT_STATE_CASTING))
+            continue;
         for (uint8 i = CURRENT_FIRST_NON_MELEE_SPELL; i != CURRENT_AUTOREPEAT_SPELL; ++i)
         {
             Spell const* spell = u->GetCurrentSpell(CurrentSpellTypes(i));
@@ -1864,13 +1854,13 @@ int32 BotMgr::GetHPSTaken(Unit const* unit) const
                         continue;
                 }
 
-                int32 healing = u->SpellHealingBonusDone(const_cast<Unit*>(unit), spellInfo, spellInfo->_effects[0].CalcValue(u), HEAL, spellInfo->GetEffect(EFFECT_0), {});
+                int32 healing = u->SpellHealingBonusDone(const_cast<Unit*>(unit), spellInfo, spellInfo->_effects[j].CalcValue(u), HEAL, spellInfo->GetEffect(SpellEffIndex(j)), {});
                 healing = unit->SpellHealingBonusTaken(u, spellInfo, healing, HEAL);
 
                 if (i == CURRENT_CHANNELED_SPELL)
-                    amount += int32(healing / (spellInfo->_effects[j].Amplitude * 0.001f));
+                    amount += int64(healing / (std::max<uint32>(spellInfo->_effects[j].Amplitude, 1) * 0.001f));
                 else
-                    amount += int32(healing / (std::max<int32>(spell->GetTimer(), 1000) * 0.001f));
+                    amount += int64(healing / (std::max<int32>(spell->GetTimer(), 1000) * 0.001f));
 
                 //BOT_LOG_ERROR("entities.player", "BotMgr:pendingHeals: found {}'s {} on {} in {} ({}, total {})",
                 //    u->GetName(), spellInfo->SpellName[0], target->GetName(), pheal->delay, healing, pheal->amount);
@@ -1882,12 +1872,12 @@ int32 BotMgr::GetHPSTaken(Unit const* unit) const
 
     //HoTs
     for (AuraEffect const* aeff : unit->GetAuraEffectsByType(SPELL_AURA_PERIODIC_HEAL))
-        amount += int32(aeff->GetAmount() / (aeff->GetPeriod() * 0.001f));
+        amount += int64(aeff->GetAmount() / (std::max<uint32>(aeff->GetPeriod(), 1) * 0.001f));
 
     //if (amount != 0)
     //    BOT_LOG_ERROR("entities.player", "BotMgr:GetHPSTaken(): {} got {})", unit->GetName(), amount);
 
-    return amount;
+    return int32(std::clamp<int64>(amount, 0, INT32_MAX));
 }
 
 void BotMgr::OnBotWandererKilled(Creature const* bot, Player* looter)

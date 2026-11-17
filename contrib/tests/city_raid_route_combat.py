@@ -17,17 +17,19 @@ code=r'''
 namespace Tactics=NPCBots::CityRaid;using State=Tactics::State;
 enum{ROLE_ATTACKER,ROLE_DEFENDER};
 struct Position{float x=0,y=0,z=0;float GetPositionX()const{return x;}float GetPositionY()const{return y;}float GetExactDist2d(Position const* p)const{return std::hypot(x-p->x,y-p->y);}};
-struct Unit:Position{bool alive=true,world=true,critter=false,friendly=false;unsigned map=0;Unit* victim=nullptr;bool IsAlive()const{return alive;}bool IsInWorld()const{return world;}bool IsCritter()const{return critter;}unsigned GetMap()const{return map;}bool IsFriendlyTo(Unit const*)const{return friendly;}Unit* GetVictim()const{return victim;}};
+struct Guid{unsigned value=0;bool IsEmpty()const{return !value;}auto operator<=>(Guid const&)const=default;};
+struct BotCfg{struct Settings{float defenderLeash=65.f;};static Settings GetHealingSettings(){return {};}};
+struct Unit:Position{unsigned entry=0;Guid guid;unsigned GetEntry()const{return entry;}Guid GetGUID()const{return guid;}bool alive=true,world=true,critter=false,friendly=false;unsigned map=0;Unit* victim=nullptr;bool IsAlive()const{return alive;}bool IsInWorld()const{return world;}bool IsCritter()const{return critter;}unsigned GetMap()const{return map;}bool IsFriendlyTo(Unit const*)const{return friendly;}Unit* GetVictim()const{return victim;}};
 struct Base{virtual ~Base()=default;virtual bool CanAIAttack(Unit const*)const{return true;}};
-struct Controller:Base{
+struct CityRaidBotAI:Base{
  Unit creature;Unit* me=&creature;struct Runtime{std::atomic<bool> Running{true};};std::shared_ptr<Runtime> _runtime=std::make_shared<Runtime>();
- struct Config{std::vector<Position> Waypoints{{-9115,423,96},{-8953.95f,521.02f,96.54f},{-8831.8f,596.4f,95.8f}};}_cfg;
- struct Order{State Mode=State::Marching;Position Destination{-9115,423,96};bool Engage=true;unsigned Frontline=0;}_order;
+ struct Config{unsigned BossEntry=4949;std::array<Position,3> CheckpointSpawns{{{0,0,0},{0,0,0},{1922,-4204,42}}};std::vector<Position> Waypoints{{-9115,423,96},{-8953.95f,521.02f,96.54f},{-8831.8f,596.4f,95.8f}};}_cfg;
+ struct Order{Guid Focus;State Mode=State::Marching;Position Destination{-9115,423,96};bool Engage=true;unsigned Frontline=0;}_order;
  unsigned _side=ROLE_ATTACKER;bool _reinforcing=false;
 METHOD
 };
 int main(){
- Controller c;Unit guard;guard.x=-9100;guard.y=430;assert(c.CanAIAttack(&guard));
+ CityRaidBotAI c;Unit guard;guard.x=-9100;guard.y=430;assert(c.CanAIAttack(&guard));
  Unit mine;mine.x=-8790;mine.y=-150;assert(!c.CanAIAttack(&mine)); // Echo Ridge / Northshire cannot divert a city raid
  Unit goldshire;goldshire.x=-9340;goldshire.y=171;assert(!c.CanAIAttack(&goldshire));
  c._order.Frontline=1;guard.x=-9025;guard.y=475;assert(c.CanAIAttack(&guard));
@@ -36,7 +38,12 @@ int main(){
  c._reinforcing=false;c._order.Mode=State::Retreating;assert(!c.CanAIAttack(&guard));
  c._order.Mode=State::Boss;c._order.Destination={-8441,333,122};guard.x=-8440;guard.y=335;assert(c.CanAIAttack(&guard));assert(!c.CanAIAttack(&mine));
  c._side=ROLE_DEFENDER;c._order.Mode=State::Marching;c._order.Destination={1922,-4204,42};guard.x=1920;guard.y=-4200;assert(c.CanAIAttack(&guard));
- guard.x=1352;guard.y=-4395;assert(!c.CanAIAttack(&guard)); // defenders cannot follow a lure out of Orgrimmar
+ guard.x=1352;guard.y=-4395;assert(!c.CanAIAttack(&guard));
+ Unit boss;boss.entry=4949;guard.victim=&boss;assert(!c.CanAIAttack(&guard));
+ guard.victim=nullptr;c._order.Focus=guard.guid={7};assert(!c.CanAIAttack(&guard));
+ c._order.Focus={};
+ c._order.Mode=State::Boss;c._order.Destination={1352,-4395,42};assert(!c.CanAIAttack(&guard));
+ c._order.Mode=State::Marching;c._order.Destination={1922,-4204,42}; // defenders cannot follow a lure out of Orgrimmar
  guard.x=1920;guard.y=-4200;guard.world=false;assert(!c.CanAIAttack(&guard));guard.world=true;guard.map=1;assert(!c.CanAIAttack(&guard));
  assert(!c.CanAIAttack(nullptr));
  std::cout<<"PASS: actual event AI rejects Echo Ridge/Goldshire detours, outside-city lures, reinforcement fights and invalid targets; city and boss combat remain enabled\n";

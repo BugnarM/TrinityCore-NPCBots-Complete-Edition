@@ -13,14 +13,14 @@ int main()
 
     // A live realm with a large staff limit must still cap ordinary accounts.
     assert(PersonalLimit(39, 1, false) == 1);
-    assert(PersonalLimit(39, 1, true) == 39);
+    assert(PersonalLimit(39, 1, true) == 255);
     assert(PersonalLimit(0, 1, false) == 0);
     assert(PersonalLimit(39, 0, false) == 0);
     assert(CanAttach(1, 0, false, false));
     assert(!CanAttach(1, 1, false, false));
     assert(!CanAttach(1, 4, false, false)); // Previously owned/shared companions cannot bypass the cap.
     assert(CanAttach(1, 1, true, false));   // Finder additions are independent of the personal slot.
-    assert(CanAttach(1, 4, false, true));  // Staff retains existing attachment behavior.
+    assert(CanAttach(1, 4, false, true));  // Staff bypasses personal attachment limits.
     assert(!CanAttach(0, 0, false, false));
 
     // A solo DPS gets four bots. Bringing one personal DPS bot needs only three.

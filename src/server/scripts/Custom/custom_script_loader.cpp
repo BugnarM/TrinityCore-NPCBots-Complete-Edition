@@ -8,14 +8,19 @@
 #include "ScriptedCreature.h"
 #include "Player.h"
 #include "Creature.h"
+#include "TemporarySummon.h"
+#include "Map.h"
 #include "SpellAuras.h"
 #include "SpellMgr.h"
+#include "SpellInfo.h"
 #include "MotionMaster.h"
 #include "botwanderful.h"
 #include "Containers.h"
 #include "botdatamgr.h"
 #include "botmgr.h"
 #include "bot_ai.h"
+#include "botconfig.h"
+#include "Log.h"
 #include "Chat.h"
 #include "WorldSession.h"
 #include "DatabaseEnv.h"
@@ -29,6 +34,7 @@
 #include <cmath>
 #include <vector>
 #include <unordered_map>
+#include <mutex>
 
 enum DarkKnightSpells
 {
@@ -374,25 +380,41 @@ public:
  * - Targeting an owned bot and using .companion / stone or .companion dismiss: dismisses targeted bot.
  * - .companion dismiss (without target) for GM: dismisses all companion bots.
  */
+static bool IsPersonalCompanion(Creature const* bot)
+{
+    return bot && !bot->IsSummon() && !bot->IsTempBot();
+}
+
+static void DismissCompanion(Player* player, Creature* bot)
+{
+    if (!bot) return;
+    bool const generated = !bot->GetSpawnId();
+    player->GetBotMgr()->RemoveBot(bot->GetGUID(), BOT_REMOVE_DISMISS);
+    if (generated)
+        bot->DespawnOrUnsummon();
+}
+
 static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool dismissAction = false)
 {
     if (!player || !player->IsInWorld())
         return false;
 
+    static std::mutex companionInvocationMutex;
+    std::lock_guard invocationLock(companionInvocationMutex);
     bool const isGM = (player->GetSession() && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER);
     uint32 const guidLow = player->GetGUID().GetCounter();
     time_t const now = GameTime::GetGameTime();
-    constexpr uint64 COOLDOWN_SECONDS = 5 * 3600; // 5 hours
+    uint64 const COOLDOWN_SECONDS = BotCfg::GetHealingSettings().companionCooldownSeconds;
 
     // 0. Handle explicit dismiss action (.companion dismiss / clear)
     if (dismissAction)
     {
         if (Unit* target = player->GetSelectedUnit())
         {
-            if (target->IsCreature() && player->GetBotMgr()->GetBot(target->GetGUID()))
+            if (target->IsCreature() && IsPersonalCompanion(target->ToCreature()) && player->GetBotMgr()->GetBot(target->GetGUID()))
             {
                 std::string name = target->GetName();
-                player->GetBotMgr()->RemoveBot(target->GetGUID(), BOT_REMOVE_DISMISS);
+                DismissCompanion(player, target->ToCreature());
                 ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
                 player->CastSpell(player, 64034, true); // Visual puff
                 return true;
@@ -403,7 +425,12 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
         {
             if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
             {
-                player->GetBotMgr()->RemoveAllBots(BOT_REMOVE_DISMISS);
+                std::vector<ObjectGuid> companions;
+                for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
+                    if (IsPersonalCompanion(bot)) companions.push_back(guid);
+                if (companions.empty()) return false;
+                for (ObjectGuid guid : companions)
+                    DismissCompanion(player, player->GetBotMgr()->GetBot(guid));
                 ChatHandler(player->GetSession()).SendSysMessage("All companion bots have been dismissed.");
                 player->CastSpell(player, 64034, true);
                 return true;
@@ -419,11 +446,13 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
             // Non-GM dismiss active bot
             if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
             {
-                Creature* activeBot = player->GetBotMgr()->GetBotMap()->begin()->second;
+                Creature* activeBot = nullptr;
+                for (auto const& [_, bot] : *player->GetBotMgr()->GetBotMap())
+                    if (IsPersonalCompanion(bot)) { activeBot = bot; break; }
                 if (activeBot)
                 {
                     std::string name = activeBot->GetName();
-                    player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
+                    DismissCompanion(player, activeBot);
                     ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
                     player->CastSpell(player, 64034, true);
                     return true;
@@ -458,7 +487,8 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
         }
     }
 
-    // 1. Non-GM single-companion toggle / switch logic
+    Creature* previousCompanion = nullptr;
+    // Keep the previous bot attached until the new creature has been constructed.
     if (!isGM)
     {
         if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
@@ -466,7 +496,7 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
             Creature* activeBot = nullptr;
             for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
             {
-                if (bot)
+                if (IsPersonalCompanion(bot))
                 {
                     activeBot = bot;
                     break;
@@ -479,22 +509,22 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
                 if (requestedClass == 0 || activeBot->GetBotClass() == requestedClass)
                 {
                     std::string name = activeBot->GetName();
-                    player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
+                    DismissCompanion(player, activeBot);
                     ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
                     player->CastSpell(player, 64034, true); // Visual puff
 
                     // Update cooldown
                     if (!firstUseDone)
                     {
-                        CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
+                        CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
                         player->GetSpellHistory()->ResetCooldown(55884, true);
                         ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul a fost retras. (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
                     }
                     else
                     {
-                        CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
+                        CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
                         const uint32 cdMs = COOLDOWN_SECONDS * 1000;
-                        player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::hours(5));
+                        player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::seconds(COOLDOWN_SECONDS));
 
                         WorldPackets::Spells::SpellCooldown spellCooldown;
                         spellCooldown.Caster = player->GetGUID();
@@ -508,8 +538,7 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
                 }
                 else
                 {
-                    // Switching to a different class -> dismiss current one first
-                    player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
+                    previousCompanion = activeBot;
                 }
             }
         }
@@ -524,7 +553,7 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
                 if (target->IsCreature() && player->GetBotMgr()->GetBot(target->GetGUID()))
                 {
                     std::string name = target->GetName();
-                    player->GetBotMgr()->RemoveBot(target->GetGUID(), BOT_REMOVE_DISMISS);
+                    DismissCompanion(player, target->ToCreature());
                     ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
                     player->CastSpell(player, 64034, true);
                     return true;
@@ -591,7 +620,8 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
                 }
             }
         }
-        if (!BotDataMgr::FindBot(candidate) && !alreadyOwned)
+        NpcBotData const* data = BotDataMgr::SelectNpcBotData(candidate);
+        if (!BotDataMgr::FindBot(candidate) && !alreadyOwned && (!data || !data->owner))
         {
             botEntry = candidate;
             break;
@@ -623,8 +653,12 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
         BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_ROLES, &existingRoles);
     }
 
-    uint32 ownerGuidLow = player->GetGUID().GetCounter();
-    BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_OWNER, &ownerGuidLow);
+    // BotMgr commits ownership only after successful attachment.
+    if (player->GetMap()->GetInstanceId())
+    {
+        ChatHandler(player->GetSession()).SendSysMessage("Summon your companion before entering an instance.");
+        return false;
+    }
 
     Position pos = player->GetPosition();
     Creature* bot = new Creature();
@@ -638,8 +672,12 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
     // Align bot phase mask with player immediately (crucial in Acherus / phased zones)
     bot->SetPhaseMask(player->GetPhaseMask(), true);
 
-    if (player->GetBotMgr()->AddBot(bot) == BOT_ADD_SUCCESS)
+    if (previousCompanion)
+        player->GetBotMgr()->RemoveBot(previousCompanion->GetGUID(), BOT_REMOVE_DISMISS);
+    if (player->GetBotMgr()->AddBot(bot, true) == BOT_ADD_SUCCESS)
     {
+        if (previousCompanion && !previousCompanion->GetSpawnId())
+            previousCompanion->DespawnOrUnsummon();
         bot->GetBotAI()->SetWanderer(false);
         bot->GetBotAI()->ToggleRole(BOT_ROLE_PARTY, true);
         bot->SetNpcFlag(UNIT_NPC_FLAG_GOSSIP);
@@ -653,15 +691,15 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
         {
             if (!firstUseDone)
             {
-                CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
+                CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
                 player->GetSpellHistory()->ResetCooldown(55884, true);
                 ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul tau de leveling a sosit! (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
             }
             else
             {
-                CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
+                CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
                 const uint32 cdMs = COOLDOWN_SECONDS * 1000;
-                player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::hours(5));
+                player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::seconds(COOLDOWN_SECONDS));
 
                 WorldPackets::Spells::SpellCooldown spellCooldown;
                 spellCooldown.Caster = player->GetGUID();
@@ -676,6 +714,9 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
     }
     else
     {
+        bot->DespawnOrUnsummon(); // map-owned after LoadBotCreatureFromDB succeeded
+        if (previousCompanion && player->GetBotMgr()->AddBot(previousCompanion, true) != BOT_ADD_SUCCESS)
+            TC_LOG_ERROR("npcbots", "Could not restore companion {} for {} after failed class switch", previousCompanion->GetEntry(), player->GetGUID().ToString());
         ChatHandler(player->GetSession()).SendSysMessage("Could not attach companion bot!");
         return false;
     }
@@ -693,25 +734,17 @@ public:
     }
 };
 
-static void GrantClassHeirlooms(Player* player, bool announce = true)
+static bool GrantClassHeirlooms(Player* player, bool announce = true)
 {
-    if (!player)
-        return;
-
-    // 1. Equip 4x 22-slot Glacial Bags (entry 41600) into empty bag slots so the player has plenty of inventory
-    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
-    {
-        if (!player->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot))
-        {
-            uint16 dest;
-            if (player->CanEquipNewItem(bagSlot, dest, 41600, false) == EQUIP_ERR_OK)
-            {
-                Item* bagItem = player->EquipNewItem(dest, 41600, true);
-                if (bagItem)
-                    player->SendNewItem(bagItem, 1, true, false);
-            }
-        }
-    }
+    if (!player || !BotCfg::GetHealingSettings().heirlooms || player->IsBeingTeleported())
+        return false;
+    uint32 const guid = player->GetGUID().GetCounter();
+    if (CharacterDatabase.Query(Trinity::StringFormat("SELECT 1 FROM character_heirlooms_received WHERE guid = {}", guid).c_str()))
+        return true;
+    std::unordered_map<uint32, uint32> delivered;
+    if (QueryResult result = CharacterDatabase.Query(Trinity::StringFormat("SELECT item, count FROM character_heirloom_delivery WHERE guid = {}", guid).c_str()))
+        do { delivered[(*result)[0].GetUInt32()] = (*result)[1].GetUInt32(); } while (result->NextRow());
+    bool complete = true;
 
     // 2. Ensure weapon proficiencies for the player's class
     std::vector<uint32> weaponSpells;
@@ -727,10 +760,10 @@ static void GrantClassHeirlooms(Player* player, bool announce = true)
             weaponSpells = { 196, 197, 201, 202, 227, 264, 266, 1180, 5011, 200, 15590 };
             break;
         case CLASS_ROGUE:
-            weaponSpells = { 197, 199, 202, 264, 266, 1180, 5011, 15590 };
+            weaponSpells = { 196, 198, 201, 264, 266, 1180, 5011, 15590 };
             break;
         case CLASS_PRIEST:
-            weaponSpells = { 199, 227, 1180, 5009 };
+            weaponSpells = { 198, 227, 1180, 5009 };
             break;
         case CLASS_DEATH_KNIGHT:
             weaponSpells = { 196, 197, 198, 199, 201, 202, 200 };
@@ -739,13 +772,13 @@ static void GrantClassHeirlooms(Player* player, bool announce = true)
             weaponSpells = { 196, 197, 198, 199, 227, 1180, 15590 };
             break;
         case CLASS_MAGE:
-            weaponSpells = { 202, 227, 1180, 5009 };
+            weaponSpells = { 201, 227, 1180, 5009 };
             break;
         case CLASS_WARLOCK:
-            weaponSpells = { 202, 227, 1180, 5009 };
+            weaponSpells = { 201, 227, 1180, 5009 };
             break;
         case CLASS_DRUID:
-            weaponSpells = { 198, 199, 227, 1180, 15590 };
+            weaponSpells = { 198, 199, 200, 227, 1180, 15590 };
             break;
         default:
             break;
@@ -758,7 +791,7 @@ static void GrantClassHeirlooms(Player* player, bool announce = true)
     }
 
     // 3. Collect matching heirlooms
-    std::vector<uint32> heirloomItems;
+    std::vector<uint32> heirloomItems{41600, 41600, 41600, 41600};
 
     // Rings (Dread Pirate Ring x2: +5% XP each)
     heirloomItems.push_back(50255);
@@ -936,9 +969,14 @@ static void GrantClassHeirlooms(Player* player, bool announce = true)
     for (uint32 itemId : heirloomItems)
     {
         countsAdded[itemId]++;
-        uint32 currentCount = player->GetItemCount(itemId, true);
-        if (currentCount >= countsAdded[itemId])
-            continue; // Player already has enough of this item
+        if (delivered[itemId] >= countsAdded[itemId])
+            continue; // A delivered item remains delivered after it is sold or moved.
+        if (player->GetItemCount(itemId, true) >= countsAdded[itemId])
+        {
+            delivered[itemId] = countsAdded[itemId];
+            continue;
+        }
+        bool itemDelivered = false;
 
         // Try equip into empty equipment slot first
         uint16 eDest;
@@ -950,6 +988,7 @@ static void GrantClassHeirlooms(Player* player, bool announce = true)
                 player->AutoUnequipOffhandIfNeed();
                 player->SendNewItem(equipped, 1, true, false);
                 grantedCount++;
+                delivered[itemId] = countsAdded[itemId];
                 continue;
             }
         }
@@ -963,39 +1002,42 @@ static void GrantClassHeirlooms(Player* player, bool announce = true)
             {
                 player->SendNewItem(item, 1, true, false);
                 grantedCount++;
+                itemDelivered = true;
+                delivered[itemId] = countsAdded[itemId];
             }
         }
+        if (!itemDelivered)
+            complete = false;
     }
+    CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
+    player->SaveToDB(transaction);
+    for (auto const& [item, count] : delivered)
+        transaction->PAppend("REPLACE INTO character_heirloom_delivery (guid, item, count) VALUES ({}, {}, {})", guid, item, count);
+    if (complete)
+        transaction->PAppend("INSERT IGNORE INTO character_heirlooms_received (guid) VALUES ({})", guid);
+    CharacterDatabase.DirectCommitTransaction(transaction);
 
     if (announce && grantedCount > 0)
     {
-        ChatHandler(player->GetSession()).SendSysMessage("|cffe6cc80[Heirlooms]|r Ai primit setul complet de echipament mostenire (Heirlooms) pentru clasa ta!");
+        ChatHandler(player->GetSession()).SendSysMessage(complete ? "Heirloom package delivered." : "Partial heirloom delivery saved; free bag space and reconnect to receive the remaining items.");
         ChatHandler(player->GetSession()).SendSysMessage("|cffe6cc80[Heirlooms]|r Bonus de experienta (+XP), arme, inele si talismane echipate/adaugate in inventar.");
     }
+    return complete;
 }
 
 class companion_playerscript : public PlayerScript
 {
 public:
-    companion_playerscript() : PlayerScript("companion_playerscript")
-    {
-        CharacterDatabase.DirectExecute("CREATE TABLE IF NOT EXISTS character_heirlooms_received (guid INT UNSIGNED NOT NULL PRIMARY KEY);");
-    }
+    companion_playerscript() : PlayerScript("companion_playerscript") { }
 
-    void OnLogin(Player* player, bool firstLogin) override
+    void OnLogin(Player* player, bool /*firstLogin*/) override
     {
         if (!player)
             return;
 
         uint32 const guidLow = player->GetGUID().GetCounter();
 
-        // 1. Give Heirlooms on firstLogin OR if character has not received them yet
-        QueryResult hResult = CharacterDatabase.Query(Trinity::StringFormat("SELECT 1 FROM character_heirlooms_received WHERE guid = {}", guidLow).c_str());
-        if (firstLogin || !hResult)
-        {
-            GrantClassHeirlooms(player, true);
-            CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_heirlooms_received (guid) VALUES ({})", guidLow).c_str());
-        }
+        GrantClassHeirlooms(player, true);
 
         // 2. Give Companion Hearthstone to existing characters if missing
         if (!player->HasItemCount(ITEM_COMPANION_STONE, 1))
@@ -1022,7 +1064,7 @@ public:
             {
                 time_t const now = GameTime::GetGameTime();
                 uint64 const diff = (now > lastUseTime) ? (now - lastUseTime) : 0;
-                constexpr uint64 COOLDOWN_SECONDS = 5 * 3600;
+                uint64 const COOLDOWN_SECONDS = BotCfg::GetHealingSettings().companionCooldownSeconds;
                 if (diff < COOLDOWN_SECONDS)
                 {
                     uint32 const remSec = static_cast<uint32>(COOLDOWN_SECONDS - diff);
@@ -1075,8 +1117,9 @@ public:
             return false;
         }
 
+        if (player != handler->GetSession()->GetPlayer() && handler->GetSession()->GetSecurity() < SEC_GAMEMASTER)
+            return false;
         GrantClassHeirlooms(player, true);
-        CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_heirlooms_received (guid) VALUES ({})", player->GetGUID().GetCounter()).c_str());
 
         if (handler->GetSession() && player != handler->GetSession()->GetPlayer())
             handler->PSendSysMessage("Granted heirlooms to %s.", player->GetName().c_str());
@@ -1098,7 +1141,6 @@ public:
             if (cArg == "heirlooms" || cArg == "heirloom")
             {
                 GrantClassHeirlooms(player, true);
-                CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_heirlooms_received (guid) VALUES ({})", player->GetGUID().GetCounter()).c_str());
                 return true;
             }
 
@@ -1422,17 +1464,31 @@ public:
                     if (!trainer->CanTeachSpell(player, &trainerSpell))
                         continue;
 
+                    SpellInfo const* info = sSpellMgr->GetSpellInfo(trainerSpell.SpellId);
+                    if (!info)
+                        continue;
+                    std::vector<std::pair<uint32, bool>> learned;
+                    for (auto const& effect : info->GetEffects())
+                        if (effect.IsEffect(SPELL_EFFECT_LEARN_SPELL) && effect.TriggerSpell)
+                            learned.emplace_back(effect.TriggerSpell, player->HasSpell(effect.TriggerSpell));
+                    if (learned.empty())
+                        learned.emplace_back(trainerSpell.SpellId, player->HasSpell(trainerSpell.SpellId));
                     if (trainerSpell.IsCastable())
                         player->CastSpell(player, trainerSpell.SpellId, true);
                     else
                         player->LearnSpell(trainerSpell.SpellId, false);
-
-                    hadNew = true;
-                    ++totalLearned;
+                    for (auto const& [spell, known] : learned)
+                        if (!known && player->HasSpell(spell))
+                        {
+                            hadNew = true;
+                            ++totalLearned;
+                        }
                 }
             }
         } while (hadNew && iterations < 15);
 
+        if (hadNew && iterations == 15)
+            TC_LOG_WARN("scripts", "AutoLearn reached prerequisite pass limit for {}", player->GetGUID().ToString());
         if (totalLearned > 0 && sConfigMgr->GetBoolDefault("AutoLearnSpells.Announce", true))
         {
             ChatHandler(player->GetSession()).SendSysMessage(Trinity::StringFormat("|cff00ff00[Auto Learn]|r Ai invatat automat {} abilitati noi de clasa!", totalLearned));

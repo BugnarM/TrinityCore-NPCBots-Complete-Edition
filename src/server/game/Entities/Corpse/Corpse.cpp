@@ -18,6 +18,7 @@
 #include "CharacterCache.h"
 #include "Common.h"
 #include "Corpse.h"
+#include "botconfig.h"
 #include "DBCStores.h"
 #include "GameTime.h"
 #include "Log.h"
@@ -216,5 +217,5 @@ bool Corpse::IsExpired(time_t t) const
     }
 
     // NPCBot skeleton bones: decay cleanly after 30 minutes (1800 seconds)
-    return m_time < t - 30 * MINUTE;
+    return m_time < t - BotCfg::GetHealingSettings().bonesSeconds;
 }

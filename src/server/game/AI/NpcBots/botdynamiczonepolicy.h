@@ -33,6 +33,19 @@ constexpr bool InScope(std::uint32_t map, std::uint32_t zone, std::uint32_t home
     return !homeZone || (map == homeMap && zone == homeZone);
 }
 
+// Return the actual elapsed time between scans, including the current tick.
+inline std::optional<std::uint32_t> ScanElapsed(std::uint32_t& accumulated, std::uint32_t diff, std::uint32_t interval)
+{
+    auto const elapsed = std::uint64_t(accumulated) + diff;
+    if (elapsed < interval)
+    {
+        accumulated = std::uint32_t(elapsed);
+        return std::nullopt;
+    }
+    accumulated = 0;
+    return std::uint32_t(std::min<std::uint64_t>(elapsed, UINT32_MAX));
+}
+
 // Share a global budget evenly, independently of unordered-map iteration order.
 constexpr unsigned ZoneTarget(std::size_t index, std::size_t zones, unsigned perZone, unsigned global)
 {

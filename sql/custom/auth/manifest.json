@@ -1,0 +1,77 @@
+[
+  {
+    "file": "npcbot_2021_09_14_00_rbac_permissions.sql",
+    "sha256": "eef9e9a4b3c3430afbd91c6cbd4b3fdf3c254e2b1365dfe6493005fa8590b43f",
+    "after": []
+  },
+  {
+    "file": "npcbot_2021_09_14_01_rbac_linked_permissions.sql",
+    "sha256": "074975d018b7318958207b7010681c8b137997e7c9ca921311ff5167461ad5ed",
+    "after": [
+      "npcbot_2021_09_14_00_rbac_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2021_12_29_00_rbac_permissions.sql",
+    "sha256": "a14563801b884651a049375618d531c88815e49960625988d4a3f42a39c442ee",
+    "after": [
+      "npcbot_2021_09_14_01_rbac_linked_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2021_12_29_01_rbac_linked_permissions.sql",
+    "sha256": "4065eafc3c51d2a99fd629cf6d82e204d75230e0a2b46f0635aa000b58ef58e8",
+    "after": [
+      "npcbot_2021_12_29_00_rbac_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2022_06_24_00_rbac_permissions.sql",
+    "sha256": "94246491dab5d7fed1bc0712c0e7938f93e07596d988282f6726810b6237fa70",
+    "after": [
+      "npcbot_2021_12_29_01_rbac_linked_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2022_06_24_01_rbac_linked_permissions.sql",
+    "sha256": "8004048c568652d3bedb86724a2ddd2f890ffc60ced42a98506c627b6899089d",
+    "after": [
+      "npcbot_2022_06_24_00_rbac_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2022_07_04_00_rbac_permissions.sql",
+    "sha256": "d4904467acd0968bbd8c68fbe2f39bb924f9aecd51abdcbd0c8dc03c6a9c7775",
+    "after": [
+      "npcbot_2022_06_24_01_rbac_linked_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2022_07_04_01_rbac_linked_permissions.sql",
+    "sha256": "d7a4aba24aba12dd7b3bca9cb27fab0b0f77119bdf8b1fcad64a7111165f181d",
+    "after": [
+      "npcbot_2022_07_04_00_rbac_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2022_11_30_00_rbac_permissions.sql",
+    "sha256": "bc0242d7e581d63bec155f05085b1df4acff927f49a01cbe080569e9291a2eb9",
+    "after": [
+      "npcbot_2022_07_04_01_rbac_linked_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2022_11_30_rbac_linked_permissions.sql",
+    "sha256": "8e9be547d5fd3a5410ae8a8c36954abe677a34caecae899477dfdea9e75928d0",
+    "after": [
+      "npcbot_2022_11_30_00_rbac_permissions.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2023_08_12_00_rbac_linked_permissions.sql",
+    "sha256": "91184f65220209ab7b4a0c8b8adb37828dfe2e62808edf68cdf11cb2ab427bac",
+    "after": [
+      "npcbot_2022_11_30_rbac_linked_permissions.sql"
+    ]
+  }
+]

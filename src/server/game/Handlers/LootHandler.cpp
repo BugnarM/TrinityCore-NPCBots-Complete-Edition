@@ -368,76 +368,6 @@ namespace
         return transferred;
     }
 
-    uint32 AddOrStackQuestLoot(Loot* mainLoot, LootItem const& incomingItem, Player* player)
-    {
-        ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(incomingItem.itemid);
-        uint32 stackLimit = itemTemplate ? std::min<uint32>(itemTemplate->GetMaxStackSize(), AOE_LOOT_STACK_LIMIT) : 1;
-
-        uint32 remaining = incomingItem.count;
-        uint32 transferred = 0;
-
-        // 1. Try to stack into an existing unlooted quest item in mainLoot
-        if (stackLimit > 1)
-        {
-            for (LootItem& existingItem : mainLoot->quest_items)
-            {
-                if (!existingItem.is_looted && existingItem.itemid == incomingItem.itemid && existingItem.count < stackLimit)
-                {
-                    uint32 amountToAdd = std::min<uint32>(remaining, stackLimit - existingItem.count);
-                    existingItem.count = static_cast<uint8>(existingItem.count + amountToAdd);
-                    remaining -= amountToAdd;
-                    transferred += amountToAdd;
-
-                    if (remaining == 0)
-                        return transferred;
-                }
-            }
-        }
-
-        // 2. Add as a new quest item slot in mainLoot
-        while (remaining > 0)
-        {
-            NotNormalLootItemList* qlist = nullptr;
-            NotNormalLootItemMap& qmap = mainLoot->GetPlayerQuestItems();
-            auto itr = qmap.find(player->GetGUID());
-            if (itr != qmap.end())
-                qlist = itr->second;
-            else
-            {
-                qlist = new NotNormalLootItemList();
-                qmap[player->GetGUID()] = qlist;
-            }
-
-            size_t totalSlots = mainLoot->items.size() + (qlist ? qlist->size() : 0);
-            if (totalSlots >= MAX_AOE_LOOT_ITEMS || mainLoot->quest_items.size() >= MAX_NR_QUEST_ITEMS)
-                return transferred;
-
-            uint32 newStackCount = (stackLimit > 1) ? std::min<uint32>(remaining, stackLimit) : 1;
-            uint32 newIndex = static_cast<uint32>(mainLoot->quest_items.size());
-
-            LootItem newItem = incomingItem;
-            newItem.count = static_cast<uint8>(newStackCount);
-            newItem.itemIndex = newIndex;
-            newItem.is_looted = false;
-            newItem.is_counted = false;
-
-            if (!player->GetGroup() || (player->GetGroup()->GetLootMethod() != GROUP_LOOT && player->GetGroup()->GetLootMethod() != ROUND_ROBIN))
-                newItem.is_blocked = true;
-
-            mainLoot->quest_items.push_back(newItem);
-            qlist->push_back(NotNormalLootItem(static_cast<uint8>(newIndex)));
-            ++mainLoot->unlootedCount;
-
-            transferred += newStackCount;
-            remaining -= newStackCount;
-
-            if (stackLimit <= 1)
-                break;
-        }
-
-        return transferred;
-    }
-
     uint8 GetLootSortPriority(LootItem const& item)
     {
         ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item.itemid);
@@ -501,7 +431,9 @@ namespace
         };
 
         return std::any_of(loot.items.begin(), loot.items.end(), isPending) ||
-            std::any_of(loot.quest_items.begin(), loot.quest_items.end(), isPending);
+            std::any_of(loot.quest_items.begin(), loot.quest_items.end(), [](LootItem const& item) {
+                return !item.is_looted && ((item.follow_loot_rules && item.is_blocked) || !item.rollWinnerGUID.IsEmpty());
+            });
     }
 
     bool IsReservedByGroupLootRules(Player const* player, Loot const& loot, LootItem const& item)
@@ -564,24 +496,23 @@ namespace
 
     void ProcessAoELoot(Player* player, Creature* mainCreature)
     {
-        if (!sConfigMgr->GetBoolDefault("AOELoot.Enable", true))
+        if (!BotCfg::GetHealingSettings().aoeLoot)
             return;
 
-        if (!mainCreature || !mainCreature->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE))
+        if (!mainCreature || !mainCreature->IsInWorld() || !mainCreature->isDead() ||
+            !mainCreature->IsWithinDistInMap(player, INTERACTION_DISTANCE) || !player->isAllowedToLoot(mainCreature) ||
+            !mainCreature->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE))
             return;
 
         if (mainCreature->loot.loot_type == LOOT_SKINNING || mainCreature->loot.loot_type == LOOT_PICKPOCKETING)
             return;
 
-        if (HasPendingRoll(mainCreature->loot))
+        if (mainCreature->loot.HasActiveLooters() || HasPendingRoll(mainCreature->loot))
             return;
 
-        float range = sConfigMgr->GetFloatDefault("AOELoot.Range", 120.0f);
-        if (range < 5.0f) range = 5.0f;
-        if (range > 300.0f) range = 300.0f;
-
-        uint32 maxCorpses = sConfigMgr->GetIntDefault("AOELoot.MaxCorpses", 60);
-        if (maxCorpses < 1) maxCorpses = 1;
+        float const range = BotCfg::GetHealingSettings().lootRange;
+        uint32 const maxCorpses = BotCfg::GetHealingSettings().maxCorpses;
+        mainCreature->loot.ConsolidateQuestLootFor(player);
 
         std::list<Creature*> nearbyCorpses;
         mainCreature->GetCreatureListWithEntryInGrid(nearbyCorpses, 0, range);
@@ -594,7 +525,7 @@ namespace
                 !c->HasDynamicFlag(UNIT_DYNFLAG_LOOTABLE) ||
                 c->loot.loot_type == LOOT_SKINNING ||
                 c->loot.loot_type == LOOT_PICKPOCKETING ||
-                HasPendingRoll(c->loot) ||
+                c->loot.HasActiveLooters() || HasPendingRoll(c->loot) ||
                 !player->isAllowedToLoot(c);
         });
 
@@ -667,7 +598,7 @@ namespace
             for (size_t i = 0; i < loot->quest_items.size(); ++i)
             {
                 LootItem const& questItem = loot->quest_items[i];
-                if (questItem.is_looted)
+                if (!loot->CanTransferQuestLootFor(player, i))
                     continue;
 
                 if (!player->HasQuestForItem(questItem.itemid))
@@ -732,22 +663,7 @@ namespace
             if (sourceItem.is_looted)
                 continue;
 
-            uint32 sourceCount = sourceItem.count;
-            uint32 transferred = AddOrStackQuestLoot(mainLoot, candidate.item, player);
-
-            if (transferred == 0)
-                continue;
-
-            if (transferred >= sourceCount)
-            {
-                sourceItem.is_looted = true;
-                if (sourceLoot->unlootedCount > 0)
-                    --sourceLoot->unlootedCount;
-            }
-            else
-            {
-                sourceItem.count = static_cast<uint8>(sourceCount - transferred);
-            }
+            mainLoot->TransferQuestLootFrom(*sourceLoot, player, candidate.sourceIndex, candidate.item.count);
         }
 
         // 2. Sort regular candidates by priority (high quality first)

@@ -97,18 +97,25 @@ All custom database migrations are included in `sql/custom/world/`:
 * **World Bosses & Mall Vendors:** `2026_11_08_01_gmisland_mall_vendors.sql`, `2026_11_10_01_hellfire_kazzak_wanderers.sql`, `2026_11_10_05_hyjal_dragons_of_nightmare.sql`
 
 ### Automated SQL Installer
-To easily apply all custom SQL updates to your world database in one command:
+
+Custom migrations use separate manifests for world, characters and auth, explicit
+prerequisites, SHA-256 checksums and a database execution ledger. Plan first:
+
 ```bash
-cd sql/custom/world
-chmod +x apply_all_custom_sql.sh
-./apply_all_custom_sql.sh <db_user> <db_password> <world_db_name> [db_host] [db_port]
-```
-Example:
-```bash
-./apply_all_custom_sql.sh trinity mypassword world2 127.0.0.1 3306
+python3 sql/custom/apply_custom_sql.py --scope world --database world2 --defaults-file /secure/mysql.cnf
 ```
 
----
+Apply with `--apply --backup-dir /secure/trinity-backups`. The defaults file must
+have mode 600. Do not pass database passwords on the command line. On an existing
+installation, use `--baseline-existing --apply` only after verifying that every
+listed migration is already present. An incomplete migration blocks retries until
+its state is reviewed; SQL files containing DDL may commit independently.
+
+The `sql/updates/characters/3.3.5/2026_11_17_00_characters.sql` migration adds the
+heirloom delivery ledger and preserves legacy completion markers. The core updater
+can apply it; an identical migration is available in the custom characters manifest.
+Do not replay all legacy custom SQL on an existing production database.
+
 
 ## ⚙️ Configuration Reference (`worldserver.conf`)
 

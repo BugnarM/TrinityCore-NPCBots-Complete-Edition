@@ -1,4 +1,5 @@
 #include "bot_ai.h"
+#include "botconfig.h"
 #include "botdatamgr.h"
 #include "botlogtraits.h"
 #include "botmgr.h"
@@ -1364,28 +1365,28 @@ public:
 
         bool HealTarget(Unit* target, uint32 diff) override
         {
-            if (!target || !target->IsAlive() || target->GetShapeshiftForm() == FORM_SPIRITOFREDEMPTION || me->GetDistance(target) > 40)
+            if (!CanEvaluateHealTarget(target))
                 return false;
             uint8 hp = GetHealthPCT(target);
             if (hp > GetHealHpPctThreshold())
+                return false;
+            if (IsIdlePlayerHeal(target) && (hp >= GetTopOffThreshold() || (hp > 85 && !ShouldTopOff(target))))
                 return false;
             bool pointed = IsPointedHealTarget(target);
             if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) && !(target->IsPlayer() || target == master) &&
                 (!target->IsInCombat() || target->getAttackers().empty() || !IsTank(target) || !me->GetMap()->IsRaid()))
                 return false;
 
-            int32 hps = GetHPS(target);
-            int32 xphp = target->GetHealth() + hps * 2.5f;
-            int32 hppctps = int32(hps * 100.f / float(target->GetMaxHealth()));
-            int32 xphploss = xphp > int32(target->GetMaxHealth()) ? 0 : abs(int32(xphp - target->GetMaxHealth()));
-            int32 xppct = hp + hppctps * 2.5f;
-            if (xppct >= 95 && !me->IsInCombat() && (target->IsPlayer() || target == master))
-            {
-                if (hp >= 95)
-                    return false;
-            }
-            else if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
+            int32 const hps = GetHPS(target);
+            auto const projected = NPCBots::Healing::Project(target->GetHealth(), target->GetMaxHealth(), hps, 2.5);
+            int32 const xphploss = projected.missing;
+            int32 const xppct = projected.percent;
+            if (xppct >= (IsIdlePlayerHeal(target) ? GetTopOffThreshold() : 95) &&
+                hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
+            if (hp > 85 && ShouldTopOff(target))
+                return TryTopOffHeal(target, diff, {LESSER_HEALING_WAVE_1, HEALING_WAVE_1});
+
 
             if (IsSpellReady(NATURES_SWIFTNESS_1, diff, false) && Rand() < 80 &&
                 (me->IsInCombat() || target->IsInCombat()) &&//may just revive
@@ -1406,7 +1407,7 @@ public:
             bool tanking = u && IsTank(target) && u->ToCreature() && u->ToCreature()->isWorldBoss();
 
             if (IsSpellReady(HEALING_WAVE_1, diff) &&
-                (xppct >= 15 || !GetSpell(LESSER_HEALING_WAVE_1)) && (xphploss > _heals[HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
+                (xppct >= 15 || !GetSpell(LESSER_HEALING_WAVE_1)) && (xphploss > _heals[HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || ShouldTopOff(target)))))
             {
                 if (doCast(target, GetSpell(HEALING_WAVE_1)))
                     return true;
@@ -1426,7 +1427,7 @@ public:
                     return true;
             }
 
-            if (IsSpellReady(LESSER_HEALING_WAVE_1, diff) && (xphploss > _heals[LESSER_HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
+            if (IsSpellReady(LESSER_HEALING_WAVE_1, diff) && (xphploss > _heals[LESSER_HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || ShouldTopOff(target)))))
             {
                 if (doCast(target, GetSpell(LESSER_HEALING_WAVE_1)))
                     return true;

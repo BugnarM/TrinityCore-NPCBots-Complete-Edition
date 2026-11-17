@@ -1,0 +1,182 @@
+[
+  {
+    "file": "npcbot_2000_00_00_00_command.sql",
+    "sha256": "23afe97501bfe4e6f5c4b5b82263fec3db470665d67ba26096a09a0326b190b6",
+    "after": []
+  },
+  {
+    "file": "npcbot_2000_00_00_00_creature_classlevelstats.sql",
+    "sha256": "1c7772f6f81526a33ce6d963c4286f088b7940f36580c800a10615cc79bc5ad6",
+    "after": [
+      "npcbot_2000_00_00_00_command.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2000_00_00_00_creature_equip_template.sql",
+    "sha256": "ea56bfbc3c80322a1dd3ba21ff33e7c6c73e7963ae06ea08650ccf5b00695e6b",
+    "after": [
+      "npcbot_2000_00_00_00_creature_classlevelstats.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2000_00_00_00_creature_template.sql",
+    "sha256": "7168e7900fb1ef9c3ab342143fb76ed8a09598219d0cd29147e0edf42b59c4fc",
+    "after": [
+      "npcbot_2000_00_00_00_creature_equip_template.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2000_00_00_00_npc_text.sql",
+    "sha256": "1b3329cb4ce1bda4b4f799cfae9ff051eaba5acce625e3e31179841be8acd82a",
+    "after": [
+      "npcbot_2000_00_00_00_creature_template.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_03_28_00_command.sql",
+    "sha256": "311b56b02c839836278cd04c5eec1a8d193a8d450adaede9a9ae8a5a25bcda84",
+    "after": [
+      "npcbot_2000_00_00_00_npc_text.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_06_04_00_npc_text.sql",
+    "sha256": "65afa4ecd06e484b6cc99c45b6b70baffab37ca69b1f60042ff1593616d87762",
+    "after": [
+      "npcbot_2026_03_28_00_command.sql"
+    ]
+  },
+  {
+    "file": "2026_10_23_00_wintergrasp_bot_war.sql",
+    "sha256": "c59e025a69d8e7d775ffbe31bfc032ca3d211f70297d18bb1230c31467f9e3bf",
+    "after": [
+      "npcbot_2026_06_04_00_npc_text.sql"
+    ]
+  },
+  {
+    "file": "2026_10_23_01_battleground_bots_sa_ic.sql",
+    "sha256": "172ec9fc8c9333256b8a922713053d289740d81df4faeec4d73454768281027b",
+    "after": [
+      "2026_10_23_00_wintergrasp_bot_war.sql"
+    ]
+  },
+  {
+    "file": "2026_10_24_00_arena_bot_mesh.sql",
+    "sha256": "4c38c0d301a21997c0a00702e1ca685f2058d6c5b85299dbda9819f4e520c50d",
+    "after": [
+      "2026_10_23_01_battleground_bots_sa_ic.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_10_24_00_autoequip.sql",
+    "sha256": "cf81ee57537ecc69e0a872fb15c7920f64f818c36897a5d1594547a384d743ae",
+    "after": [
+      "2026_10_24_00_arena_bot_mesh.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_10_25_00_raid_finder.sql",
+    "sha256": "6e303c387a0f3053461b3bb283c53ec901200fdde2cf4bc231c617f2085fd2c8",
+    "after": [
+      "npcbot_2026_10_24_00_autoequip.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_10_25_01_ioc_navigation.sql",
+    "sha256": "1a766e0629d3b88a2ea63e90eb00eb4af647fffacc5aa7913414374d833348d8",
+    "after": [
+      "npcbot_2026_10_25_00_raid_finder.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_10_26_01_sa_navigation.sql",
+    "sha256": "de687acd388ff890f4c2e975362ba2d7dfe2f69774e1376d50e42da8f92ba881",
+    "after": [
+      "npcbot_2026_10_25_01_ioc_navigation.sql"
+    ]
+  },
+  {
+    "file": "2026_11_08_00_brewfest_fixes.sql",
+    "sha256": "3de0460c9d803416ad836873edce56521dde4d0faa0c43b5ee631629454a64b2",
+    "after": [
+      "npcbot_2026_10_26_01_sa_navigation.sql"
+    ]
+  },
+  {
+    "file": "2026_11_08_01_gmisland_mall_vendors.sql",
+    "sha256": "e5f1f783d4c3c21fae76420833ff1e13b5c95250e30cd9649610d79738113cf1",
+    "after": [
+      "2026_11_08_00_brewfest_fixes.sql"
+    ]
+  },
+  {
+    "file": "2026_11_08_02_holiday_events_fixes.sql",
+    "sha256": "6b1d0bdc2215e78d43f7adab2cdec3cfec9c258ff3a13a285a2d38b50c37bda0",
+    "after": [
+      "2026_11_08_01_gmisland_mall_vendors.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_09_01_wintergrasp_native_bots.sql",
+    "sha256": "79d00de67043dc023f4d51e27917b93eb64d644445a756319eb6440ed041d8fc",
+    "after": [
+      "2026_11_08_02_holiday_events_fixes.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_10_01_hellfire_kazzak_wanderers.sql",
+    "sha256": "bee1999a6fc9fc05989728ba8e1a45442760d6be2ee0311fe8315dacb7b2009b",
+    "after": [
+      "npcbot_2026_11_09_01_wintergrasp_native_bots.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_10_02_ghostlands_wanderers.sql",
+    "sha256": "87b4fbc0ee50eded661df00c1b6e1ddfa2054efdb5dfcb13413ca23836989507",
+    "after": [
+      "npcbot_2026_11_10_01_hellfire_kazzak_wanderers.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_10_03_city_raids.sql",
+    "sha256": "1b99208fa9e23f5f40edf8b6e453d1b433a13a3a851a6fb9e3039be68cd6efe2",
+    "after": [
+      "npcbot_2026_11_10_02_ghostlands_wanderers.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_10_04_city_raid_rewards.sql",
+    "sha256": "a84ec578ac0a7cf44ff08e3a43bdfb59bbb6f295c531660576d7713e38148f53",
+    "after": [
+      "npcbot_2026_11_10_03_city_raids.sql"
+    ]
+  },
+  {
+    "file": "2026_11_10_05_hyjal_dragons_of_nightmare.sql",
+    "sha256": "2e59c6a910a08d3d4f6dbb8036389c1b9259a145191ae27a9dfd1cd32c761dd0",
+    "after": [
+      "npcbot_2026_11_10_04_city_raid_rewards.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_11_01_city_raid_internal_events.sql",
+    "sha256": "897c05b6a96d4858f904158b49f947988c3537d66f0589de209ce62266c6fc8e",
+    "after": [
+      "2026_11_10_05_hyjal_dragons_of_nightmare.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_15_01_wintergrasp_wander_links.sql",
+    "sha256": "9cc6b3dbda23f617b4f3cdd55932477d06ccab1092109e8c82474ea29b6f1e4e",
+    "after": [
+      "npcbot_2026_11_11_01_city_raid_internal_events.sql"
+    ]
+  },
+  {
+    "file": "2026_11_16_01_companion_hearthstone_setup.sql",
+    "sha256": "3f9c7eaf7447bf7186acef7ec9429384ef1bfe5d7466f6d5380942b5d4a62e29",
+    "after": [
+      "npcbot_2026_11_15_01_wintergrasp_wander_links.sql"
+    ]
+  }
+]

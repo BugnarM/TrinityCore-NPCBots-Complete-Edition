@@ -1,0 +1,43 @@
+--- a/src/server/game/AI/NpcBots/bot_ai.cpp
++++ b/src/server/game/AI/NpcBots/bot_ai.cpp
+@@ -18697,9 +18697,11 @@
+                     interrupt = true; //LoS
+                 else if (info->Id == 64382 && !target->HasAuraWithMechanic(1u<<MECHANIC_IMMUNE_SHIELD))
+                     interrupt = true; //Shattering Throw wasting
+-                else if (HasRole(BOT_ROLE_HEAL) && !HasBotCommandState(BOT_COMMAND_ISSUED_ORDER))
+-                {
+-                    if (master && master->IsAlive() && GetHealthPCT(master) < 60)
++                else if (HasRole(BOT_ROLE_HEAL) && !HasBotCommandState(BOT_COMMAND_ISSUED_ORDER) &&
++                    !IAmFree() && master && master->IsInWorld() && me->GetMap() == master->FindMap())
++                {
++                    if (master->IsAlive() && master->InSamePhase(me) &&
++                        me->IsWithinDistInMap(master, 40.0f) && me->IsValidAssistTarget(master) && GetHealthPCT(master) < 60)
+                         interrupt = true;
+                     else if (Group const* grp = master ? master->GetGroup() : nullptr)
+                     {
+@@ -18707,7 +18709,9 @@
+                         {
+                             if (Player* gPlayer = gitr->GetSource())
+                             {
+-                                if (gPlayer->IsAlive() && me->GetMap() == gPlayer->FindMap() && me->GetDistance(gPlayer) < 40.0f && GetHealthPCT(gPlayer) < 50)
++                                if (gPlayer->IsInWorld() && gPlayer->IsAlive() && me->GetMap() == gPlayer->FindMap() &&
++                                    gPlayer->InSamePhase(me) && me->IsWithinDistInMap(gPlayer, 40.0f) &&
++                                    me->IsValidAssistTarget(gPlayer) && GetHealthPCT(gPlayer) < 50)
+                                 {
+                                     interrupt = true;
+                                     break;
+@@ -18717,8 +18721,12 @@
+                     }
+                 }
+             }
+-            if (!interrupt && !(target == master && me->GetDistance(target) < INTERACTION_DISTANCE) &&
+-                info->HasEffect(SPELL_EFFECT_HEAL) && GetHealthPCT(target) > 90 && !IsPointedHealTarget(target))
++            bool const outOfCombatPlayerHeal = target && target->IsPlayer() &&
++                !me->IsInCombat() && !target->IsInCombat();
++            bool const healNoLongerNeeded = target && (outOfCombatPlayerHeal ?
++                GetHealthPCT(target) >= 95 : GetHealthPCT(target) > 90);
++            if (!interrupt && target && !(target == master && me->GetDistance(target) < INTERACTION_DISTANCE) &&
++                info->HasEffect(SPELL_EFFECT_HEAL) && healNoLongerNeeded && !IsPointedHealTarget(target))
+             {
+                 bool isAreaSpell = false;
+                 for (uint8 j = 0; j != 3 && isAreaSpell == false; ++j)

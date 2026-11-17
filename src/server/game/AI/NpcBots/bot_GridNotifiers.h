@@ -2,6 +2,7 @@
 #define BOT_GRIDNOTIFIERS_H
 
 #include "bot_ai.h"
+#include "botconfig.h"
 #include "botspell.h"
 #include "Corpse.h"
 #include "Creature.h"
@@ -951,7 +952,7 @@ class NearbyFriendlyUnitCheck
                 return false;
             if (!me->CanSeeOrDetect(u))
                 return false;
-            if (!me->IsValidAssistTarget(u) && !(u->IsPlayer() && u->ToPlayer()->IsGameMaster() && me->IsFriendlyTo(u)))
+            if (!me->IsValidAssistTarget(u))
                 return false;
 
             return true;
@@ -1094,6 +1095,8 @@ class NearbyRezTargetCheck
                 return false;
             if (Player const* p = u->IsPlayer() ? u->ToPlayer() : ObjectAccessor::FindPlayer(u->ToCorpse()->GetOwnerGUID()))
             {
+                if (ai->IAmFree() && p->duel && !BotCfg::GetHealingSettings().allowDuelAid)
+                    return false;
                 if (p->IsAlive())
                     return false;
                 if (p->IsResurrectRequested())

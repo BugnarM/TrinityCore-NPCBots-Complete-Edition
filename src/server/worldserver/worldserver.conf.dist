@@ -2817,9 +2817,9 @@ Wintergrasp.Enable = 0
 #
 #     Wintergrasp.PlayerMax
 #         Description: Maximum number of players per faction allowed in Wintergrasp.
-#         Default:     120
+#         Default:     40
 
-Wintergrasp.PlayerMax = 120
+Wintergrasp.PlayerMax = 40
 
 #     Wintergrasp.BotWar.Enable
 #         Description: Fill Wintergrasp battles with scripted soldiers and siege vehicles.
@@ -2832,9 +2832,9 @@ Wintergrasp.BotWar.Enable = 0
 #         Description: Target population per faction, including human participants.
 #                      Bots give up slots for humans on the next one-second update.
 #                      Clamped to Wintergrasp.PlayerMax and the WotLK limit of 120.
-#         Default:     120
+#         Default:     40
 
-Wintergrasp.BotWar.TargetPerTeam = 120
+Wintergrasp.BotWar.TargetPerTeam = 40
 
 #
 #     Wintergrasp.PlayerMin
@@ -4233,7 +4233,7 @@ NpcBot.MaxBots = 1,1,1,1,1,1,1,1,1
 #        Description: Additional personal companion cap for accounts below GM security.
 #                     Applies to hiring and reattaching owned/shared companions.
 #                     Generated Dungeon/Raid Finder bots use group capacity instead.
-#                     GM accounts retain the level-bracket NpcBot.MaxBots limit.
+#                     GM accounts bypass personal/class attachment limits (technical counter ceiling: 255).
 #        Default:     1
 #        Range:       0-39
 
@@ -5150,3 +5150,27 @@ AutoLearnSpells.Enable = 1
 #                     0 - Disabled
 #
 AutoLearnSpells.Announce = 1
+
+# Healer decisions: GCD and spell costs remain native. A personal bot HP threshold
+# can lower the global OOC top-off ceiling. Incoming heals/HoTs are still respected.
+NpcBot.Healing.TopOff.Enable = 1
+NpcBot.Healing.TopOff.HealthPct = 95
+NpcBot.Healing.TopOff.MinManaPct = 25
+NpcBot.Healing.TopOff.ScanIntervalMs = 750
+NpcBot.Healing.Combat.ScanIntervalMs = 250
+NpcBot.Healing.Emergency.OwnerHealthPct = 60
+NpcBot.Healing.Emergency.GroupHealthPct = 50
+NpcBot.Healing.FailedTargetRetryMs = 750
+# Aggregate counters and approximate decision p50/p95/p99/max every 60s per bot.
+NpcBot.Healing.Diagnostics.Enable = 0
+NpcBot.Wanderer.PlayerAid.Enable = 1
+NpcBot.Wanderer.PlayerAid.Range = 40.0
+NpcBot.Wanderer.PlayerAid.AllowDuel = 0
+NpcBot.Wanderer.PlayerAid.AllowWhileStealthed = 0
+NpcBot.Wanderer.BonesLifetimeSeconds = 1800
+NpcBot.Wanderer.ReviveDelayMs = 300000
+Companion.Stone.CooldownSeconds = 18000
+Companion.Heirlooms.Enable = 1
+# Event-only boundaries in yards; focus and boss targets cannot bypass them.
+CityRaid.DefenderLeashRange = 65.0
+CityRaid.BossLeashRange = 90.0

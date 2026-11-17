@@ -8,6 +8,7 @@
 #include "ScriptedCreature.h"
 #include "GameEventMgr.h"
 #include "bot_ai.h"
+#include "botconfig.h"
 #include "botdatamgr.h"
 #include "botmgr.h"
 #include "Config.h"
@@ -291,6 +292,9 @@ public:
         if (!_order.Engage && target->GetVictim() != me) return false;
         if (_side == ROLE_DEFENDER)
         {
+            Position const& anchor = (_order.Mode == State::Boss || _reinforcing) ? _cfg.CheckpointSpawns[2] : _order.Destination;
+            if (target->GetExactDist2d(&anchor) > BotCfg::GetHealingSettings().defenderLeash)
+                return false;
             if (target->GetVictim() && target->GetVictim()->GetEntry() == _cfg.BossEntry)
                 return true;
             if (!_order.Focus.IsEmpty() && target->GetGUID() == _order.Focus)
@@ -741,7 +745,8 @@ private:
                 }
                 else
                 {
-                    // Revived defenders rush back to the city boss to reinforce the defense!
+                    // Reinforcements stay at the throne after arrival, rather than returning to their old gate post.
+                    m.Checkpoint = 2;
                     if (auto* ai=AI(bot))
                         ai->Reinforce();
                 }
@@ -863,7 +868,8 @@ private:
             Position goal;
             if (defendBoss)
             {
-                goal = boss ? boss->GetPosition() : _cfg.CheckpointSpawns[2];
+                goal = boss && boss->GetExactDist2d(&_cfg.CheckpointSpawns[2]) < BotCfg::GetHealingSettings().defenderLeash - 15.f
+                    ? boss->GetPosition() : _cfg.CheckpointSpawns[2];
                 float a = float(m.Index) * 2.399963f;
                 float r = (b->GetBotAI() && b->GetBotAI()->HasRole(BOT_ROLE_HEAL)) ? 14.f :
                           (b->GetBotAI() && b->GetBotAI()->HasRole(BOT_ROLE_RANGED)) ? 9.f : 3.5f;
@@ -903,6 +909,14 @@ private:
         }
         if (Tactics::VictoryEligible(_runtime->BossKilled.load(),boss && !boss->IsAlive(),_bossSeenAlive,_bossEngaged)) { Victory(map); return; }
         if (!boss || !boss->IsAlive()) return; // A pre-dead/missing city leader is never a victory.
+        if (boss->GetExactDist2d(&_cfg.CheckpointSpawns[2]) > BotCfg::GetHealingSettings().bossLeash)
+        {
+            if (boss->IsAIEnabled() && !boss->IsInEvadeMode())
+                boss->AI()->EnterEvadeMode(CreatureAI::EVADE_REASON_BOUNDARY);
+            _tank.Clear();
+            _aggroReadyAt = 0;
+            return;
+        }
         _bossSeenAlive=true;
         if (_tank.IsEmpty())
         {

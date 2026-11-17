@@ -201,7 +201,7 @@ public:
     void UnbindBot(ObjectGuid guid);
     [[nodiscard]] BotAddResult RebindBot(Creature* bot);
     [[nodiscard]] BotAddResult AddDungeonBot(Creature* bot);
-    [[nodiscard]] BotAddResult AddBot(Creature* bot);
+    [[nodiscard]] BotAddResult AddBot(Creature* bot, bool companion = false);
     bool AddBotToGroup(Creature* bot);
     void RemoveBotFromBGQueue(Creature const* bot);
     bool RemoveBotFromGroup(Creature* bot);
@@ -284,6 +284,10 @@ private:
 
     bool _quickrecall;
     bool _update_lock;
+    // Membership only; live spells are re-read. No Unit* survives an update.
+    mutable std::vector<ObjectGuid> _healingCasterGuids;
+    mutable Group const* _healingSnapshotGroup{};
+    mutable bool _healingSnapshotReady{};
 
     AoeSpotsVec _aoespots;
 

@@ -22,18 +22,19 @@ code=r'''
 #include <vector>
 using uint32=std::uint32_t;using uint64=std::uint64_t;using int32=std::int32_t;using ObjectGuid=unsigned;
 namespace Tactics=NPCBots::CityRaid;using State=Tactics::State;
+#define TC_LOG_INFO(...) ((void)0)
 struct dtNavMeshQuery{};
 RUNTIME
 struct Position{};
 struct GameObject{};
 struct Player;
 struct Map{GameObject chest;GameObject* GetGameObject(unsigned id){return id==7?&chest:nullptr;}};
-struct Bot{bool IsAlive()const{return false;}};
+struct Bot{bool IsAlive()const{return true;}float GetExactDist2d(Position const*)const{return 100.f;}};
 using Creature=Bot;
 struct AIType{bool Retreated()const{return true;}};
 struct Member{};
 struct Config{
- Position GraveyardPos,DefenderGraveyardPos;unsigned MapId=0;
+ Position GraveyardPos,DefenderGraveyardPos;unsigned MapId=0,EventId=1;char const* CityName="Test";
  int GetIntDefault(char const* key,int value){return std::string(key)=="CityRaid.Reward.Gold"?10:value;}
 }cfg;
 auto* sConfigMgr=&cfg;
@@ -55,12 +56,12 @@ struct Instance{
  uint32 _attackWave=20000,_defendWave=30000,_sampleAt=1000;
  unsigned stops=0,attackWaves=0,defendWaves=0,bossCalls=0;
  std::shared_ptr<RaidRuntime> _runtime=std::make_shared<RaidRuntime>();
- std::vector<Member> _attackers,_defenders;std::array<Position,2> _graveyards;Config _cfg;std::set<unsigned> _eligible{1},_claimed;unsigned _chest=7;Map map;bool mapExists=true;
+ Bot activeBot;std::vector<Member> _attackers{Member{}},_defenders;std::array<Position,2> _graveyards;Config _cfg;std::set<unsigned> _eligible{1},_claimed;unsigned _chest=7;Map map;bool mapExists=true;
  bool Active()const{return _state!=State::Idle;}Map* GetMap(){return mapExists?&map:nullptr;}
  void Stop(){++stops;_state=State::Idle;}void BeginRetreat(){_state=State::Retreating;_finish=90000;}
  void SpawnBatch(Map*){_state=State::Marching;}void SampleParticipants(Map*){}
  void MarchOrders(Map*){}void DefenderOrders(Map*){}void BossOrders(Map*){++bossCalls;}
- Bot* GetBot(Map*,Member const&){return nullptr;}AIType* AI(Bot*){return nullptr;}
+ Bot* GetBot(Map*,Member const&){return &activeBot;}AIType* AI(Bot*){return nullptr;}
  void Resurrect(Map*,std::vector<Member>& members,bool wave,Position const&){if(wave)(&members==&_attackers?attackWaves:defendWaves)++;}
 UPDATE
 CLAIM

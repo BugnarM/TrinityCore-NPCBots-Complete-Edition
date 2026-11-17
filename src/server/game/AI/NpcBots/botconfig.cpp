@@ -32,6 +32,7 @@ Npc Bot Config by Trickerer (onlysuffering@gmail.com)
 # define GetStringDefault GetOption<std::string>
 #endif
 
+static NPCBots::Healing::Settings _healingSettings;
 static uint8 _basefollowdist;
 static uint8 _maxClassNpcBots;
 static uint8 _maxPlayerNpcBots;
@@ -336,6 +337,42 @@ private:
 
     static void _loadConfig(bool reload)
     {
+        // Reload runs at the world update barrier, before map workers are scheduled.
+        NPCBots::Healing::Settings settings;
+        auto number = [](char const* key, int fallback, int low, int high) {
+            return unsigned(std::clamp(sConfigMgr->GetIntDefault(key, fallback), low, high));
+        };
+        settings.topOff = sConfigMgr->GetBoolDefault("NpcBot.Healing.TopOff.Enable", true);
+        settings.topOffPct = number("NpcBot.Healing.TopOff.HealthPct", 95, 1, 100);
+        settings.minManaPct = number("NpcBot.Healing.TopOff.MinManaPct", 25, 0, 100);
+        settings.ownerEmergencyPct = number("NpcBot.Healing.Emergency.OwnerHealthPct", 60, 1, 100);
+        settings.groupEmergencyPct = number("NpcBot.Healing.Emergency.GroupHealthPct", 50, 1, 100);
+        settings.idleScanMs = number("NpcBot.Healing.TopOff.ScanIntervalMs", 750, 100, 5000);
+        settings.combatScanMs = number("NpcBot.Healing.Combat.ScanIntervalMs", 250, 50, 1000);
+        settings.retryMs = number("NpcBot.Healing.FailedTargetRetryMs", 750, 100, 5000);
+        settings.playerAid = sConfigMgr->GetBoolDefault("NpcBot.Wanderer.PlayerAid.Enable", true);
+        settings.allowDuelAid = sConfigMgr->GetBoolDefault("NpcBot.Wanderer.PlayerAid.AllowDuel", false);
+        settings.allowStealthedAid = sConfigMgr->GetBoolDefault("NpcBot.Wanderer.PlayerAid.AllowWhileStealthed", false);
+        settings.aidRange = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.Wanderer.PlayerAid.Range", 40.f), 40.f, 5.f, 40.f);
+        settings.diagnostics = sConfigMgr->GetBoolDefault("NpcBot.Healing.Diagnostics.Enable", false);
+        settings.bonesSeconds = number("NpcBot.Wanderer.BonesLifetimeSeconds", 1800, 60, 86400);
+        settings.reviveMs = number("NpcBot.Wanderer.ReviveDelayMs", 300000, 1000, 3600000);
+        settings.companionCooldownSeconds = number("Companion.Stone.CooldownSeconds", 18000, 0, 604800);
+        settings.heirlooms = sConfigMgr->GetBoolDefault("Companion.Heirlooms.Enable", true);
+        settings.aoeLoot = sConfigMgr->GetBoolDefault("AOELoot.Enable", true);
+        settings.lootRange = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("AOELoot.Range", 120.f), 120.f, 5.f, 300.f);
+        settings.maxCorpses = number("AOELoot.MaxCorpses", 60, 1, 300);
+        settings.ghostSpeed = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("Rate.Ghost.MoveSpeed", 3.f), 3.f, 0.1f, 10.f);
+        settings.defenderLeash = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("CityRaid.DefenderLeashRange", 65.f), 65.f, 20.f, 150.f);
+        settings.bossLeash = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("CityRaid.BossLeashRange", 90.f), 90.f, 30.f, 200.f);
+        bool const ghostSpeedChanged = settings.ghostSpeed != _healingSettings.ghostSpeed;
+        _healingSettings = settings;
+        if (reload && ghostSpeedChanged)
+            for (auto const& [_, session] : sWorld->GetAllSessions())
+                if (Player* player = session->GetPlayer(); player && player->IsInWorld() && player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST))
+                    for (UnitMoveType move : {MOVE_RUN, MOVE_SWIM, MOVE_FLIGHT})
+                        player->UpdateSpeed(move);
+
         _enableNpcBots                  = sConfigMgr->GetBoolDefault("NpcBot.Enable", true);
         _logToDB                        = sConfigMgr->GetBoolDefault("NpcBot.LogToDB", true);
         _maxClassNpcBots                = sConfigMgr->GetIntDefault("NpcBot.MaxBotsPerClass", 1);
@@ -771,6 +808,8 @@ private:
         }
     }
 };
+
+NPCBots::Healing::Settings const& BotCfg::GetHealingSettings() { return _healingSettings; }
 
 void BotCfg::ReloadConfig()
 {

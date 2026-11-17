@@ -16,6 +16,12 @@ int main()
 {
     try
     {
+        std::uint32_t scan = 0, remaining = 300000;
+        for (unsigned tick = 0; tick < 6000; ++tick)
+            if (auto elapsed = ScanElapsed(scan, 50, 2000))
+                remaining = remaining > *elapsed ? remaining - *elapsed : 0;
+        Require(remaining == 0 && scan == 0, "Five-minute cooldown must expire after five real minutes, not scan count");
+        Require(*ScanElapsed(scan, UINT32_MAX, 2000) == UINT32_MAX, "Lag spike must saturate safely");
         Require(ZoneKey(0, 12) != ZoneKey(1, 12), "Same zone on different maps must not share population");
         Require(ZoneKey(0, 12) != ZoneKey(0, 40), "Zones must remain distinct");
         Require(ZoneKey(UINT_MAX, UINT_MAX) == UINT64_MAX, "Full width key");

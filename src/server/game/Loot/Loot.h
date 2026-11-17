@@ -251,7 +251,12 @@ struct TC_GAME_API Loot
         i_LootValidatorRefManager.insertFirst(pLootValidatorRef);
     }
 
+    bool HasActiveLooters() const { return !PlayersLooting.empty(); }
     void clear();
+    // Conservative solo transfer: shared/FFA/conditional rights stay on their source corpse.
+    bool CanTransferQuestLootFor(Player const* player, size_t index) const;
+    uint32 TransferQuestLootFrom(Loot& source, Player* player, size_t index, uint32 maximum);
+    void ConsolidateQuestLootFor(Player* player);
 
     bool empty() const { return items.empty() && gold == 0; }
     bool isLooted() const { return gold == 0 && unlootedCount == 0; }

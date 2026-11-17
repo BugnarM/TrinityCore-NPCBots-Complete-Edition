@@ -1,4 +1,5 @@
 #include "bot_ai.h"
+#include "botconfig.h"
 #include "botdatamgr.h"
 #include "botlogtraits.h"
 #include "botmgr.h"
@@ -695,10 +696,12 @@ public:
 
         bool HealTarget(Unit* target, uint32 diff) override
         {
-            if (!target || !target->IsAlive() || target->GetShapeshiftForm() == FORM_SPIRITOFREDEMPTION || me->GetDistance(target) > 40)
+            if (!CanEvaluateHealTarget(target))
                 return false;
             uint8 hp = GetHealthPCT(target);
             if (hp > GetHealHpPctThreshold())
+                return false;
+            if (IsIdlePlayerHeal(target) && (hp >= GetTopOffThreshold() || (hp > 85 && !ShouldTopOff(target))))
                 return false;
             bool pointed = IsPointedHealTarget(target);
             if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) && !(target->IsPlayer() || target == master) &&
@@ -708,18 +711,16 @@ public:
             if (hp > 50 && me->GetAuraEffect(SPELL_AURA_OBS_MOD_POWER, SPELLFAMILY_PALADIN, 0x0, 0x0, 0x1))
                 return false;
 
-            int32 hps = GetHPS(target);
-            int32 xphp = target->GetHealth() + hps * 2.5f;
-            int32 hppctps = int32(hps * 100.f / float(target->GetMaxHealth()));
-            int32 xphploss = xphp > int32(target->GetMaxHealth()) ? 0 : abs(int32(xphp - target->GetMaxHealth()));
-            int32 xppct = hp + hppctps * 2.5f;
-            if (xppct >= 95 && !me->IsInCombat() && (target->IsPlayer() || target == master))
-            {
-                if (hp >= 95)
-                    return false;
-            }
-            else if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
+            int32 const hps = GetHPS(target);
+            auto const projected = NPCBots::Healing::Project(target->GetHealth(), target->GetMaxHealth(), hps, 2.5);
+            int32 const xphploss = projected.missing;
+            int32 const xppct = projected.percent;
+            if (xppct >= (IsIdlePlayerHeal(target) ? GetTopOffThreshold() : 95) &&
+                hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
+            if (hp > 85 && ShouldTopOff(target))
+                return TryTopOffHeal(target, diff, {FLASH_OF_LIGHT_1, HOLY_LIGHT_1});
+
 
             //Lay on Hands
             if (IsSpellReady(LAY_ON_HANDS_1, diff, false) && (target != me || shieldDelayTimer <= diff) &&
@@ -743,7 +744,7 @@ public:
 
             //Holy Shock
             if (IsSpellReady(HOLY_SHOCK_1, diff, false) && !target->IsCharmed() && !target->isPossessed() &&
-                (xphploss > _heals[HOLY_SHOCK_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
+                (xphploss > _heals[HOLY_SHOCK_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || ShouldTopOff(target)))))
             {
                 me->InterruptNonMeleeSpells(false);
                 if (hp < 30 && IsSpellReady(DIVINE_FAVOR_1, diff, false) && !target->getAttackers().empty())
@@ -764,7 +765,7 @@ public:
 
             //Holy Light
             if (IsSpellReady(HOLY_LIGHT_1, diff) && (xppct > 15 || !GetSpell(FLASH_OF_LIGHT_1)) &&
-                (tanking || xphploss > _heals[HOLY_LIGHT_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
+                (tanking || xphploss > _heals[HOLY_LIGHT_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || ShouldTopOff(target)))))
             {
                 //Aura Mastery
                 if (hp < 60 && _myaura == CONCENTRATION_AURA_1 && IsSpellReady(AURA_MASTERY_1, diff, false) && Rand() < 90 &&
@@ -776,7 +777,7 @@ public:
                     return true;
             }
             //Flash of Light
-            if (IsSpellReady(FLASH_OF_LIGHT_1, diff) && (tanking || xphploss > _heals[FLASH_OF_LIGHT_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
+            if (IsSpellReady(FLASH_OF_LIGHT_1, diff) && (tanking || xphploss > _heals[FLASH_OF_LIGHT_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || ShouldTopOff(target)))))
             {
                 if (doCast(target, GetSpell(FLASH_OF_LIGHT_1)))
                     return true;

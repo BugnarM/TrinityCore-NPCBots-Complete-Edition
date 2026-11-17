@@ -16,6 +16,7 @@
  */
 
 #include "Loot.h"
+#include <algorithm>
 #include "Group.h"
 #include "ItemEnchantmentMgr.h"
 #include "ItemTemplate.h"
@@ -263,6 +264,110 @@ bool Loot::FillLoot(uint32 lootId, LootStore const& store, Player* lootOwner, bo
         FillNotNormalLootFor(lootOwner, true);
 
     return true;
+}
+
+namespace
+{
+    bool SimpleQuestRow(LootItem const& item)
+    {
+        return !item.is_looted && !item.freeforall && item.conditions.empty() && !item.follow_loot_rules && item.rollWinnerGUID.IsEmpty();
+    }
+    bool SameQuestRow(LootItem const& a, LootItem const& b)
+    {
+        return SimpleQuestRow(a) && SimpleQuestRow(b) && a.itemid == b.itemid &&
+            a.randomPropertyId == b.randomPropertyId && a.randomPropertySeed == b.randomPropertySeed && a.allowedGUIDs == b.allowedGUIDs;
+    }
+}
+bool Loot::CanTransferQuestLootFor(Player const* player, size_t index) const
+{
+    if (!player || player->GetGroup() || index >= quest_items.size() || !PlayersLooting.empty() ||
+        lootOwnerGUID != player->GetGUID() || PlayerQuestItems.size() != 1 || !SimpleQuestRow(quest_items[index]))
+        return false;
+    auto const it = PlayerQuestItems.find(player->GetGUID());
+    return it != PlayerQuestItems.end() && it->second &&
+        std::ranges::any_of(*it->second, [index](auto const& row) { return row.index == index && !row.is_looted; });
+}
+uint32 Loot::TransferQuestLootFrom(Loot& source, Player* player, size_t index, uint32 maximum)
+{
+    if (this == &source || !source.CanTransferQuestLootFor(player, index) || !PlayersLooting.empty() ||
+        lootOwnerGUID != player->GetGUID() || PlayerQuestItems.size() > 1 ||
+        (!PlayerQuestItems.empty() && !PlayerQuestItems.contains(player->GetGUID())))
+        return 0;
+    LootItem const incoming = source.quest_items[index];
+    if (!incoming.AllowedForPlayer(player, lootOwnerGUID))
+        return 0;
+    ItemTemplate const* proto = sObjectMgr->GetItemTemplate(incoming.itemid);
+    uint32 const limit = proto ? std::min<uint32>(proto->GetMaxStackSize(), 200) : 1;
+    uint32 remaining = std::min<uint32>(incoming.count, maximum);
+    uint32 const requested = remaining;
+    auto it = PlayerQuestItems.find(player->GetGUID());
+    if (it == PlayerQuestItems.end())
+        it = PlayerQuestItems.emplace(player->GetGUID(), new NotNormalLootItemList()).first;
+    auto& rows = *it->second;
+    for (auto const& row : rows)
+    {
+        if (row.is_looted || row.index >= quest_items.size()) continue;
+        auto& existing = quest_items[row.index];
+        if (!SameQuestRow(existing, incoming) || existing.count >= limit) continue;
+        uint32 const amount = std::min<uint32>(remaining, limit - existing.count);
+        existing.count += amount;
+        remaining -= amount;
+        if (!remaining) break;
+    }
+    while (remaining && items.size() + rows.size() < MAX_NR_LOOT_ITEMS && quest_items.size() < MAX_NR_QUEST_ITEMS && unlootedCount < UINT8_MAX)
+    {
+        LootItem item = incoming;
+        item.count = uint8(std::min<uint32>(remaining, limit));
+        item.itemIndex = uint32(quest_items.size());
+        item.is_blocked = true; // native one-looter quest accounting
+        item.is_counted = false;
+        quest_items.push_back(item);
+        rows.emplace_back(uint8(item.itemIndex));
+        ++unlootedCount;
+        remaining -= item.count;
+    }
+    uint32 const moved = requested - remaining;
+    if (moved)
+    {
+        auto& item = source.quest_items[index];
+        item.count -= moved;
+        if (!item.count)
+        {
+            item.is_looted = true;
+            for (auto& row : *source.PlayerQuestItems.at(player->GetGUID()))
+                if (row.index == index) row.is_looted = true;
+            if (source.unlootedCount) --source.unlootedCount;
+        }
+    }
+    return moved;
+}
+void Loot::ConsolidateQuestLootFor(Player* player)
+{
+    if (!player || player->GetGroup() || !PlayersLooting.empty()) return;
+    auto it = PlayerQuestItems.find(player->GetGUID());
+    if (it == PlayerQuestItems.end() || !it->second) return;
+    auto& rows = *it->second;
+    for (size_t i = 0; i < quest_items.size(); ++i)
+    {
+        if (!CanTransferQuestLootFor(player, i)) continue;
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(quest_items[i].itemid);
+        uint32 const limit = proto ? std::min<uint32>(proto->GetMaxStackSize(), 200) : 1;
+        for (size_t j = 0; j < i && quest_items[i].count; ++j)
+        {
+            if (!CanTransferQuestLootFor(player, j) || !SameQuestRow(quest_items[j], quest_items[i]) || quest_items[j].count >= limit) continue;
+            uint32 const amount = std::min<uint32>(quest_items[i].count, limit - quest_items[j].count);
+            quest_items[j].count += amount;
+            quest_items[i].count -= amount;
+        }
+        if (!quest_items[i].count)
+        {
+            quest_items[i].is_looted = true;
+            for (auto& row : rows) if (row.index == i) row.is_looted = true;
+            if (unlootedCount) --unlootedCount;
+        }
+    }
+    // No viewer has received slot numbers yet. Keep vector indices, compact the owner's visible rows.
+    std::erase_if(rows, [](auto const& row) { return row.is_looted; });
 }
 
 void Loot::FillNotNormalLootFor(Player* player, bool presentAtLooting)

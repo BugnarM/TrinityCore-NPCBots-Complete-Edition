@@ -2,6 +2,7 @@
 #define BOT_AI_H
 
 #include "botcommon.h"
+#include "bothealingpolicy.h"
 
 #include "CreatureAI.h"
 #include "Duration.h"
@@ -344,6 +345,12 @@ public:
     uint32 GetEngageTimer() const { return _engageTimer; }
     void ResetEngageTimer(uint32 delay);
 
+    bool CanEvaluateHealTarget(Unit const* target) const;
+    bool IsIdlePlayerHeal(Unit const* target) const;
+    bool ShouldTopOff(Unit const* target) const;
+    bool TryTopOffHeal(Unit* target, uint32 diff, std::initializer_list<uint32> spells);
+    uint8 GetTopOffThreshold() const;
+    bool TryHealCandidates(std::vector<Unit*> const& targets, uint32 diff);
     uint8 GetHealHpPctThreshold() const { return _healHpPctThreshold; }
     void SetHealHpPctThreshold(uint8 threshold) { _healHpPctThreshold = threshold; }
 
@@ -781,6 +788,12 @@ private:
     uint8 _unreachableCount{};
     uint8 _jumpCount{};
     uint8 _evadeCount{};
+    NPCBots::Healing::DecisionMetrics _healingMetrics;
+    uint32 _healScanTimer{};
+    std::map<ObjectGuid, uint32> _healRetryTimers;
+    std::vector<std::pair<ObjectGuid, std::pair<unsigned, int>>> _healCandidates;
+    uint64 _healDecisions{}, _healCandidatesSeen{}, _healCastFailures{}, _healEmergencyInterrupts{}, _healUnneededInterrupts{};
+    uint32 _healDiagnosticsTimer{60000};
     uint8 _healHpPctThreshold{95u};
     uint32 _roleMask{};
     uint32 _usableItemSlotsMask{};

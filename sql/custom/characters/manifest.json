@@ -1,0 +1,14 @@
+[
+  {
+    "file": "2026_11_16_01_companion_stone_cooldown.sql",
+    "sha256": "bdc8528e6b83067fc053a64a2ca99fee2f8f93a86d99cf258938888b34e1f51a",
+    "after": []
+  },
+  {
+    "file": "2026_11_17_00_characters.sql",
+    "sha256": "fde6e27d15752d0992b81aa13e504b6017b07574c085264238ee466d27475416",
+    "after": [
+      "2026_11_16_01_companion_stone_cooldown.sql"
+    ]
+  }
+]
