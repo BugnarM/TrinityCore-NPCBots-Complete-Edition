@@ -235,6 +235,29 @@ void DynamicZoneMgr::Update(uint32 diff)
     auto start = std::upper_bound(candidates.begin(), candidates.end(), _lastSpawnZone,
         [](uint64 key, ZoneNodes const& zone) { return key < zone.key; });
     std::rotate(candidates.begin(), start, candidates.end());
+
+    // Track global Alliance and Horde population across all populated zones
+    uint32 globalAllianceCount = 0;
+    uint32 globalHordeCount = 0;
+    for (auto const& [_, pop] : _populatedZones)
+    {
+        for (uint32 id : pop.activeBots)
+        {
+            if (Creature const* bot = BotDataMgr::FindBot(id))
+            {
+                uint32 team = BotDataMgr::GetTeamForFaction(bot->GetFaction());
+                if (team == ALLIANCE)
+                    ++globalAllianceCount;
+                else if (team == HORDE)
+                    ++globalHordeCount;
+            }
+        }
+    }
+
+    uint32 const maxGlobalBots = BotCfg::GetDynamicZoneMaxBots();
+    uint32 const maxGlobalAlliance = (maxGlobalBots + 1) / 2;
+    uint32 const maxGlobalHorde = (maxGlobalBots + 1) / 2;
+
     for (auto& entry : candidates)
     {
         if (!budget) break;
@@ -242,7 +265,7 @@ void DynamicZoneMgr::Update(uint32 diff)
         if (pop.activeBots.size() >= pop.target) continue;
         _lastSpawnZone = entry.key;
         Bcore::Containers::RandomShuffle(entry.nodes);
-        // Spawn up to budget across candidate nodes in this zone with 50/50 Alliance/Horde balance
+        // Spawn up to budget across candidate nodes in this zone with strict 50/50 Alliance/Horde balance
         size_t nodeIdx = 0;
         size_t const numNodes = entry.nodes.size();
         uint32 consecutiveFailures = 0;
@@ -261,12 +284,29 @@ void DynamicZoneMgr::Update(uint32 diff)
             }
         }
 
+        uint32 const maxZoneAlliance = (pop.target + 1) / 2;
+        uint32 const maxZoneHorde = (pop.target + 1) / 2;
+
         while (budget > 0 && pop.activeBots.size() < pop.target && numNodes > 0)
         {
+            bool const canAlliance = (globalAllianceCount < maxGlobalAlliance) && (allianceCount < maxZoneAlliance);
+            bool const canHorde = (globalHordeCount < maxGlobalHorde) && (hordeCount < maxZoneHorde);
+
+            if (!canAlliance && !canHorde)
+                break;
+
             int32 preferredTeam = -1;
-            if (allianceCount < hordeCount)
+            if (canAlliance && !canHorde)
+                preferredTeam = ALLIANCE;
+            else if (!canAlliance && canHorde)
+                preferredTeam = HORDE;
+            else if (allianceCount < hordeCount)
                 preferredTeam = ALLIANCE;
             else if (hordeCount < allianceCount)
+                preferredTeam = HORDE;
+            else if (globalAllianceCount < globalHordeCount)
+                preferredTeam = ALLIANCE;
+            else if (globalHordeCount < globalAllianceCount)
                 preferredTeam = HORDE;
             else
                 preferredTeam = urand(0, 1) ? ALLIANCE : HORDE;
@@ -281,9 +321,15 @@ void DynamicZoneMgr::Update(uint32 diff)
                 {
                     uint32 team = BotDataMgr::GetTeamForFaction(newBot->GetFaction());
                     if (team == ALLIANCE)
+                    {
                         ++allianceCount;
+                        ++globalAllianceCount;
+                    }
                     else if (team == HORDE)
+                    {
                         ++hordeCount;
+                        ++globalHordeCount;
+                    }
                 }
                 consecutiveFailures = 0;
             }

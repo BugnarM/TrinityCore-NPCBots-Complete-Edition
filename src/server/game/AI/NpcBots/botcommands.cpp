@@ -746,8 +746,18 @@ public:
 
         for (auto const& pop : activeZones)
         {
-            handler->PSendSysMessage("- Zone %u %s (Map %u): %zu/%u bots, %zu Dark Knights, %u players [Level %u-%u]",
-                pop.zoneId, pop.zoneName.c_str(), pop.mapId, pop.activeBots.size(), pop.target, pop.darkKnights.size(), pop.players, pop.minLevel, pop.maxLevel);
+            uint32 aCount = 0, hCount = 0;
+            for (uint32 id : pop.activeBots)
+            {
+                if (Creature const* b = BotDataMgr::FindBot(id))
+                {
+                    uint32 team = BotDataMgr::GetTeamForFaction(b->GetFaction());
+                    if (team == ALLIANCE) ++aCount;
+                    else if (team == HORDE) ++hCount;
+                }
+            }
+            handler->PSendSysMessage("- Zone %u %s (Map %u): %zu/%u bots (Aly: %u, Horde: %u), %zu Dark Knights, %u players [Level %u-%u]",
+                pop.zoneId, pop.zoneName.c_str(), pop.mapId, pop.activeBots.size(), pop.target, aCount, hCount, pop.darkKnights.size(), pop.players, pop.minLevel, pop.maxLevel);
         }
         return true;
     }

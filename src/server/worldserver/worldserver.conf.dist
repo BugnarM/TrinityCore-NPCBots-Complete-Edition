@@ -4994,8 +4994,8 @@ NpcBot.WanderingBots.DynamicZone.Enable = 1
 #
 #    NpcBot.WanderingBots.DynamicZone.BotsPerZone
 #        Description: Target per occupied zone, shared evenly if MaxBots is exceeded. Range: 0-100.
-#        Default:     8
-NpcBot.WanderingBots.DynamicZone.BotsPerZone = 8
+#        Default:     100
+NpcBot.WanderingBots.DynamicZone.BotsPerZone = 100
 
 #
 #    NpcBot.WanderingBots.DynamicZone.UpdateInterval
@@ -5005,12 +5005,12 @@ NpcBot.WanderingBots.DynamicZone.UpdateInterval = 15
 
 #    NpcBot.WanderingBots.DynamicZone.MaxBots
 #        Description: Global dynamic population target limit (0-1000), excluding manual/BG/instance bots.
-NpcBot.WanderingBots.DynamicZone.MaxBots = 200
+NpcBot.WanderingBots.DynamicZone.MaxBots = 100
 
 #    NpcBot.WanderingBots.DynamicZone.SpawnBudget
 #        Description: Maximum spawn attempts per scan (1-32). Zones are served in rotation.
 #                     Equipment and grid loading are spread over successive scans.
-NpcBot.WanderingBots.DynamicZone.SpawnBudget = 8
+NpcBot.WanderingBots.DynamicZone.SpawnBudget = 25
 
 
 #

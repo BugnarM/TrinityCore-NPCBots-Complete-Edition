@@ -1030,9 +1030,9 @@ public:
                         teamEligible.push_back(item);
                 }
             }
-            if (teamEligible.empty() && battlefieldFaction) return 0; // Never put an opposing race into the army.
-            if (!teamEligible.empty())
-                eligible = std::move(teamEligible);
+            if (teamEligible.empty())
+                return 0; // If a specific team was requested, never spawn the opposing faction.
+            eligible = std::move(teamEligible);
         }
 
         auto const [bot_class, orig_entry] = Bcore::Containers::SelectRandomContainerElement(eligible);
