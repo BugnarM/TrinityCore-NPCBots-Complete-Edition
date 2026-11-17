@@ -23,6 +23,8 @@
 #include "SpellHistory.h"
 #include "SpellPackets.h"
 #include <cmath>
+#include <vector>
+#include <unordered_map>
 
 enum DarkKnightSpells
 {
@@ -687,17 +689,311 @@ public:
     }
 };
 
+static void GrantClassHeirlooms(Player* player, bool announce = true)
+{
+    if (!player)
+        return;
+
+    // 1. Equip 4x 22-slot Glacial Bags (entry 41600) into empty bag slots so the player has plenty of inventory
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    {
+        if (!player->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot))
+        {
+            uint16 dest;
+            if (player->CanEquipNewItem(bagSlot, dest, 41600, false) == EQUIP_ERR_OK)
+            {
+                Item* bagItem = player->EquipNewItem(dest, 41600, true);
+                if (bagItem)
+                    player->SendNewItem(bagItem, 1, true, false);
+            }
+        }
+    }
+
+    // 2. Ensure weapon proficiencies for the player's class
+    std::vector<uint32> weaponSpells;
+    switch (player->GetClass())
+    {
+        case CLASS_WARRIOR:
+            weaponSpells = { 196, 197, 198, 199, 201, 202, 227, 264, 266, 1180, 5011, 200, 15590 };
+            break;
+        case CLASS_PALADIN:
+            weaponSpells = { 196, 197, 198, 199, 201, 202, 200 };
+            break;
+        case CLASS_HUNTER:
+            weaponSpells = { 196, 197, 201, 202, 227, 264, 266, 1180, 5011, 200, 15590 };
+            break;
+        case CLASS_ROGUE:
+            weaponSpells = { 197, 199, 202, 264, 266, 1180, 5011, 15590 };
+            break;
+        case CLASS_PRIEST:
+            weaponSpells = { 199, 227, 1180, 5009 };
+            break;
+        case CLASS_DEATH_KNIGHT:
+            weaponSpells = { 196, 197, 198, 199, 201, 202, 200 };
+            break;
+        case CLASS_SHAMAN:
+            weaponSpells = { 196, 197, 198, 199, 227, 1180, 15590 };
+            break;
+        case CLASS_MAGE:
+            weaponSpells = { 202, 227, 1180, 5009 };
+            break;
+        case CLASS_WARLOCK:
+            weaponSpells = { 202, 227, 1180, 5009 };
+            break;
+        case CLASS_DRUID:
+            weaponSpells = { 198, 199, 227, 1180, 15590 };
+            break;
+        default:
+            break;
+    }
+
+    for (uint32 spellId : weaponSpells)
+    {
+        if (!player->HasSpell(spellId))
+            player->LearnSpell(spellId, false);
+    }
+
+    // 3. Collect matching heirlooms
+    std::vector<uint32> heirloomItems;
+
+    // Rings (Dread Pirate Ring x2: +5% XP each)
+    heirloomItems.push_back(50255);
+    heirloomItems.push_back(50255);
+
+    // Faction PvP Insignia
+    uint32 insignia = (player->GetTeamId() == TEAM_ALLIANCE) ? 44098 : 44097;
+    heirloomItems.push_back(insignia);
+
+    // Class specific heirlooms
+    switch (player->GetClass())
+    {
+        case CLASS_WARRIOR:
+            // Shoulders & Chest (+10% XP each)
+            heirloomItems.push_back(42949); // Polished Spaulders of Valor (Plate DPS)
+            heirloomItems.push_back(44099); // Strengthened Stockade Pauldrons (Plate Tank)
+            heirloomItems.push_back(48685); // Polished Breastplate of Valor (Plate Chest)
+            // Trinkets
+            heirloomItems.push_back(42991); // Swift Hand of Justice x2
+            heirloomItems.push_back(42991);
+            // Weapons
+            heirloomItems.push_back(42943); // Bloodied Arcanite Reaper (2H Axe)
+            heirloomItems.push_back(44092); // Reforged Truesilver Champion (2H Sword)
+            heirloomItems.push_back(42945); // Venerable Dal'Rend's Sacred Charge (1H Sword MH)
+            heirloomItems.push_back(44096); // Battleworn Thrash Blade (1H Sword OH)
+            heirloomItems.push_back(42946); // Charmed Ancient Bone Bow (Ranged)
+            break;
+
+        case CLASS_PALADIN:
+            // Shoulders & Chest
+            heirloomItems.push_back(42949); // Polished Spaulders of Valor (DPS/Prot)
+            heirloomItems.push_back(44100); // Pristine Lightforge Spaulders (Holy)
+            heirloomItems.push_back(48685); // Polished Breastplate of Valor
+            // Trinkets
+            heirloomItems.push_back(42991); // Swift Hand of Justice (Melee)
+            heirloomItems.push_back(42992); // Discerning Eye of the Beast (Holy)
+            // Weapons
+            heirloomItems.push_back(42943); // Bloodied Arcanite Reaper (2H Axe)
+            heirloomItems.push_back(44092); // Reforged Truesilver Champion (2H Sword)
+            heirloomItems.push_back(42948); // Devout Aurastone Hammer (1H Caster Mace)
+            heirloomItems.push_back(44096); // Battleworn Thrash Blade (1H Sword)
+            break;
+
+        case CLASS_HUNTER:
+            // Shoulders & Chest
+            heirloomItems.push_back(42950); // Champion Herod's Shoulder
+            heirloomItems.push_back(48677); // Champion's Deathdealer Breastplate
+            // Trinkets
+            heirloomItems.push_back(42991); // Swift Hand of Justice x2
+            heirloomItems.push_back(42991);
+            // Weapons
+            heirloomItems.push_back(42946); // Charmed Ancient Bone Bow
+            heirloomItems.push_back(44093); // Upgraded Dwarven Hand Cannon (Gun)
+            heirloomItems.push_back(42944); // Balanced Heartseeker (Dagger)
+            heirloomItems.push_back(42945); // Venerable Dal'Rend's Sacred Charge (1H Sword)
+            heirloomItems.push_back(42943); // Bloodied Arcanite Reaper (2H Stat stick)
+            break;
+
+        case CLASS_ROGUE:
+            // Shoulders & Chest
+            heirloomItems.push_back(42952); // Stained Shadowcraft Spaulders
+            heirloomItems.push_back(48689); // Stained Shadowcraft Tunic
+            // Trinkets
+            heirloomItems.push_back(42991); // Swift Hand of Justice x2
+            heirloomItems.push_back(42991);
+            // Weapons
+            heirloomItems.push_back(42944); // Balanced Heartseeker (Dagger MH)
+            heirloomItems.push_back(42944); // Balanced Heartseeker (Dagger OH)
+            heirloomItems.push_back(44096); // Battleworn Thrash Blade (1H Sword)
+            heirloomItems.push_back(42945); // Venerable Dal'Rend's Sacred Charge (1H Sword)
+            heirloomItems.push_back(48716); // Venerable Mass of McGowan (1H Mace)
+            heirloomItems.push_back(42946); // Charmed Ancient Bone Bow
+            break;
+
+        case CLASS_PRIEST:
+            // Shoulders & Chest
+            heirloomItems.push_back(42985); // Tattered Dreadmist Mantle
+            heirloomItems.push_back(48691); // Tattered Dreadmist Robe
+            // Trinkets
+            heirloomItems.push_back(42992); // Discerning Eye of the Beast x2
+            heirloomItems.push_back(42992);
+            // Weapons
+            heirloomItems.push_back(42947); // Dignified Headmaster's Charge (Staff)
+            heirloomItems.push_back(42948); // Devout Aurastone Hammer (1H Caster Mace)
+            heirloomItems.push_back(42944); // Balanced Heartseeker (Dagger)
+            break;
+
+        case CLASS_DEATH_KNIGHT:
+            // Shoulders & Chest
+            heirloomItems.push_back(42949); // Polished Spaulders of Valor
+            heirloomItems.push_back(44099); // Strengthened Stockade Pauldrons (Tank)
+            heirloomItems.push_back(48685); // Polished Breastplate of Valor
+            // Trinkets
+            heirloomItems.push_back(42991); // Swift Hand of Justice x2
+            heirloomItems.push_back(42991);
+            // Weapons
+            heirloomItems.push_back(42943); // Bloodied Arcanite Reaper (2H Axe)
+            heirloomItems.push_back(44092); // Reforged Truesilver Champion (2H Sword)
+            heirloomItems.push_back(42945); // Venerable Dal'Rend's Sacred Charge (1H Sword MH)
+            heirloomItems.push_back(44096); // Battleworn Thrash Blade (1H Sword OH)
+            break;
+
+        case CLASS_SHAMAN:
+            // Shoulders & Chest
+            heirloomItems.push_back(42950); // Champion Herod's Shoulder (Enhancement)
+            heirloomItems.push_back(42951); // Mystical Pauldrons of Elements (Ele/Resto)
+            heirloomItems.push_back(48677); // Champion's Deathdealer Breastplate (Enhancement)
+            heirloomItems.push_back(48683); // Mystical Vest of Elements (Ele/Resto)
+            // Trinkets
+            heirloomItems.push_back(42991); // Swift Hand of Justice (Enhancement)
+            heirloomItems.push_back(42992); // Discerning Eye of the Beast (Ele/Resto)
+            // Weapons
+            heirloomItems.push_back(48716); // Venerable Mass of McGowan (1H Mace MH)
+            heirloomItems.push_back(48716); // Venerable Mass of McGowan (1H Mace OH)
+            heirloomItems.push_back(42948); // Devout Aurastone Hammer (1H Caster Mace)
+            heirloomItems.push_back(48718); // Repurposed Lava Dredger (2H Mace)
+            heirloomItems.push_back(42947); // Dignified Headmaster's Charge (Staff)
+            break;
+
+        case CLASS_MAGE:
+            // Shoulders & Chest
+            heirloomItems.push_back(42985); // Tattered Dreadmist Mantle
+            heirloomItems.push_back(48691); // Tattered Dreadmist Robe
+            // Trinkets
+            heirloomItems.push_back(42992); // Discerning Eye of the Beast x2
+            heirloomItems.push_back(42992);
+            // Weapons
+            heirloomItems.push_back(42947); // Dignified Headmaster's Charge (Staff)
+            heirloomItems.push_back(44095); // Grand Staff of Jordan (PvP Staff)
+            heirloomItems.push_back(42944); // Balanced Heartseeker (Dagger)
+            heirloomItems.push_back(44096); // Battleworn Thrash Blade (1H Sword)
+            break;
+
+        case CLASS_WARLOCK:
+            // Shoulders & Chest
+            heirloomItems.push_back(42985); // Tattered Dreadmist Mantle
+            heirloomItems.push_back(48691); // Tattered Dreadmist Robe
+            // Trinkets
+            heirloomItems.push_back(42992); // Discerning Eye of the Beast x2
+            heirloomItems.push_back(42992);
+            // Weapons
+            heirloomItems.push_back(42947); // Dignified Headmaster's Charge (Staff)
+            heirloomItems.push_back(44095); // Grand Staff of Jordan (PvP Staff)
+            heirloomItems.push_back(42944); // Balanced Heartseeker (Dagger)
+            heirloomItems.push_back(44096); // Battleworn Thrash Blade (1H Sword)
+            break;
+
+        case CLASS_DRUID:
+            // Shoulders & Chest
+            heirloomItems.push_back(42952); // Stained Shadowcraft Spaulders (Feral)
+            heirloomItems.push_back(42984); // Preened Ironfeather Shoulders (Balance/Resto)
+            heirloomItems.push_back(48689); // Stained Shadowcraft Tunic (Feral)
+            heirloomItems.push_back(48687); // Preened Ironfeather Breastplate (Balance/Resto)
+            // Trinkets
+            heirloomItems.push_back(42991); // Swift Hand of Justice (Feral)
+            heirloomItems.push_back(42992); // Discerning Eye of the Beast (Balance/Resto)
+            // Weapons
+            heirloomItems.push_back(48718); // Repurposed Lava Dredger (2H Mace)
+            heirloomItems.push_back(42947); // Dignified Headmaster's Charge (Staff)
+            heirloomItems.push_back(48716); // Venerable Mass of McGowan (1H Mace)
+            heirloomItems.push_back(42948); // Devout Aurastone Hammer (1H Caster Mace)
+            break;
+
+        default:
+            break;
+    }
+
+    // Tome of Cold Weather Flight for when they reach 68
+    heirloomItems.push_back(49177);
+
+    // 4. Distribute items
+    uint32 grantedCount = 0;
+    std::unordered_map<uint32, uint32> countsAdded;
+
+    for (uint32 itemId : heirloomItems)
+    {
+        countsAdded[itemId]++;
+        uint32 currentCount = player->GetItemCount(itemId, true);
+        if (currentCount >= countsAdded[itemId])
+            continue; // Player already has enough of this item
+
+        // Try equip into empty equipment slot first
+        uint16 eDest;
+        if (player->CanEquipNewItem(NULL_SLOT, eDest, itemId, false) == EQUIP_ERR_OK)
+        {
+            Item* equipped = player->EquipNewItem(eDest, itemId, true);
+            if (equipped)
+            {
+                player->AutoUnequipOffhandIfNeed();
+                player->SendNewItem(equipped, 1, true, false);
+                grantedCount++;
+                continue;
+            }
+        }
+
+        // Otherwise store in bags (NULL_BAG scans all equipped bags)
+        ItemPosCountVec sDest;
+        if (player->CanStoreNewItem(NULL_BAG, NULL_SLOT, sDest, itemId, 1) == EQUIP_ERR_OK)
+        {
+            Item* item = player->StoreNewItem(sDest, itemId, true);
+            if (item)
+            {
+                player->SendNewItem(item, 1, true, false);
+                grantedCount++;
+            }
+        }
+    }
+
+    if (announce && grantedCount > 0)
+    {
+        ChatHandler(player->GetSession()).SendSysMessage("|cffe6cc80[Heirlooms]|r Ai primit setul complet de echipament mostenire (Heirlooms) pentru clasa ta!");
+        ChatHandler(player->GetSession()).SendSysMessage("|cffe6cc80[Heirlooms]|r Bonus de experienta (+XP), arme, inele si talismane echipate/adaugate in inventar.");
+    }
+}
+
 class companion_playerscript : public PlayerScript
 {
 public:
-    companion_playerscript() : PlayerScript("companion_playerscript") { }
+    companion_playerscript() : PlayerScript("companion_playerscript")
+    {
+        CharacterDatabase.DirectExecute("CREATE TABLE IF NOT EXISTS character_heirlooms_received (guid INT UNSIGNED NOT NULL PRIMARY KEY);");
+    }
 
-    void OnLogin(Player* player, bool /*firstLogin*/) override
+    void OnLogin(Player* player, bool firstLogin) override
     {
         if (!player)
             return;
 
-        // 1. Give Companion Hearthstone to existing characters if missing
+        uint32 const guidLow = player->GetGUID().GetCounter();
+
+        // 1. Give Heirlooms on firstLogin OR if character has not received them yet
+        QueryResult hResult = CharacterDatabase.Query(Trinity::StringFormat("SELECT 1 FROM character_heirlooms_received WHERE guid = {}", guidLow).c_str());
+        if (firstLogin || !hResult)
+        {
+            GrantClassHeirlooms(player, true);
+            CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_heirlooms_received (guid) VALUES ({})", guidLow).c_str());
+        }
+
+        // 2. Give Companion Hearthstone to existing characters if missing
         if (!player->HasItemCount(ITEM_COMPANION_STONE, 1))
         {
             ItemPosCountVec dest;
@@ -710,8 +1006,7 @@ public:
             }
         }
 
-        // 2. Synchronize active cooldown upon login
-        uint32 const guidLow = player->GetGUID().GetCounter();
+        // 3. Synchronize active cooldown upon login
         QueryResult cResult = CharacterDatabase.Query(Trinity::StringFormat("SELECT first_use_done, last_use_time FROM character_companion_stone WHERE guid = {}", guidLow).c_str());
         if (cResult)
         {
@@ -751,9 +1046,37 @@ public:
     {
         static ChatCommandTable commandTable =
         {
-            { "companion", HandleCompanionCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No }
+            { "companion", HandleCompanionCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No },
+            { "heirlooms", HandleHeirloomsCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No },
+            { "heirloom",  HandleHeirloomsCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No }
         };
         return commandTable;
+    }
+
+    static bool HandleHeirloomsCommand(ChatHandler* handler, Optional<PlayerIdentifier> playerTarget)
+    {
+        if (!playerTarget)
+            playerTarget = PlayerIdentifier::FromTargetOrSelf(handler);
+
+        if (!playerTarget)
+        {
+            handler->SendSysMessage("Player not found.");
+            return false;
+        }
+
+        Player* player = playerTarget->GetConnectedPlayer();
+        if (!player)
+        {
+            handler->SendSysMessage("Player not found.");
+            return false;
+        }
+
+        GrantClassHeirlooms(player, true);
+        CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_heirlooms_received (guid) VALUES ({})", player->GetGUID().GetCounter()).c_str());
+
+        if (handler->GetSession() && player != handler->GetSession()->GetPlayer())
+            handler->PSendSysMessage("Granted heirlooms to %s.", player->GetName().c_str());
+        return true;
     }
 
     static bool HandleCompanionCommand(ChatHandler* handler, Optional<std::string_view> classArg)
@@ -767,6 +1090,13 @@ public:
         {
             std::string cArg(classArg->data(), classArg->size());
             std::transform(cArg.begin(), cArg.end(), cArg.begin(), [](unsigned char c) { return std::tolower(c); });
+
+            if (cArg == "heirlooms" || cArg == "heirloom")
+            {
+                GrantClassHeirlooms(player, true);
+                CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_heirlooms_received (guid) VALUES ({})", player->GetGUID().GetCounter()).c_str());
+                return true;
+            }
 
             if (cArg == "dk" || cArg == "deathknight" || cArg == "death_knight" || cArg == "darkknight" || cArg == "dark_knight")
                 requestedClass = BOT_CLASS_DEATH_KNIGHT;

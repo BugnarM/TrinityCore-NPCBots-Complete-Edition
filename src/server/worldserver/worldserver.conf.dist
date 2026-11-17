@@ -5119,11 +5119,11 @@ AOELoot.Enable = 1
 #        Description: Maximum distance in yards from the target corpse to gather AoE loot.
 #        Default:     40.0
 
-AOELoot.Range = 40.0
+AOELoot.Range = 120.0
 
 #
 #    AOELoot.MaxCorpses
 #        Description: Maximum number of corpses processed in a single AoE loot action.
 #        Default:     30
 
-AOELoot.MaxCorpses = 30
+AOELoot.MaxCorpses = 60

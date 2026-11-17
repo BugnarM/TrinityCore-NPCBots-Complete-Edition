@@ -1624,7 +1624,8 @@ void BotDataMgr::LoadNpcBotGroupData()
         if (Group* group = sGroupMgr->GetGroupByDbStoreId(fields[0].GetUInt32()))
         {
             group->LoadCreatureMemberFromDB(creature_id, fields[2].GetUInt8(), subgroup, fields[4].GetUInt8());
-            const_cast<Creature*>(ASSERT_NOTNULL(BotDataMgr::FindBot(creature_id)))->SetBotGroup(group, subgroup);
+            if (Creature* bot = const_cast<Creature*>(BotDataMgr::FindBot(creature_id)))
+                bot->SetBotGroup(group, subgroup);
         }
         else
             BOT_LOG_ERROR("misc", "BotDataMgr::LoadNpcBotGroupData: Consistency failed, can't find group (storage id: {})", fields[0].GetUInt32());

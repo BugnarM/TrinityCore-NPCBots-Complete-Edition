@@ -506,11 +506,11 @@ namespace
         if (HasPendingRoll(mainCreature->loot))
             return;
 
-        float range = sConfigMgr->GetFloatDefault("AOELoot.Range", 40.0f);
+        float range = sConfigMgr->GetFloatDefault("AOELoot.Range", 120.0f);
         if (range < 5.0f) range = 5.0f;
-        if (range > 100.0f) range = 100.0f;
+        if (range > 300.0f) range = 300.0f;
 
-        uint32 maxCorpses = sConfigMgr->GetIntDefault("AOELoot.MaxCorpses", 30);
+        uint32 maxCorpses = sConfigMgr->GetIntDefault("AOELoot.MaxCorpses", 60);
         if (maxCorpses < 1) maxCorpses = 1;
 
         std::list<Creature*> nearbyCorpses;

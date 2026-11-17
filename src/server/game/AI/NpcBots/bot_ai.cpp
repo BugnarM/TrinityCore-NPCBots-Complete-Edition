@@ -19392,8 +19392,8 @@ void bot_ai::Evade()
             me->GetPositionZ() <= INVALID_HEIGHT || (me->GetExactDist2d(pos) < 20.0f && me->GetExactDist(pos) > 100.0f))
         {
             BOT_LOG_DEBUG("npcbots", "Bot {} id {} class {} level {} map {} TELEPORTING to node {} ('{}') map {}, {}, dist {} yd!",
-                me->GetName(), me->GetEntry(), uint32(_botclass), uint32(me->GetLevel()), me->GetMapId(), _travel_node_cur->GetWPId(),
-                _travel_node_cur->GetName(), uint32(mapid), pos.ToString(), me->GetExactDist(pos));
+                me->GetName(), me->GetEntry(), uint32(_botclass), uint32(me->GetLevel()), me->GetMapId(), _travel_node_cur ? _travel_node_cur->GetWPId() : 0,
+                _travel_node_cur ? _travel_node_cur->GetName() : "", uint32(mapid), pos.ToString(), me->GetExactDist(pos));
 
             evadeDelayTimer = 12000;
             me->CastSpell(me, WANDERER_HEARTHSTONE);
@@ -19813,16 +19813,20 @@ void bot_ai::AbortTeleport()
 
 void bot_ai::GetHomePosition(uint16& mapid, Position* pos) const
 {
-    if (IsWanderer())
+    if (IsWanderer() && _travel_node_cur)
     {
         mapid = _travel_node_cur->GetMapId();
         pos->Relocate(homepos);
     }
-    else
+    else if (CreatureData const* data = me->GetCreatureData())
     {
-        CreatureData const* data = me->GetCreatureData();
         mapid = data->mapId;
         pos->Relocate(data->spawnPoint);
+    }
+    else
+    {
+        mapid = me->GetMapId();
+        pos->Relocate(me->GetHomePosition());
     }
 }
 

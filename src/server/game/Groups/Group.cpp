@@ -2121,6 +2121,23 @@ void Group::OfflineReadyCheck()
 {
     for (member_citerator citr = m_memberSlots.begin(); citr != m_memberSlots.end(); ++citr)
     {
+        //npcbot: check bot readiness in raid group
+        if (citr->guid.IsCreature())
+        {
+            uint8 readyState = 1;
+            if (Creature const* cbot = BotDataMgr::FindBot(citr->guid.GetEntry()))
+            {
+                if (!cbot->IsInWorld() || !cbot->IsAlive())
+                    readyState = 0;
+            }
+            WorldPacket data(MSG_RAID_READY_CHECK_CONFIRM, 9);
+            data << citr->guid;
+            data << uint8(readyState);
+            BroadcastReadyCheck(&data);
+            continue;
+        }
+        //end npcbot
+
         Player* player = ObjectAccessor::FindConnectedPlayer(citr->guid);
         if (!player || !player->GetSession())
         {
