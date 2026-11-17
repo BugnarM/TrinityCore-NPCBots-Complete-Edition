@@ -342,11 +342,28 @@ void DynamicZoneMgr::Update(uint32 diff)
         }
     }
 
-    // Spawn Dark Knight Nemesis bosses (2 per active zone)
-    bool const enableDarkKnights = sConfigMgr->GetBoolDefault("NpcBot.DarkKnight.Enable", true);
-    uint32 const darkKnightsPerZone = sConfigMgr->GetIntDefault("NpcBot.DarkKnight.CountPerZone", 1);
+    // Spawn Dark Knight Nemesis bosses
+    bool const enableDarkKnights = sConfigMgr->GetBoolDefault("NpcBot.DarkKnight.Enable", false);
+    uint32 const darkKnightsPerZone = enableDarkKnights ? sConfigMgr->GetIntDefault("NpcBot.DarkKnight.CountPerZone", 1) : 0;
 
-    if (enableDarkKnights && darkKnightsPerZone > 0)
+    if (!enableDarkKnights || darkKnightsPerZone == 0)
+    {
+        for (auto& [key, pop] : _populatedZones)
+        {
+            if (!pop.darkKnights.empty())
+            {
+                Map* map = sMapMgr->FindBaseNonInstanceMap(pop.mapId);
+                for (ObjectGuid guid : pop.darkKnights)
+                {
+                    if (map)
+                        if (Creature* dk = map->GetCreature(guid))
+                            dk->DespawnOrUnsummon();
+                }
+                pop.darkKnights.clear();
+            }
+        }
+    }
+    else
     {
         for (auto const& [key, playersList] : active)
         {

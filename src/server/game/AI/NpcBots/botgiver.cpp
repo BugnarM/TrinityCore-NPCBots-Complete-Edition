@@ -90,21 +90,25 @@ public:
                 case HIRE:
                 {
                     gossipTextId = GOSSIP_BOTGIVER_HIRE;
+                    bool const isGM = player->GetSession() && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER;
 
-                    if (player->GetNpcBotsCount() >= BotCfg::GetMaxNpcBots(player))
+                    if (!isGM && player->GetNpcBotsCount() >= BotCfg::GetMaxNpcBots(player))
                     {
                         WhisperTo(player, bot_ai::LocalizedNpcText(player, BOT_TEXT_BOTGIVER_TOO_MANY_BOTS).c_str());
                         break;
                     }
 
-                    if (uint32 maxBotsPerAccount = BotCfg::GetMaxAccountBots())
+                    if (!isGM)
                     {
-                        uint32 accountBotsCount = BotDataMgr::GetAccountBotsCount(player->GetSession()->GetAccountId());
-                        if (accountBotsCount >= maxBotsPerAccount)
+                        if (uint32 maxBotsPerAccount = BotCfg::GetMaxAccountBots())
                         {
-                            ChatHandler ch(player->GetSession());
-                            ch.PSendSysMessage(bot_ai::LocalizedNpcText(player, BOT_TEXT_HIREFAIL_MAXBOTS_ACCOUNT).c_str(), accountBotsCount, maxBotsPerAccount);
-                            break;
+                            uint32 accountBotsCount = BotDataMgr::GetAccountBotsCount(player->GetSession()->GetAccountId());
+                            if (accountBotsCount >= maxBotsPerAccount)
+                            {
+                                ChatHandler ch(player->GetSession());
+                                ch.PSendSysMessage(bot_ai::LocalizedNpcText(player, BOT_TEXT_HIREFAIL_MAXBOTS_ACCOUNT).c_str(), accountBotsCount, maxBotsPerAccount);
+                                break;
+                            }
                         }
                     }
 

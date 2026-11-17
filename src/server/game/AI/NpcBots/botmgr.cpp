@@ -905,33 +905,21 @@ BotAddResult BotMgr::AddBot(Creature* bot)
     std::size_t activePersonalBots = std::ranges::count_if(_bots, [](BotMap::value_type const& entry) {
         return !entry.second->IsSummon() && !entry.second->IsTempBot();
     });
-    if ((!owned && owned_count >= personalLimit) ||
-        !NPCBots::Limits::CanAttach(personalLimit, activePersonalBots, bot->IsSummon() || bot->IsTempBot(),
-            _owner->GetSession()->GetSecurity() >= SEC_GAMEMASTER))
+    bool const isGM = _owner->GetSession()->GetSecurity() >= SEC_GAMEMASTER;
+    if ((!owned && !isGM && owned_count >= personalLimit) ||
+        !NPCBots::Limits::CanAttach(personalLimit, activePersonalBots, bot->IsSummon() || bot->IsTempBot(), isGM))
     {
         ChatHandler ch(_owner->GetSession());
         ch.PSendSysMessage(bot_ai::LocalizedNpcText(GetOwner(), BOT_TEXT_HIREFAIL_MAXBOTS).c_str(), personalLimit);
         return BOT_ADD_MAX_EXCEED;
     }
-    if (!owned && BotCfg::GetMaxClassBots() && class_count >= BotCfg::GetMaxClassBots())
+    if (!owned && !isGM && BotCfg::GetMaxClassBots() && class_count >= BotCfg::GetMaxClassBots())
     {
         ChatHandler ch(_owner->GetSession());
         ch.PSendSysMessage(bot_ai::LocalizedNpcText(GetOwner(), BOT_TEXT_HIREFAIL_MAXCLASSBOTS).c_str(), class_count, BotCfg::GetMaxClassBots());
         return BOT_ADD_MAX_CLASS_EXCEED;
     }
-    //Map* curMap = _owner->GetMap();
-    //if (!temporary && LimitBots(curMap))
-    //{
-    //    InstanceMap* map = curMap->ToInstanceMap();
-    //    uint32 count = map->GetPlayersCountExceptGMs();
-    //    if (count >= map->GetMaxPlayers())
-    //    {
-    //        ChatHandler ch(_owner->GetSession());
-    //        ch.PSendSysMessage("Instance players limit exceed (%u of %u)", count, map->GetMaxPlayers());
-    //        return BOT_ADD_INSTANCE_LIMIT;
-    //    }
-    //}
-    if (!owned)
+    if (!owned && !isGM)
     {
         uint32 cost = BotCfg::GetNpcBotCostHire(_owner->GetLevel(), bot->GetBotClass());
         if (!_owner->HasEnoughMoney(cost))

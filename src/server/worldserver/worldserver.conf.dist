@@ -5012,6 +5012,28 @@ NpcBot.WanderingBots.DynamicZone.MaxBots = 100
 #                     Equipment and grid loading are spread over successive scans.
 NpcBot.WanderingBots.DynamicZone.SpawnBudget = 25
 
+#
+#    NpcBot.DarkKnight.Enable
+#        Description: Enable or disable Dark Knight Nemesis open-world boss roaming in populated zones.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+NpcBot.DarkKnight.Enable = 0
+
+#
+#    NpcBot.DarkKnight.CountPerZone
+#        Description: Number of Dark Knight Nemesis bosses per active occupied zone.
+#        Default:     1
+
+NpcBot.DarkKnight.CountPerZone = 1
+
+#
+#    NpcBot.DarkKnight.RespawnTime
+#        Description: Respawn time in seconds after a Dark Knight Nemesis is defeated.
+#        Default:     300 (5 minutes)
+
+NpcBot.DarkKnight.RespawnTime = 300
+
 
 #
 #    NpcBot.HK.Enable

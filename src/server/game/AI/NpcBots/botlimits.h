@@ -9,7 +9,7 @@ namespace NPCBots::Limits
 {
 constexpr std::uint8_t PersonalLimit(std::uint8_t bracketLimit, std::uint8_t playerLimit, bool gameMaster)
 {
-    return gameMaster ? bracketLimit : std::min(bracketLimit, playerLimit);
+    return gameMaster ? 255 : std::min(bracketLimit, playerLimit);
 }
 
 // Generated dungeon/raid bots and temporary class summons do not consume

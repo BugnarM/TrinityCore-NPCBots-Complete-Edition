@@ -8169,16 +8169,17 @@ bool bot_ai::OnGossipHello(Player* player, uint32 /*option*/)
     {
         uint32 cost = BotCfg::GetNpcBotCostHire(player->GetLevel(), _botclass);
 
+        bool const isGM = player->GetSession() && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER;
         int8 reason = 0;
         if (me->HasAura(BERSERK))
             reason = -1;
         if (!reason && _botData->owner)
             reason = 1;
-        if (!reason && BotDataMgr::GetOwnedBotsCount(player->GetGUID()) >= BotCfg::GetMaxNpcBots(player))
+        if (!reason && !isGM && BotDataMgr::GetOwnedBotsCount(player->GetGUID()) >= BotCfg::GetMaxNpcBots(player))
             reason = 2;
-        if (!reason && !player->HasEnoughMoney(cost))
+        if (!reason && !isGM && !player->HasEnoughMoney(cost))
             reason = 3;
-        if (!reason && BotCfg::GetMaxClassBots() && BotDataMgr::GetOwnedBotsCount(player->GetGUID(), me->GetClassMask()) >= BotCfg::GetMaxClassBots())
+        if (!reason && !isGM && BotCfg::GetMaxClassBots() && BotDataMgr::GetOwnedBotsCount(player->GetGUID(), me->GetClassMask()) >= BotCfg::GetMaxClassBots())
             reason = 4;
 
         std::ostringstream message1;

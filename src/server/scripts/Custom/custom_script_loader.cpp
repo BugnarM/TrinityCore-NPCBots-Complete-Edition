@@ -361,23 +361,73 @@ public:
 };
 
 /*
- * Companion Hearthstone:
- * Allows player to summon 1 companion bot to fight by their side, or dismiss it.
- * Supports choosing a specific class (e.g. Death Knight / Dark Knight) or random.
- * Cooldown: 5 hours (18000s) on subsequent uses.
- * First use: 0 cooldown!
+ * Companion Hearthstone System (Item 70901) & .companion command:
+ * For Non-GM: strictly 1 companion limit. Toggling dismisses or switches class. 5h cooldown after 1st use.
+ * For GM: UNLIMITED companions! Can summon as many companions as desired. 0 cooldown.
+ * Dismissing:
+ * - Targeting an owned bot and using .companion / stone or .companion dismiss: dismisses targeted bot.
+ * - .companion dismiss (without target) for GM: dismisses all companion bots.
  */
-static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
+static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool dismissAction = false)
 {
     if (!player || !player->IsInWorld())
         return false;
 
-    bool const isGM = player->IsGameMaster();
+    bool const isGM = (player->GetSession() && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER);
     uint32 const guidLow = player->GetGUID().GetCounter();
     time_t const now = GameTime::GetGameTime();
     constexpr uint64 COOLDOWN_SECONDS = 5 * 3600; // 5 hours
 
-    // Check first use and cooldown in database
+    // 0. Handle explicit dismiss action (.companion dismiss / clear)
+    if (dismissAction)
+    {
+        if (Unit* target = player->GetSelectedUnit())
+        {
+            if (target->IsCreature() && player->GetBotMgr()->GetBot(target->GetGUID()))
+            {
+                std::string name = target->GetName();
+                player->GetBotMgr()->RemoveBot(target->GetGUID(), BOT_REMOVE_DISMISS);
+                ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
+                player->CastSpell(player, 64034, true); // Visual puff
+                return true;
+            }
+        }
+
+        if (isGM)
+        {
+            if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
+            {
+                player->GetBotMgr()->RemoveAllBots(BOT_REMOVE_DISMISS);
+                ChatHandler(player->GetSession()).SendSysMessage("All companion bots have been dismissed.");
+                player->CastSpell(player, 64034, true);
+                return true;
+            }
+            else
+            {
+                ChatHandler(player->GetSession()).SendSysMessage("You have no companion bots to dismiss.");
+                return false;
+            }
+        }
+        else
+        {
+            // Non-GM dismiss active bot
+            if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
+            {
+                Creature* activeBot = player->GetBotMgr()->GetBotMap()->begin()->second;
+                if (activeBot)
+                {
+                    std::string name = activeBot->GetName();
+                    player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
+                    ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
+                    player->CastSpell(player, 64034, true);
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    // Check first use and cooldown in database (only for non-GM)
     bool firstUseDone = false;
     uint64 lastUseTime = 0;
 
@@ -402,41 +452,41 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
         }
     }
 
-    // 1. If player already has a companion bot
-    if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
+    // 1. Non-GM single-companion toggle / switch logic
+    if (!isGM)
     {
-        Creature* activeBot = nullptr;
-        for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
+        if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
         {
-            if (bot)
+            Creature* activeBot = nullptr;
+            for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
             {
-                activeBot = bot;
-                break;
-            }
-        }
-
-        if (activeBot)
-        {
-            // If player requested the same class or toggled without argument, dismiss it
-            if (requestedClass == 0 || activeBot->GetBotClass() == requestedClass)
-            {
-                std::string name = activeBot->GetName();
-                player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
-                ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
-                player->CastSpell(player, 64034, true); // Visual puff
-
-                // Update cooldown
-                if (!firstUseDone)
+                if (bot)
                 {
-                    CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
-                    player->GetSpellHistory()->ResetCooldown(55884, true);
-                    ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul a fost retras. (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
+                    activeBot = bot;
+                    break;
                 }
-                else
+            }
+
+            if (activeBot)
+            {
+                // If player requested the same class or toggled without argument, dismiss it
+                if (requestedClass == 0 || activeBot->GetBotClass() == requestedClass)
                 {
-                    CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
-                    if (!isGM)
+                    std::string name = activeBot->GetName();
+                    player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
+                    ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
+                    player->CastSpell(player, 64034, true); // Visual puff
+
+                    // Update cooldown
+                    if (!firstUseDone)
                     {
+                        CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
+                        player->GetSpellHistory()->ResetCooldown(55884, true);
+                        ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul a fost retras. (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
+                    }
+                    else
+                    {
+                        CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
                         const uint32 cdMs = COOLDOWN_SECONDS * 1000;
                         player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::hours(5));
 
@@ -448,19 +498,37 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
 
                         ChatHandler(player->GetSession()).SendSysMessage("|cff00ccff[Companion Hearthstone]|r Cooldown de 5 ore activat.");
                     }
+                    return true;
                 }
-                return true;
+                else
+                {
+                    // Switching to a different class -> dismiss current one first
+                    player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
+                }
             }
-            else
+        }
+    }
+    else
+    {
+        // GM: if GM has an owned companion bot selected as target and ran .companion without class argument, dismiss that targeted bot
+        if (requestedClass == 0)
+        {
+            if (Unit* target = player->GetSelectedUnit())
             {
-                // Switching to a different class -> dismiss current one first
-                player->GetBotMgr()->RemoveBot(activeBot->GetGUID(), BOT_REMOVE_DISMISS);
+                if (target->IsCreature() && player->GetBotMgr()->GetBot(target->GetGUID()))
+                {
+                    std::string name = target->GetName();
+                    player->GetBotMgr()->RemoveBot(target->GetGUID(), BOT_REMOVE_DISMISS);
+                    ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
+                    player->CastSpell(player, 64034, true);
+                    return true;
+                }
             }
         }
     }
 
-    // 2. Player does NOT have a companion -> Summon companion bot
-    if (player->IsInCombat())
+    // 2. Summon companion bot
+    if (!isGM && player->IsInCombat())
     {
         ChatHandler(player->GetSession()).SendSysMessage("You cannot summon a companion bot while in combat!");
         return false;
@@ -474,16 +542,16 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
     if (requestedClass != 0)
     {
         query = "SELECT entry FROM creature_template_npcbot_extras WHERE race IN (" + raceFilter +
-                ") AND class = " + std::to_string(requestedClass) + " ORDER BY RAND() LIMIT 1";
+                ") AND class = " + std::to_string(requestedClass) + " ORDER BY RAND() LIMIT 20";
     }
     else
     {
         if (player->GetClass() == CLASS_DEATH_KNIGHT || player->GetLevel() >= 55)
             query = "SELECT entry FROM creature_template_npcbot_extras WHERE race IN (" + raceFilter +
-                    ") AND class BETWEEN 1 AND 11 ORDER BY RAND() LIMIT 1";
+                    ") AND class BETWEEN 1 AND 11 ORDER BY RAND() LIMIT 20";
         else
             query = "SELECT entry FROM creature_template_npcbot_extras WHERE race IN (" + raceFilter +
-                    ") AND class IN (1, 2, 3, 4, 5, 7, 8, 9, 11) ORDER BY RAND() LIMIT 1";
+                    ") AND class IN (1, 2, 3, 4, 5, 7, 8, 9, 11) ORDER BY RAND() LIMIT 20";
     }
 
     QueryResult result = WorldDatabase.Query(query.c_str());
@@ -491,7 +559,7 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
     {
         // Fallback: any race for requested class
         std::string fallbackQuery = "SELECT entry FROM creature_template_npcbot_extras WHERE class = " +
-                                    std::to_string(requestedClass) + " ORDER BY RAND() LIMIT 1";
+                                    std::to_string(requestedClass) + " ORDER BY RAND() LIMIT 20";
         result = WorldDatabase.Query(fallbackQuery.c_str());
     }
 
@@ -501,14 +569,33 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
         return false;
     }
 
-    uint32 botEntry = (*result)[0].GetUInt32();
-
-    // If bot happens to be in world already, try one fallback
-    if (BotDataMgr::FindBot(botEntry))
+    uint32 botEntry = 0;
+    do
     {
-        result = WorldDatabase.Query(query.c_str());
-        if (result)
-            botEntry = (*result)[0].GetUInt32();
+        uint32 candidate = (*result)[0].GetUInt32();
+        bool alreadyOwned = false;
+        if (player->GetBotMgr()->GetBotMap())
+        {
+            for (auto const& [guid, b] : *player->GetBotMgr()->GetBotMap())
+            {
+                if (b && b->GetEntry() == candidate)
+                {
+                    alreadyOwned = true;
+                    break;
+                }
+            }
+        }
+        if (!BotDataMgr::FindBot(candidate) && !alreadyOwned)
+        {
+            botEntry = candidate;
+            break;
+        }
+    } while (result->NextRow());
+
+    if (!botEntry)
+    {
+        ChatHandler(player->GetSession()).SendSysMessage("No available companion bots found at this time!");
+        return false;
     }
 
     NpcBotExtras const* extras = BotDataMgr::SelectNpcBotExtras(botEntry);
@@ -545,18 +632,18 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0)
         player->CastSpell(player, 64036, true); // Visual light effect
         ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has arrived to fight by your side!", bot->GetName().c_str());
 
-        // Update cooldown
-        if (!firstUseDone)
+        // Update cooldown only for non-GM
+        if (!isGM)
         {
-            CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
-            player->GetSpellHistory()->ResetCooldown(55884, true);
-            ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul tau de leveling a sosit! (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
-        }
-        else
-        {
-            CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
-            if (!isGM)
+            if (!firstUseDone)
             {
+                CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
+                player->GetSpellHistory()->ResetCooldown(55884, true);
+                ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul tau de leveling a sosit! (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
+            }
+            else
+            {
+                CharacterDatabase.Execute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
                 const uint32 cdMs = COOLDOWN_SECONDS * 1000;
                 player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::hours(5));
 
@@ -720,8 +807,17 @@ public:
             }
         }
 
+        bool dismissAction = false;
+        if (classArg)
+        {
+            std::string cArg(classArg->data(), classArg->size());
+            std::transform(cArg.begin(), cArg.end(), cArg.begin(), [](unsigned char c) { return std::tolower(c); });
+            if (cArg == "dismiss" || cArg == "clear" || cArg == "remove" || cArg == "reset" || cArg == "leave")
+                dismissAction = true;
+        }
+
         // Otherwise toggle/summon companion
-        return ToggleCompanionBot(player, requestedClass);
+        return ToggleCompanionBot(player, requestedClass, dismissAction);
     }
 };
 
