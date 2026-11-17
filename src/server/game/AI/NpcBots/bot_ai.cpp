@@ -253,7 +253,7 @@ const std::string& bot_ai::LocalizedNpcText(Player const* forPlayer, uint32 text
 
 void bot_ai::InitializeAI()
 {
-    if (!me->GetSpawnId() && !IsTempBot() && !me->IsSummon())
+    if (!me->GetSpawnId() && !IsTempBot() && !me->IsSummon() && (!_botData || !_botData->owner))
         SetWanderer();
 
     Reset();
@@ -322,9 +322,13 @@ bool bot_ai::SetBotOwner(Player* newowner)
 
     //recursive
     if (master->GetGUID() == newowner->GetGUID())
+    {
+        SetWanderer(false);
         return true;
+    }
 
     master = newowner;
+    SetWanderer(false);
     _checkOwershipTimer = BotCfg::GetOwnershipExpireTime() ? CalculateOwnershipCheckTime() : 0;
 
     return true;
@@ -18964,7 +18968,7 @@ bool bot_ai::GlobalUpdate(uint32 diff)
         Regenerate();
 
     //update flags
-    if (!me->IsInCombat() && ((!_evadeMode && _atHome) || IsWanderer()))
+    if (!me->IsInCombat() && (!IAmFree() || (!_evadeMode && _atHome) || IsWanderer()))
     {
         if (!me->HasNpcFlag(UNIT_NPC_FLAG_GOSSIP) && !HasBotCommandState(BOT_COMMAND_NOGOSSIP))
             me->SetNpcFlag(UNIT_NPC_FLAG_GOSSIP);
@@ -21261,14 +21265,23 @@ void bot_ai::OnBotEnterBattleground()
     }
 }
 
-void bot_ai::SetWanderer()
+void bot_ai::SetWanderer(bool wander)
 {
-    if (IAmFree())
+    if (wander)
     {
-        _wanderer = true;
-        _spawnTruceTimer = BotCfg::GetBotWandererSpawnTruceTime() * 1000;
+        if (IAmFree())
+        {
+            _wanderer = true;
+            _spawnTruceTimer = BotCfg::GetBotWandererSpawnTruceTime() * 1000;
+            if (botPet)
+                botPet->GetBotPetAI()->SetWanderer(true);
+        }
+    }
+    else
+    {
+        _wanderer = false;
         if (botPet)
-            botPet->GetBotPetAI()->SetWanderer();
+            botPet->GetBotPetAI()->SetWanderer(false);
     }
 }
 

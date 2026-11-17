@@ -58,7 +58,7 @@ public:
 
     //wandering bots
     bool IsWanderer() const { return _wanderer; }
-    void SetWanderer() { if (IAmFree()) _wanderer = true; }
+    void SetWanderer(bool wander = true) { if (wander) { if (IAmFree()) _wanderer = true; } else _wanderer = false; }
 
     uint64 GetAuraUpdateMaskForRaid() const { return _auraRaidUpdateMask; }
     void SetAuraUpdateMaskForRaid(uint8 slot) { _auraRaidUpdateMask |= (uint64(1) << slot); }

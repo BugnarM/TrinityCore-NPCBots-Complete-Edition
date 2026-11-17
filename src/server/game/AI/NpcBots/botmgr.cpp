@@ -838,6 +838,8 @@ void BotMgr::RemoveBot(ObjectGuid guid, uint8 removetype)
         BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_OWNER, &newOwner);
         NpcBotData::SharedOwnersContainer sharedOwners{};
         BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_SHARED_OWNERS, &sharedOwners);
+        if (!bot->GetSpawnId())
+            bot->DespawnOrUnsummon();
     }
 }
 

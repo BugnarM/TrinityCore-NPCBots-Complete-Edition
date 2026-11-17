@@ -607,10 +607,15 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
 
     uint32 faction = BotDataMgr::GetDefaultFactionForBotRaceClass(extras->bclass, extras->race);
     uint8 spec = BotDataMgr::SelectSpecForClass(extras->bclass);
-    uint32 roles = BotDataMgr::DefaultRolesForClass(extras->bclass, spec);
+    uint32 roles = BotDataMgr::DefaultRolesForClass(extras->bclass, spec) | BOT_ROLE_PARTY;
 
     if (!BotDataMgr::SelectNpcBotData(botEntry))
         BotDataMgr::AddNpcBotData(botEntry, roles, spec, faction);
+    else
+    {
+        uint32 existingRoles = BotDataMgr::SelectNpcBotData(botEntry)->roles | BOT_ROLE_PARTY;
+        BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_ROLES, &existingRoles);
+    }
 
     uint32 ownerGuidLow = player->GetGUID().GetCounter();
     BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_OWNER, &ownerGuidLow);
@@ -629,6 +634,11 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
 
     if (player->GetBotMgr()->AddBot(bot) == BOT_ADD_SUCCESS)
     {
+        bot->GetBotAI()->SetWanderer(false);
+        bot->GetBotAI()->ToggleRole(BOT_ROLE_PARTY, true);
+        bot->SetNpcFlag(UNIT_NPC_FLAG_GOSSIP);
+        player->GetBotMgr()->AddBotToGroup(bot);
+
         player->CastSpell(player, 64036, true); // Visual light effect
         ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has arrived to fight by your side!", bot->GetName().c_str());
 

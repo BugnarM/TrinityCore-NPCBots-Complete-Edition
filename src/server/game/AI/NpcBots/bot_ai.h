@@ -208,7 +208,7 @@ public:
 
     //wandering bots
     bool IsWanderer() const { return _wanderer; }
-    void SetWanderer();
+    void SetWanderer(bool wander = true);
     void SetDynamicWanderZone(WanderNode const* spawn);
     static bool IsWanderNodeAvailableForBotFaction(WanderNode const* wp, uint32 factionTemplateId, bool teleport, bool spawn = false);
     WanderNode const* GetClosestWanderNode() const;
