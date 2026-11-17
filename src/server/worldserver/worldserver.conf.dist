@@ -5098,9 +5098,9 @@ NpcBot.RaidFinder.MinItemLevel.Ratio = 1.0
 CityRaid.Enable = 1
 CityRaid.Cooldown = 7200
 CityRaid.Duration = 1800
-# Attacking raid size is fixed at 40. Defenders are additional: 55 bots at these defaults.
+# Attacking raid size is fixed at 40. Defenders are additional: 65 bots at these defaults (25 defenders: 5 at Gates, 5 at City Center, 15 at Throne Room).
 CityRaid.AttackerCount = 40
-CityRaid.DefenderCount = 15
+CityRaid.DefenderCount = 25
 
 # CityRaid.Enable controls both manual events and automatic raids.
 # AutoStart only triggers from a non-GM player inside the city (not all Elwynn/Durotar).

@@ -105,12 +105,42 @@ namespace CityRaidConstants
         { BOT_CLASS_MAGE,         BOT_SPEC_MAGE_FROST, BOT_ROLE_DPS | BOT_ROLE_RANGED }  // Frost Mage
     };
 
-    static const BotRoleProfile DefenderRoster[5] = {
-        { BOT_CLASS_WARRIOR, BOT_SPEC_WARRIOR_PROTECTION, BOT_ROLE_TANK },                     // Checkpoint Tank
-        { BOT_CLASS_PRIEST,  BOT_SPEC_PRIEST_HOLY, BOT_ROLE_HEAL | BOT_ROLE_RANGED },                     // Checkpoint Healer
-        { BOT_CLASS_MAGE,    BOT_SPEC_MAGE_FROST, BOT_ROLE_DPS | BOT_ROLE_RANGED },   // Checkpoint Ranged DPS
-        { BOT_CLASS_ROGUE,   BOT_SPEC_ROGUE_COMBAT, BOT_ROLE_DPS },                     // Checkpoint Melee DPS
-        { BOT_CLASS_HUNTER,  BOT_SPEC_HUNTER_MARKSMANSHIP, BOT_ROLE_DPS | BOT_ROLE_RANGED }    // Checkpoint Ranged DPS
+    static const BotRoleProfile DefenderRoster[25] = {
+        // CP 0: City Gates (5 bots: 1 Tank, 1 Healer, 3 DPS)
+        { BOT_CLASS_WARRIOR,      BOT_SPEC_WARRIOR_PROTECTION,  BOT_ROLE_TANK },                    // Checkpoint 0 Tank
+        { BOT_CLASS_PRIEST,       BOT_SPEC_PRIEST_HOLY,         BOT_ROLE_HEAL | BOT_ROLE_RANGED }, // Checkpoint 0 Healer
+        { BOT_CLASS_MAGE,         BOT_SPEC_MAGE_FROST,          BOT_ROLE_DPS | BOT_ROLE_RANGED },  // Checkpoint 0 Ranged DPS
+        { BOT_CLASS_ROGUE,        BOT_SPEC_ROGUE_COMBAT,        BOT_ROLE_DPS },                    // Checkpoint 0 Melee DPS
+        { BOT_CLASS_HUNTER,       BOT_SPEC_HUNTER_MARKSMANSHIP, BOT_ROLE_DPS | BOT_ROLE_RANGED }, // Checkpoint 0 Ranged DPS
+
+        // CP 1: City Center (5 bots: 1 Tank, 1 Healer, 3 DPS)
+        { BOT_CLASS_PALADIN,      BOT_SPEC_PALADIN_PROTECTION,  BOT_ROLE_TANK },                    // Checkpoint 1 Tank
+        { BOT_CLASS_SHAMAN,       BOT_SPEC_SHAMAN_RESTORATION,  BOT_ROLE_HEAL | BOT_ROLE_RANGED }, // Checkpoint 1 Healer
+        { BOT_CLASS_WARLOCK,      BOT_SPEC_WARLOCK_AFFLICTION,  BOT_ROLE_DPS | BOT_ROLE_RANGED },  // Checkpoint 1 Ranged DPS
+        { BOT_CLASS_WARRIOR,      BOT_SPEC_WARRIOR_ARMS,        BOT_ROLE_DPS },                    // Checkpoint 1 Melee DPS
+        { BOT_CLASS_DRUID,        BOT_SPEC_DRUID_BALANCE,       BOT_ROLE_DPS | BOT_ROLE_RANGED },  // Checkpoint 1 Ranged DPS
+
+        // CP 2: Throne Room / Boss Guard (15 bots: 3 Tanks, 4 Healers, 8 DPS)
+        // Subgroup 2: Guard Team Alpha (1 Tank, 1 Healer, 3 DPS)
+        { BOT_CLASS_WARRIOR,      BOT_SPEC_WARRIOR_PROTECTION,  BOT_ROLE_TANK },                    // Boss Guard Main Tank
+        { BOT_CLASS_PRIEST,       BOT_SPEC_PRIEST_DISCIPLINE,   BOT_ROLE_HEAL | BOT_ROLE_RANGED },  // Boss Guard Disc Priest
+        { BOT_CLASS_ROGUE,        BOT_SPEC_ROGUE_COMBAT,        BOT_ROLE_DPS },                     // Boss Guard Melee DPS
+        { BOT_CLASS_MAGE,         BOT_SPEC_MAGE_ARCANE,         BOT_ROLE_DPS | BOT_ROLE_RANGED },   // Boss Guard Arcane Mage
+        { BOT_CLASS_HUNTER,       BOT_SPEC_HUNTER_MARKSMANSHIP, BOT_ROLE_DPS | BOT_ROLE_RANGED },  // Boss Guard Marks Hunter
+
+        // Subgroup 3: Guard Team Beta (1 Tank, 1 Healer, 3 DPS)
+        { BOT_CLASS_PALADIN,      BOT_SPEC_PALADIN_PROTECTION,  BOT_ROLE_TANK },                    // Boss Guard Off Tank
+        { BOT_CLASS_PALADIN,      BOT_SPEC_PALADIN_HOLY,        BOT_ROLE_HEAL | BOT_ROLE_RANGED },  // Boss Guard Holy Paladin
+        { BOT_CLASS_WARRIOR,      BOT_SPEC_WARRIOR_FURY,        BOT_ROLE_DPS },                     // Boss Guard Fury Warrior
+        { BOT_CLASS_WARLOCK,      BOT_SPEC_WARLOCK_DESTRUCTION, BOT_ROLE_DPS | BOT_ROLE_RANGED },  // Boss Guard Destro Warlock
+        { BOT_CLASS_DEATH_KNIGHT, BOT_SPEC_DK_UNHOLY,           BOT_ROLE_DPS },                     // Boss Guard Unholy DK
+
+        // Subgroup 4: Guard Team Gamma (1 Tank, 2 Healers, 2 DPS)
+        { BOT_CLASS_DEATH_KNIGHT, BOT_SPEC_DK_BLOOD,            BOT_ROLE_TANK },                    // Boss Guard Blood DK Tank
+        { BOT_CLASS_DRUID,        BOT_SPEC_DRUID_RESTORATION,   BOT_ROLE_HEAL | BOT_ROLE_RANGED },  // Boss Guard Resto Druid
+        { BOT_CLASS_SHAMAN,       BOT_SPEC_SHAMAN_RESTORATION,  BOT_ROLE_HEAL | BOT_ROLE_RANGED },  // Boss Guard Resto Shaman
+        { BOT_CLASS_PALADIN,      BOT_SPEC_PALADIN_RETRIBUTION, BOT_ROLE_DPS },                     // Boss Guard Ret Paladin
+        { BOT_CLASS_PRIEST,       BOT_SPEC_PRIEST_SHADOW,       BOT_ROLE_DPS | BOT_ROLE_RANGED }   // Boss Guard Shadow Priest
     };
 
     static const CityRaidConfig CityConfigs[CITY_RAID_COUNT] = {
@@ -483,7 +513,7 @@ public:
         _attackCount = Tactics::AttackerCount; // fixed 40-player attacking raid; defenders are additional
         if (sConfigMgr->GetIntDefault("CityRaid.AttackerCount",40)!=int32(_attackCount))
             TC_LOG_WARN("npcbots","CityRaid.AttackerCount is fixed at {}; configured value ignored",_attackCount);
-        _defendCount = uint32(std::clamp(sConfigMgr->GetIntDefault("CityRaid.DefenderCount",15),0,15));
+        _defendCount = uint32(std::clamp(sConfigMgr->GetIntDefault("CityRaid.DefenderCount",25),0,25));
         _attackers.clear(); _defenders.clear(); _participants.clear(); _eligible.clear(); _claimed.clear();
         _bossAnchor=_cfg.Waypoints.back(); _aggroReadyAt=0;
         _boss.Clear(); _tank.Clear(); _lastVictim.Clear(); _bossSeenAlive = _bossEngaged = false; _lastTankHealth = 100.f; _swapAt = 0;
@@ -625,8 +655,8 @@ private:
         {
             bool attack = _spawn<_attackCount;
             uint32 index = attack ? _spawn : _spawn-_attackCount;
-            uint8 cp = uint8(index%3), slot = uint8(index/3);
-            auto const& profile = attack ? CityRaidConstants::AttackerRoster[index] : CityRaidConstants::DefenderRoster[slot];
+            uint8 cp = attack ? 0 : (index < 5 ? 0 : (index < 10 ? 1 : 2));
+            auto const& profile = attack ? CityRaidConstants::AttackerRoster[index] : CityRaidConstants::DefenderRoster[index % 25];
             Position p = attack ? _cfg.Waypoints.front() : _cfg.CheckpointSpawns[cp];
             float a = float(index)*2.399963f;
             p.m_positionX += (3.f+float(index%4)*2.f)*std::cos(a);
@@ -676,7 +706,7 @@ private:
                 for (auto const& member:*roster)
                     if (Creature* bot=GetBot(map,member))
                         if (Group* group=bot->GetBotGroup())
-                            group->ChangeMembersGroup(member.Guid,roster==&_attackers?uint8(Tactics::AttackerSubgroup(member.Index)):member.Checkpoint);
+                            group->ChangeMembersGroup(member.Guid,roster==&_attackers?uint8(Tactics::AttackerSubgroup(member.Index)):uint8(member.Index/5));
             _state = State::Marching;
             Announce("The invaders are advancing on "+std::string(_cfg.CityName)+"!");
         }

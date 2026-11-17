@@ -13,7 +13,7 @@ enum Guid : std::int32_t { FocusTarget = 908600 };
 enum class State : std::uint8_t { Idle, Spawning, Marching, Boss, Retreating, Celebrating };
 enum class Role : std::uint8_t { Tank, Healer, Melee, Ranged };
 constexpr float Pi = 3.14159265358979323846f;
-constexpr unsigned AttackerCount = 40, DefenderCount = 15;
+constexpr unsigned AttackerCount = 40, DefenderCount = 25;
 constexpr unsigned DecisionMs = 250, PathBudget = 64;
 constexpr unsigned QueryNodes = 8192;
 

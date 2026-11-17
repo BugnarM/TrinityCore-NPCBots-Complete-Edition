@@ -158,7 +158,7 @@ CityRaid.Enable = 1
 CityRaid.Cooldown = 7200
 CityRaid.Duration = 1800
 CityRaid.AttackerCount = 40
-CityRaid.DefenderCount = 15
+CityRaid.DefenderCount = 25
 CityRaid.AutoStart = 1
 
 NpcBot.DarkKnight.Enable = 1
