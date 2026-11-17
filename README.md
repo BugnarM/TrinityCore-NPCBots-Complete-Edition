@@ -23,7 +23,7 @@ An advanced, production-grade distribution of **TrinityCore 3.3.5a (Wrath of the
 This repository includes major custom systems, gameplay mechanics, and quality-of-life innovations that do **NOT** exist in vanilla TrinityCore 3.3.5 or base NPCBots:
 
 ### 1. ⚡ Modern Area-of-Effect (AoE) Looting (MoP-Style)
-* **One-Click Multi-Corpse Gathering:** Right-clicking any dead NPC corpse automatically loots **all eligible dead corpses within a 40-yard radius**.
+* **One-Click Multi-Corpse Gathering:** Right-clicking any dead NPC corpse automatically loots **all eligible dead corpses within a massive 120-yard radius** (up to 60 corpses in a single action).
 * **Consolidated Money:** All copper, silver, and gold from every corpse in the area is merged into a single sum and distributed properly among players and bot companions.
 * **Smart Stacking:** Identical stackable items (cloth, leather, meat, reagents) from different mobs are merged into clean stacks in the loot window.
 * **Instant Quest Progression:** Quest items needed for your active quests are collected directly into your quest bags, updating objectives immediately.
@@ -35,44 +35,54 @@ Standard wanderer bots spawn across entire continents, wasting massive CPU and m
 * **Level-Appropriate Scaling:** Bots dynamically match the level range of the player's zone (e.g. Level 1–10 in Elwynn Forest, Level 40–50 in Tanaris, Level 70–80 in Northrend).
 * **Automatic Resource Cleanup:** When players leave a zone, the wanderer bots gracefully despawn, freeing server memory and CPU cycles.
 
-### 3. 🤝 Player Companion Bot & Leveling Assistance
-* **Balanced 1-Companion Limit:** Non-GM players can recruit **1 dedicated NPCBot companion** for leveling, providing a classic RPG party feel without overwhelming micro-management or screen clutter.
+### 3. 🤝 Player Companion Bot & Companion Hearthstone
+* **Companion Hearthstone (Item 70901):** Every adventurer receives a Companion Hearthstone to summon or toggle a personal leveling companion bot (instant first use, balanced 5-hour cooldown on subsequent uses; GMs have no cooldown and can command unlimited companions).
+* **Full Interactive Gossip Dialog:** Right-clicking your companion bot opens standard NPCBot gossip menus directly in the world: **Manage Roles, Manage Equipment, Spells, and Add to Group**.
 * **Active Open-World Wanderer Assistance:** Nearby friendly wanderer bots actively assist you in combat against quest mobs and hostile faction enemies!
 
-### 4. 🛡️ Instant Random Dungeon Finder (RDF) with Bot Roles
+### 4. 🎁 Auto-Granted Full Class Heirlooms & Starter Quality-of-Life
+* **Every Starting Player Fully Equipped:** Upon character creation and first login, players are automatically equipped with the entire canonical WotLK Heirloom collection tailored to their class and specs.
+* **+20% to +30% Experience Gain:** Includes 2x **Dread Pirate Rings** (`50255`, +5% XP each), plus class-matching **Shoulders** (`42949..42985`, +10% XP) and **Chests** (`48677..48691`, +10% XP).
+* **Multi-Spec Weapon Arsenal:** Players receive a complete weapon arsenal (2H Axes, 2H Swords, 2H Maces, Staves, 1H Maces, 1H Swords, Daggers, Ranged Bows/Guns) covering all leveling specializations (e.g. Retribution/Holy for Paladins, Feral/Balance for Druids, Enhancement/Elemental for Shamans).
+* **Instant Weapon Proficiencies:** Corresponding weapon skills are taught automatically so players never encounter "Weapon proficiency needed" roadblocks.
+* **88+ Slots of Starter Inventory:** Automatically equips **4x Glacial Bags** (22 slots each, entry `41600`) into empty bag slots so players never run out of inventory room.
+* **Northrend Cold Weather Flight Ready:** Every character receives a **Tome of Cold Weather Flight** (`49177`) in their bags ready for level 68.
+* **On-Demand Command:** Existing players can claim or refresh their heirloom set anytime with `.heirlooms` (or `.companion heirlooms`).
+
+### 5. 🛡️ Instant Random Dungeon Finder (RDF) with Bot Roles
 * **Instant Group Formation:** Queue solo or with friends in the standard Dungeon Finder (Normal or Heroic).
 * **Automatic Role Fill:** If human players aren't available, the queue instantly fills within seconds with an intelligent **Tank**, **Healer**, and **3 DPS** NPCBots.
 * **Mechanic-Aware Combat:** Dungeon bots handle dispels, interrupts, aggro management, and boss encounter mechanics.
 
-### 5. ⚔️ Full Arena Matchmaking System (2v2, 3v3, 5v5)
+### 6. ⚔️ Full Arena Matchmaking System (2v2, 3v3, 5v5)
 * **Instant PvP Queues:** Queue solo or in teams across all classic WotLK arenas (Nagrand, Blade's Edge, Dalaran Sewers, Ruins of Lordaeron, Ring of Valor).
 * **Autonomous Opponents & Teammates:** AI teams execute real PvP tactics: Line-of-Sight (LOS) positioning, Crowd Control chaining (stuns, silences, polymorphs), and synchronized burst phases.
 
-### 6. 🏰 Lake Wintergrasp 40v40 Epic Siege Warfare
+### 7. 🏰 Lake Wintergrasp 40v40 Epic Siege Warfare
 * **Full-Scale 40v40 Warfare:** Lake Wintergrasp is transformed into an autonomous 40 Alliance vs. 40 Horde clash.
 * **Autonomous Siege Vehicles:** Bots construct, drive, and aim **Catapults, Demolishers, and Siege Engines**.
 * **Multi-Crew AI & Player Boarding:** Bots operate multi-seat vehicles (driver + passenger turret gunners). Human players can board bot-driven vehicles or drive while bots provide turret support or infantry escort.
 * **Organized Wall Assaults:** Squad leaders and siege vehicles follow strategic lanes (Westpark, Eastpark, Fortress Gates) rather than wandering randomly.
 * **WotLK Military Promotions:** Authentic rank progression (Recruit ➡️ Corporal at 5 kills ➡️ Lieutenant at 10 kills) required to build heavy war machines.
 
-### 7. 🚢 Strand of the Ancients (15v15) & Isle of Conquest (40v40)
+### 8. 🚢 Strand of the Ancients (15v15) & Isle of Conquest (40v40)
 *(Under active development, fully operational)*
 * **Strand of the Ancients:** Attackers pilot Demolishers from the beach, assault colored gates, and plant seaforium charges while defenders man turret cannons.
 * **Isle of Conquest:** Autonomous battles across the Docks, Hangar (Gunship aerial drops), and Siege Workshop with fortress keep teleporter support.
 
-### 8. 👑 Autonomous City Raids (Stormwind & Orgrimmar)
+### 9. 👑 Autonomous City Raids (Stormwind & Orgrimmar)
 * **40-Man Armies:** Epic 40-attacker raids assemble with dedicated 5-man subgroups and healers to march on enemy capital cities.
 * **Faction Leader Boss Tactics:** At King Varian Wrynn or Thrall, bots execute real raid tactics—main tank facing boss away, secondary tanks swapping aggro on high burst/mortal strike, and casters maintaining safe distance during Whirlwind.
 * **Defense Alerts & Victory Chest:** Global city defense alerts broadcast to players, and defeating the city leader spawns a celebration reward chest with **Emblems of Triumph and Gold**.
 
-### 9. 💀 Authentic Post-Battle Landscapes: 30-Min Skeletons & 5-Min Attrition Respawns
+### 10. 💀 Authentic Post-Battle Landscapes: 30-Min Skeletons & 5-Min Attrition Respawns
 * **5-Minute Respawn Timer ("Last Man Standing"):** When bots die in open-world battles or Wintergrasp, they remain dead for 5 minutes, making territory control and tactical skirmishes meaningful.
 * **30-Minute Skeletal Remains (`CORPSE_BONES`):** After reviving, bot skeletons persist on the battlefield for **30 minutes**, leaving realistic trails of war and skirmishes across Azeroth.
 
-### 10. 👹 Dark Knight Nemesis Roamers (5-Man World Bosses)
-* Roaming elite bosses hostile to both Horde and Alliance patrol key zones, offering spontaneous, challenging open-world dungeon encounters with rare loot rewards.
+### 11. 👹 Dark Knight Nemesis Roamers (5-Man World Bosses)
+* Roaming elite bosses hostile to both Horde and Alliance patrol key zones, offering spontaneous, challenging open-world dungeon encounters with rare loot rewards (can be enabled/disabled via `worldserver.conf`).
 
-### 11. 👥 Living Social `/who` List Integration
+### 12. 👥 Living Social `/who` List Integration
 * Active NPCBots and wanderers seamlessly appear in the player `/who` social directory with realistic guild names, races, and classes, making the server feel like a vibrant, high-population realm.
 
 ---
@@ -109,8 +119,8 @@ Add or adjust these settings in your `worldserver.conf`:
 # AREA OF EFFECT (AoE) LOOTING
 ###############################################################################
 AOELoot.Enable = 1
-AOELoot.Range = 40.0
-AOELoot.MaxCorpses = 30
+AOELoot.Range = 120.0
+AOELoot.MaxCorpses = 60
 
 ###############################################################################
 # DYNAMIC ZONE WANDERERS
@@ -165,8 +175,11 @@ NpcBot.WhoList.Enable = 1
 ### Player Commands
 | Command | Description |
 |---|---|
-| `.npcbot add` | Hire a companion bot to join your adventures |
-| `.npcbot remove` | Dismiss your companion bot |
+| `.companion [class]` | Summon or toggle a personal leveling companion bot (e.g. `warrior`, `paladin`, `mage`, `priest`, `hunter`, `druid`, `dk`, `shaman`, `warlock`, `rogue`, `bm`) |
+| `.companion dismiss` | Dismiss your active companion bot |
+| `.heirlooms` / `.companion heirlooms` | Receive your class's complete matching Heirloom equipment set and 4x Glacial Bags |
+| `.npcbot add` | Hire an NPCBot companion into your party |
+| `.npcbot remove` | Dismiss an NPCBot companion |
 | `.npcbot info` | Display companion bot stats and equipment |
 
 ### GM & Administrative Commands
