@@ -597,7 +597,7 @@ public:
             if (hp > GetHealHpPctThreshold())
                 return false;
             bool pointed = IsPointedHealTarget(target);
-            if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) &&
+            if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) && !(target->IsPlayer() || target == master) &&
                 (!target->IsInCombat() || target->getAttackers().empty() || !IsTank(target) || !me->GetMap()->IsRaid()))
                 return false;
 
@@ -608,7 +608,12 @@ public:
             int32 xppct = hp + hppctps * (me->GetLevel() < 60 ? 2.5f : 2.0f);
             //BOT_LOG_ERROR("entities.player", "priest_bot:HealTarget(): {}'s pct {}, hppctps {}, epct {}",
             //    target->GetName(), uint32(hp), int32(hppctps), int32(xppct));
-            if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
+            if (xppct >= 95 && !me->IsInCombat() && (target->IsPlayer() || target == master))
+            {
+                if (hp >= 95)
+                    return false;
+            }
+            else if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
 
             //GUARDIAN SPIRIT no GCD
@@ -675,7 +680,8 @@ public:
                     return true;
             }
             //Big Heal
-            if (IsSpellReady(HEAL, diff) && (xppct > 15 || !GetSpell(FLASH_HEAL_1)) && (tanking || xphploss > _heals[HEAL] || ((target->IsPlayer() || target == master) && hp <= 65)))
+            if (IsSpellReady(HEAL, diff) && (xppct > 15 || !GetSpell(FLASH_HEAL_1)) &&
+                (tanking || xphploss > _heals[HEAL] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
             {
                 if (me->IsInCombat() && IsSpellReady(INNER_FOCUS_1, diff) && GetManaPCT(me) < 70 &&
                     doCast(me, GetSpell(INNER_FOCUS_1)))
@@ -692,7 +698,7 @@ public:
                     return true;
             }
             //Flash Heal
-            if (IsSpellReady(FLASH_HEAL_1, diff) && (xphploss > _heals[FLASH_HEAL_1] || ((target->IsPlayer() || target == master) && hp <= 85)))
+            if (IsSpellReady(FLASH_HEAL_1, diff) && (xphploss > _heals[FLASH_HEAL_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
             {
                 if (doCast(target, GetSpell(FLASH_HEAL_1)))
                     return true;

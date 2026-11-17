@@ -1370,7 +1370,7 @@ public:
             if (hp > GetHealHpPctThreshold())
                 return false;
             bool pointed = IsPointedHealTarget(target);
-            if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) &&
+            if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) && !(target->IsPlayer() || target == master) &&
                 (!target->IsInCombat() || target->getAttackers().empty() || !IsTank(target) || !me->GetMap()->IsRaid()))
                 return false;
 
@@ -1379,7 +1379,12 @@ public:
             int32 hppctps = int32(hps * 100.f / float(target->GetMaxHealth()));
             int32 xphploss = xphp > int32(target->GetMaxHealth()) ? 0 : abs(int32(xphp - target->GetMaxHealth()));
             int32 xppct = hp + hppctps * 2.5f;
-            if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
+            if (xppct >= 95 && !me->IsInCombat() && (target->IsPlayer() || target == master))
+            {
+                if (hp >= 95)
+                    return false;
+            }
+            else if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
 
             if (IsSpellReady(NATURES_SWIFTNESS_1, diff, false) && Rand() < 80 &&
@@ -1401,13 +1406,13 @@ public:
             bool tanking = u && IsTank(target) && u->ToCreature() && u->ToCreature()->isWorldBoss();
 
             if (IsSpellReady(HEALING_WAVE_1, diff) &&
-                (xppct >= 15 || !GetSpell(LESSER_HEALING_WAVE_1)) && (xphploss > _heals[HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && hp <= 65)))
+                (xppct >= 15 || !GetSpell(LESSER_HEALING_WAVE_1)) && (xphploss > _heals[HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
             {
                 if (doCast(target, GetSpell(HEALING_WAVE_1)))
                     return true;
             }
             //Riptide stacks from different casters
-            if (IsSpellReady(RIPTIDE_1, diff) && (hp <= 85 || ((target->IsPlayer() || target == master) && hp <= 90)) && (tanking || hps < 0 || xphploss > _heals[RIPTIDE_1] || target->IsPlayer() || target == master) &&
+            if (IsSpellReady(RIPTIDE_1, diff) && (hp <= 85 || ((target->IsPlayer() || target == master) && hp < 95)) && (tanking || hps < 0 || xphploss > _heals[RIPTIDE_1] || target->IsPlayer() || target == master) &&
                 !target->GetAuraEffect(SPELL_AURA_PERIODIC_HEAL, SPELLFAMILY_SHAMAN, 0x0, 0x0, 0x10, me->GetGUID())
                 /*!target->HasAura(GetSpell(RIPTIDE_1), me->GetGUID())*/)
             {
@@ -1421,7 +1426,7 @@ public:
                     return true;
             }
 
-            if (IsSpellReady(LESSER_HEALING_WAVE_1, diff) && (xphploss > _heals[LESSER_HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && hp <= 85)))
+            if (IsSpellReady(LESSER_HEALING_WAVE_1, diff) && (xphploss > _heals[LESSER_HEALING_WAVE_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
             {
                 if (doCast(target, GetSpell(LESSER_HEALING_WAVE_1)))
                     return true;

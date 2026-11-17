@@ -701,7 +701,7 @@ public:
             if (hp > GetHealHpPctThreshold())
                 return false;
             bool pointed = IsPointedHealTarget(target);
-            if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) &&
+            if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) && !(target->IsPlayer() || target == master) &&
                 (!target->IsInCombat() || target->getAttackers().empty() || !IsTank(target) || !me->GetMap()->IsRaid()))
                 return false;
             //try to preserve heal if Divine Plea is active
@@ -713,7 +713,12 @@ public:
             int32 hppctps = int32(hps * 100.f / float(target->GetMaxHealth()));
             int32 xphploss = xphp > int32(target->GetMaxHealth()) ? 0 : abs(int32(xphp - target->GetMaxHealth()));
             int32 xppct = hp + hppctps * 2.5f;
-            if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
+            if (xppct >= 95 && !me->IsInCombat() && (target->IsPlayer() || target == master))
+            {
+                if (hp >= 95)
+                    return false;
+            }
+            else if (xppct >= 95 && hp >= ((target->IsPlayer() || target == master) ? 85 : 25) && !pointed)
                 return false;
 
             //Lay on Hands
@@ -738,7 +743,7 @@ public:
 
             //Holy Shock
             if (IsSpellReady(HOLY_SHOCK_1, diff, false) && !target->IsCharmed() && !target->isPossessed() &&
-                (xphploss > _heals[HOLY_SHOCK_1] || ((target->IsPlayer() || target == master) && hp <= 85)))
+                (xphploss > _heals[HOLY_SHOCK_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
             {
                 me->InterruptNonMeleeSpells(false);
                 if (hp < 30 && IsSpellReady(DIVINE_FAVOR_1, diff, false) && !target->getAttackers().empty())
@@ -759,7 +764,7 @@ public:
 
             //Holy Light
             if (IsSpellReady(HOLY_LIGHT_1, diff) && (xppct > 15 || !GetSpell(FLASH_OF_LIGHT_1)) &&
-                (tanking || xphploss > _heals[HOLY_LIGHT_1] || ((target->IsPlayer() || target == master) && hp <= 65)))
+                (tanking || xphploss > _heals[HOLY_LIGHT_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
             {
                 //Aura Mastery
                 if (hp < 60 && _myaura == CONCENTRATION_AURA_1 && IsSpellReady(AURA_MASTERY_1, diff, false) && Rand() < 90 &&
@@ -771,7 +776,7 @@ public:
                     return true;
             }
             //Flash of Light
-            if (IsSpellReady(FLASH_OF_LIGHT_1, diff) && (tanking || xphploss > _heals[FLASH_OF_LIGHT_1] || ((target->IsPlayer() || target == master) && hp <= 85)))
+            if (IsSpellReady(FLASH_OF_LIGHT_1, diff) && (tanking || xphploss > _heals[FLASH_OF_LIGHT_1] || ((target->IsPlayer() || target == master) && (hp <= 85 || (!me->IsInCombat() && hp < 95)))))
             {
                 if (doCast(target, GetSpell(FLASH_OF_LIGHT_1)))
                     return true;
