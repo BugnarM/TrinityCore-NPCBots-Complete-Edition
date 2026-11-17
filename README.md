@@ -7,7 +7,7 @@
 
 ---
 
-### 📢 Live Test Server Available Upon Request! / Server de Testare Disponibil la Cerere!
+### 📢 Live Test Server Available Upon Request!
 > **Interested in trying out this living world before building or installing it yourself?**  
 > We can temporarily spin up a live public test realm for players, testers, and server developers to experience the autonomous bots, 40v40 Wintergrasp, Arena queues, RDF, and AoE looting firsthand!  
 > 💬 **Open an Issue or start a Discussion on this repository to request temporary test server access!**
@@ -177,6 +177,31 @@ NpcBot.WhoList.Enable = 1
 | `.bf start 1` | Force start the Battle for Wintergrasp |
 | `.bf stop 1` | Force end the Battle for Wintergrasp |
 | `.revive <player>` | Resurrect a player with full/half HP |
+
+---
+
+## 📦 Complete Database Dumps (Fresh Install)
+
+Pre-packaged, clean database archives ready for immediate deployment are located in [`sql/database_dumps/`](sql/database_dumps/):
+
+* **`auth.sql.gz`**: Clean authentication schema, default RBAC roles/permissions, build 12340 support, and default realmlist (no personal accounts).
+* **`characters.sql.gz`**: Clean characters schema, system worldstates, preconfigured NPCBot entries with party enabled, zero personal characters.
+* **`world.sql.gz`**: Full, production-ready world database (creature templates, NPCBots extras, custom Companion Hearthstone item 70901, world bosses, waypoint meshes).
+
+### Quick Database Import:
+```bash
+# 1. Create databases
+mysql -u root -p -e "
+CREATE DATABASE IF NOT EXISTS auth DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS characters DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS world DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+"
+
+# 2. Import compressed archives
+zcat sql/database_dumps/auth.sql.gz | mysql -u root -p auth
+zcat sql/database_dumps/characters.sql.gz | mysql -u root -p characters
+zcat sql/database_dumps/world.sql.gz | mysql -u root -p world
+```
 
 ---
 

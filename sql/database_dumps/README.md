@@ -1,44 +1,44 @@
-# Baze de Date Complete TrinityCore + NPCBots (Fresh Install)
+# Complete Database Dumps for TrinityCore + NPCBots (Fresh Install)
 
-Acest director conține arhivele complete ale bazelor de date pentru o instalare curată (**fresh install**), fără date personale (fără conturi de jucători, parole, e-mailuri sau caractere personale).
+This directory contains full database archives for a clean (**fresh install**), with zero personal data (no player accounts, passwords, emails, or personal characters).
 
-## Conținut
+## Contents
 
 1. **`auth.sql.gz`**
-   - Structura completă a bazei de date `auth`.
-   - Tabelele RBAC (roluri și permisiuni standard TrinityCore).
-   - `build_info` pentru versiunea de client 3.3.5a (build 12340).
-   - `realmlist` cu realm-ul implicit (Realm 1: "Trinity", 127.0.0.1:8085).
-   - Fără conturi înregistrate (este pregătit pentru `account create <user> <pass>` din consola serverului).
+   - Full schema for the `auth` database.
+   - RBAC tables (standard TrinityCore roles and permissions).
+   - `build_info` for client version 3.3.5a (build 12340).
+   - `realmlist` pre-configured with default realm (Realm 1: "Trinity", 127.0.0.1:8085).
+   - No registered user accounts (ready for `account create <user> <pass>` from the server console).
 
 2. **`characters.sql.gz`**
-   - Structura completă a tabelelor `characters`.
-   - Tabelele de sistem și worldstates (inclusiv starea inițială `BOT_GIVER_ENTRY`).
-   - `characters_npcbot` cu toate template-urile de boți preconfigurate (`roles` cu flag party activat, `owner = 0` / liberi).
-   - Fără caractere de jucători (0 caractere, inventare sau bresle).
+   - Full schema for `characters` tables.
+   - System tables and worldstates (including initial state for `BOT_GIVER_ENTRY`).
+   - `characters_npcbot` with all bot templates preconfigured (`roles` with party flag active, `owner = 0` / free).
+   - Zero player characters (0 characters, inventories, or guilds).
 
 3. **`world.sql.gz`**
-   - Baza de date completă de world (echivalentul `world2`), gata de importat ca `world`.
-   - Conține toate creaturile, quest-urile, scripturile, vrăjile și obiectele personalizate (Companion Hearthstone `70901`, boși custom, waypoint-uri de wanderers, NPCBots extras).
+   - Complete world database (equivalent to `world2`), ready to import as `world`.
+   - Includes all creatures, quests, scripts, spells, and custom items (Companion Hearthstone `70901`, custom world bosses, wanderer waypoints, NPCBots extras).
 
 ---
 
-## Instrucțiuni de Import (Fresh Install)
+## Import Instructions (Fresh Install)
 
-Pe serverul de destinație cu MySQL/MariaDB:
+On the target server with MySQL/MariaDB:
 
 ```bash
-# 1. Creează bazele de date cu charset utf8mb4
+# 1. Create databases with utf8mb4 charset
 mysql -u root -p -e "
 CREATE DATABASE IF NOT EXISTS auth DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS characters DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS world DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 "
 
-# 2. Importă arhivele comprimate direct în bazele de date
+# 2. Import compressed archives directly into the databases
 zcat auth.sql.gz | mysql -u root -p auth
 zcat characters.sql.gz | mysql -u root -p characters
 zcat world.sql.gz | mysql -u root -p world
 ```
 
-Serverul este acum gata de pornire cu `authserver` și `worldserver`.
+The server is now ready to start with `authserver` and `worldserver`.
