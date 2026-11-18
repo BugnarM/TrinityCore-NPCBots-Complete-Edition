@@ -1240,7 +1240,12 @@ void BotDataMgr::Update(uint32 diff)
         for (auto bot_despawn_iter = _botsExtraCreaturesToDespawn.begin(); bot_despawn_iter != _botsExtraCreaturesToDespawn.end();)
         {
             const uint32 bot_despawn_id = *bot_despawn_iter;
-            Creature* bot = const_cast<Creature*>(ASSERT_NOTNULL(FindBot(bot_despawn_id)));
+            Creature* bot = const_cast<Creature*>(FindBot(bot_despawn_id));
+            if (!bot)
+            {
+                bot_despawn_iter = _botsExtraCreaturesToDespawn.erase(bot_despawn_iter);
+                continue;
+            }
 
             if (!bot->IsInWorld())
             {
