@@ -260,7 +260,7 @@ public:
     static ItemPerBotClassPerBotCategoryMap const& GetWanderingBotsSortedGearMap();
     static std::vector<uint32> const& GetAutoEquipSupplement();
     static Item* GenerateWanderingBotItem(uint8 category, uint8 slot, uint8 botclass, uint8 level, uint32 maxitemlevel, std::function<bool(uint8, ItemTemplate const*)> const& check);
-    static bool GenerateWanderingBotItemEnchants(Item* item, uint8 slot, uint8 spec);
+    static bool GenerateWanderingBotItemEnchants(Item* item, uint8 slot, uint8 spec, uint8 botLevel);
     static CreatureTemplate const* GetBotExtraCreatureTemplate(uint32 entry);
     static EquipmentInfo const* GetBotEquipmentInfo(uint32 entry);
 

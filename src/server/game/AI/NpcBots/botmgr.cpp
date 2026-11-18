@@ -965,33 +965,34 @@ BotAddResult BotMgr::AddBot(Creature* bot, bool companion)
 
     bot->GetBotAI()->SetBotOwner(_owner);
 
+    if (!bot->GetBotAI()->IsTempBot() && !bot->IsSummon())
+    {
+        uint32 newOwner = _owner->GetGUID().GetCounter();
+        if (!bot->GetBotAI()->HasSharedOwner(newOwner))
+            BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_OWNER, &newOwner);
+    }
+
     bot->GetBotAI()->Reset();
 
     bot->LowerPlayerDamageReq(bot->GetMaxHealth());
 
-    if (!bot->IsInWorld())
-        TeleportBot(bot, _owner->GetMap(), _owner);
-
     if (!bot->GetBotAI()->IsTempBot())
     {
-        if (!bot->IsSummon())
-        {
-            uint32 newOwner = _owner->GetGUID().GetCounter();
-            if (!bot->GetBotAI()->HasSharedOwner(newOwner))
-                BotDataMgr::UpdateNpcBotData(bot->GetEntry(), NPCBOT_UPDATE_OWNER, &newOwner);
-        }
-
         bot->GetBotAI()->SetBotCommandState(BOT_COMMAND_FOLLOW, true);
         if (bot->GetBotAI()->HasRole(BOT_ROLE_PARTY))
             AddBotToGroup(bot);
 
+        // Reset uses the attached level. Equip before scheduling a teleport.
         if (!bot->GetBotAI()->HasRealEquipment())
         {
             uint8 eq = 0, fb = 0;
-            auto preset = *NPCBots::AutoEquip::Parse("organic", _owner->GetLevel());
+            auto preset = *NPCBots::AutoEquip::Parse("organic", bot->GetLevel());
             bot->GetBotAI()->AutoEquip(preset, _owner, eq, fb);
         }
     }
+
+    if (!bot->IsInWorld())
+        TeleportBot(bot, _owner->GetMap(), _owner);
 
     return BOT_ADD_SUCCESS;
 }

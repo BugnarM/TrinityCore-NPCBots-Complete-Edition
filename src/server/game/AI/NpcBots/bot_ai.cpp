@@ -2222,13 +2222,37 @@ void bot_ai::SetStats(bool force)
     mylevel = std::max<uint8>(mylevel, BotDataMgr::GetMinLevelForBotClass(_botclass));
 
     //LEVEL
-    if (me->GetLevel() != mylevel)
+    bool const levelChanged = me->GetLevel() != mylevel;
+    if (levelChanged)
     {
         if (me->GetLevel() > mylevel)
             UnsummonAll(false);
 
         me->SetLevel(mylevel);
         force = true; //reinit spells/passives/other
+    }
+    if (force && !IAmFree() && !IsTempBot() && !me->IsSummon())
+    {
+        EquipmentInfo const* defaults = BotDataMgr::GetBotEquipmentInfo(me->GetEntry());
+        for (uint8 slot : NPCBots::index_array<uint8, BOT_INVENTORY_SIZE>)
+        {
+            Item const* item = _equips[slot];
+            if (!item || (slot <= BOT_SLOT_RANGED && defaults->ItemEntry[slot] == item->GetEntry()))
+                continue;
+            if (!NPCBots::AutoEquip::MeetsRequiredLevel(item->GetTemplate()->RequiredLevel, mylevel))
+            {
+                // Keep the item with its owner even when a shared bot changes level.
+                ObjectGuid receiver = item->GetOwnerGUID();
+                if (!receiver.IsPlayer())
+                    receiver = ObjectGuid::Create<HighGuid::Player>(_botData->owner);
+                if (!receiver)
+                    receiver = master->GetGUID();
+                if (_unequip(slot, receiver, false) != BotEquipResult::BOT_EQUIP_RESULT_OK)
+                    BOT_LOG_ERROR("npcbots", "Cannot return over-level equipment from bot {} in slot {}", me->GetEntry(), slot);
+            }
+            else if (levelChanged && item->GetTemplate()->ScalingStatDistribution)
+                ApplyItemBonuses(slot);
+        }
     }
     if (force)
     {
@@ -15552,9 +15576,8 @@ bool bot_ai::_planAutoEquip(NPCBots::AutoEquip::Preset const& preset, Player con
                 proto->Duration || proto->RandomProperty || proto->RandomSuffix ||
                 (preset.kind == Kind::Blue && proto->Quality != ITEM_QUALITY_RARE && proto->InventoryType != INVTYPE_RELIC))
                 continue;
-            if (me->GetLevel() < 80 && proto->RequiredLevel > me->GetLevel())
-                continue;
-            if (receiver && receiver->GetLevel() < 80 && proto->RequiredLevel > receiver->GetLevel())
+            if (!MeetsRequiredLevel(proto->RequiredLevel, me->GetLevel()) ||
+                (receiver && !MeetsRequiredLevel(proto->RequiredLevel, receiver->GetLevel())))
                 continue;
             if (isTierSlot(slot) && !FitsClassSet(setProfile, proto->ItemSet)) continue;
             bool resilience = std::ranges::any_of(proto->ItemStat, [](auto const& stat) { return stat.ItemStatType == ITEM_MOD_RESILIENCE_RATING && stat.ItemStatValue > 0; });
@@ -15678,7 +15701,7 @@ bool bot_ai::AutoEquip(NPCBots::AutoEquip::Preset const& preset, Player* receive
             return false;
         items[slot]->SetBinding(true);
         if (GetSpec() != BOT_SPEC_DEFAULT)
-            BotDataMgr::GenerateWanderingBotItemEnchants(items[slot].get(), slot, GetSpec());
+            BotDataMgr::GenerateWanderingBotItemEnchants(items[slot].get(), slot, GetSpec(), me->GetLevel());
     }
     // Preserve every player-owned item, including an offhand made incompatible
     // by the new mainhand. The native return path uses mail when bags are full.
@@ -15776,7 +15799,8 @@ void bot_ai::InitEquips()
             else
             {
                 _equips[i] = item;
-                if (GetSpec() != BOT_SPEC_DEFAULT && BotDataMgr::GenerateWanderingBotItemEnchants(item, i, GetSpec())) {}
+                if (GetSpec() != BOT_SPEC_DEFAULT)
+                    BotDataMgr::GenerateWanderingBotItemEnchants(item, i, GetSpec(), lvl);
 
                 gss << " [" << uint32(i) << "] " << _equips[i]->GetTemplate()->Name1 << " (" << _equips[i]->GetEntry() << ')';
             }
@@ -15799,7 +15823,7 @@ void bot_ai::InitEquips()
                     {
                         replacements[slot].reset(Item::CreateItem(entries[slot], 1));
                         if (!replacements[slot]) { complete = false; break; }
-                        BotDataMgr::GenerateWanderingBotItemEnchants(replacements[slot].get(), slot, GetSpec());
+                        BotDataMgr::GenerateWanderingBotItemEnchants(replacements[slot].get(), slot, GetSpec(), lvl);
                     }
                 if (complete)
                     for (uint8 slot = 0; slot < BOT_INVENTORY_SIZE; ++slot)
@@ -15827,19 +15851,7 @@ void bot_ai::InitEquips()
 
         PreparedQueryResult iiresult = CharacterDatabase.Query(stmt);
 
-        if (!iiresult)
-        {
-            std::array<uint32, BOT_INVENTORY_SIZE> entries{};
-            uint8 fallback = 0;
-            auto preset = *NPCBots::AutoEquip::Parse("organic", me->GetLevel());
-            bool planned = _planAutoEquip(preset, nullptr, entries, fallback);
-            for (uint8 slot = 0; slot < BOT_INVENTORY_SIZE; ++slot)
-            {
-                uint32 id = planned ? entries[slot] : slot < MAX_EQUIPMENT_ITEMS ? einfo->ItemEntry[slot] : 0;
-                if (id) _equips[slot] = Item::CreateItem(id, 1);
-            }
-        }
-        else
+        if (iiresult)
         {
             Field* fields2;
             do

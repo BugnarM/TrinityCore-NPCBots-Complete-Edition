@@ -1500,35 +1500,71 @@ void BotDataMgr::LoadNpcBots(bool spawn)
 
         if (spawn)
         {
+            // A Hearthstone companion has no permanent creature spawn. Restore
+            // companions whose saved group still contains their owner, before
+            // the group loader resolves the NPCBot GUIDs.
+            std::unordered_map<uint32, WorldLocation> companionHomes;
+            auto validHome = [](WorldLocation const& location) {
+                MapEntry const* map = sMapStore.LookupEntry(location.GetMapId());
+                return map && map->IsContinent() && MapManager::IsValidMapCoord(location);
+            };
+            if (QueryResult companions = CharacterDatabase.Query(
+                "SELECT bot.entry, p.map, p.position_x, p.position_y, p.position_z, p.orientation, "
+                "h.mapId, h.posX, h.posY, h.posZ "
+                "FROM characters_npcbot_group_member AS g "
+                "JOIN characters_npcbot AS bot ON bot.entry = g.entry "
+                "JOIN group_member AS m ON m.guid = g.guid AND m.memberGuid = bot.owner "
+                "JOIN characters AS p ON p.guid = bot.owner "
+                "LEFT JOIN character_homebind AS h ON h.guid = p.guid"))
+            {
+                do
+                {
+                    Field* row = companions->Fetch();
+                    WorldLocation home(row[1].GetUInt16(), row[2].GetFloat(), row[3].GetFloat(), row[4].GetFloat(), row[5].GetFloat());
+                    if (!validHome(home) && !row[6].IsNull())
+                        home = WorldLocation(row[6].GetUInt16(), row[7].GetFloat(), row[8].GetFloat(), row[9].GetFloat());
+                    if (validHome(home))
+                        companionHomes.emplace(row[0].GetUInt32(), home);
+                } while (companions->NextRow());
+            }
+
             for (uint32 entry : entryList)
             {
                 proto = sObjectMgr->GetCreatureTemplate(entry);
                 //                                     1     2    3           4           5           6
                 infores = WorldDatabase.PQuery("SELECT guid, map, position_x, position_y, position_z, orientation FROM creature WHERE id = {}", entry);
-                if (!infores)
+                auto const companionHome = companionHomes.find(entry);
+                if (!infores && companionHome == companionHomes.end())
                 {
                     BOT_LOG_ERROR("server.loading", "Cannot spawn npcbot {} (id: {}), not found in `creature` table!", proto->Name, entry);
                     continue;
                 }
 
-                field = infores->Fetch();
-                uint32 tableGuid = field[0].GetUInt32();
-                uint32 mapId = uint32(field[1].GetUInt16());
-                float pos_x = field[2].GetFloat();
-                float pos_y = field[3].GetFloat();
-                float pos_z = field[4].GetFloat();
-                float ori = field[5].GetFloat();
+                uint32 tableGuid = 0;
+                WorldLocation home;
+                if (infores)
+                {
+                    field = infores->Fetch();
+                    tableGuid = field[0].GetUInt32();
+                    home = WorldLocation(field[1].GetUInt16(), field[2].GetFloat(), field[3].GetFloat(), field[4].GetFloat(), field[5].GetFloat());
+                }
+                else
+                    home = companionHome->second;
 
-                CellCoord c = Bcore::ComputeCellCoord(pos_x, pos_y);
-                GridCoord g = Bcore::ComputeGridCoord(pos_x, pos_y);
+                CellCoord c = Bcore::ComputeCellCoord(home.GetPositionX(), home.GetPositionY());
+                GridCoord g = Bcore::ComputeGridCoord(home.GetPositionX(), home.GetPositionY());
                 ASSERT(c.IsCoordValid(), "Invalid Cell coord!");
                 ASSERT(g.IsCoordValid(), "Invalid Grid coord!");
-                Map* map = sMapMgr->CreateBaseMap(mapId);
-                Position spawnPos(pos_x, pos_y, pos_z, ori);
+                Map* map = sMapMgr->CreateBaseMap(home.GetMapId());
                 Creature* bot = new Creature();
-                if (!bot->LoadBotCreatureFromDB(tableGuid, map, false, false, entry, &spawnPos))
+                if (!bot->LoadBotCreatureFromDB(tableGuid, map, false, !infores, entry, &home))
                 {
                     delete bot;
+                    if (!infores)
+                    {
+                        BOT_LOG_ERROR("server.loading", "Cannot restore companion {} ({})", proto->Name, entry);
+                        continue;
+                    }
                     BOT_LOG_FATAL("server.loading", "Cannot load npcbot {} from DB!", entry);
                     ABORT();
                 }
@@ -1546,7 +1582,9 @@ void BotDataMgr::LoadNpcBots(bool spawn)
                     bot->setDeathState(JUST_RESPAWNED);
                 }
 
-                BOT_LOG_DEBUG("server.loading", ">> Spawned npcbot {} (id: {}, map: {}, grid: {}, cell: {})", proto->Name, entry, mapId, g.GetId(), c.GetId());
+                BOT_LOG_DEBUG("server.loading", ">> Spawned npcbot {} (id: {}, map: {}, grid: {}, cell: {})", proto->Name, entry, home.GetMapId(), g.GetId(), c.GetId());
+                if (!infores)
+                    BOT_LOG_INFO("server.loading", "Restored saved companion {} ({}) on map {}", proto->Name, entry, home.GetMapId());
                 botgrids.insert(g.GetId());
                 ++botcounter;
             }
@@ -3250,7 +3288,7 @@ Item* BotDataMgr::GenerateWanderingBotItem(uint8 category, uint8 slot, uint8 bot
     return nullptr;
 }
 
-bool BotDataMgr::GenerateWanderingBotItemEnchants(Item* item, uint8 slot, uint8 spec)
+bool BotDataMgr::GenerateWanderingBotItemEnchants(Item* item, uint8 slot, uint8 spec, uint8 botLevel)
 {
     bool result = false;
 
@@ -3266,7 +3304,7 @@ bool BotDataMgr::GenerateWanderingBotItemEnchants(Item* item, uint8 slot, uint8 
 
     ItemTemplate const* proto = item->GetTemplate();
 
-    if (proto->RequiredLevel < 60 || proto->ItemLevel < 100)
+    if (!NPCBots::AutoEquip::CanGenerateEnchant(botLevel, proto->RequiredLevel, proto->ItemLevel))
         return result;
 
     static const auto is_enchantable = [](ItemTemplate const* p, SpellInfo const* s) {

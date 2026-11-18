@@ -14,6 +14,16 @@ namespace NPCBots::AutoEquip
 {
 enum class Kind { Level, Blue, T7, T8, T9, T10, Wrathful, ItemLevel, Organic };
 
+inline bool MeetsRequiredLevel(uint32_t requiredLevel, uint8_t botLevel)
+{
+    return requiredLevel <= botLevel;
+}
+
+inline bool CanGenerateEnchant(uint8_t botLevel, uint32_t requiredLevel, uint32_t itemLevel)
+{
+    return botLevel >= 70 && requiredLevel >= 60 && itemLevel >= 100 && MeetsRequiredLevel(requiredLevel, botLevel);
+}
+
 struct Preset
 {
     Kind kind;
@@ -38,7 +48,7 @@ inline std::optional<Preset> Parse(std::string_view input, uint8_t level)
         if (level < 60)
         {
             cap = level + 5;
-            min = cap > 12 ? cap - 12 : 0;
+            min = cap > 10 ? cap - 10 : 0;
         }
         else if (level < 70)
         {

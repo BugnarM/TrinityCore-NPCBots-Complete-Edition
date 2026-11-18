@@ -182,9 +182,25 @@ static void TestOrganicEquipment()
     std::cout << "PASS: 10000 organic identities, exact 35/35/15/15 bonuses, 10 percent PvP, stable order, head/shirt and two-hand constraints\n";
 }
 
+void TestLevelingEquipment()
+{
+    using namespace NPCBots::AutoEquip;
+    for (auto name : {"organic", "auto"})
+    {
+        auto preset = Parse(name, 34);
+        if (!preset || preset->minimum != 29 || preset->maximum != 39)
+            throw std::runtime_error("level 34 equipment must use the 29-39 ilvl band");
+    }
+    if (!MeetsRequiredLevel(34, 34) || MeetsRequiredLevel(35, 34) || MeetsRequiredLevel(81, 80))
+        throw std::runtime_error("generated items must respect the wearer's required level");
+    if (CanGenerateEnchant(34, 60, 100) || CanGenerateEnchant(69, 68, 120) ||
+        CanGenerateEnchant(70, 80, 200) || !CanGenerateEnchant(80, 80, 200))
+        throw std::runtime_error("generated enchants must respect the bot and item levels");
+}
+
 int main()
 {
     try { TestHazards(); TestEquipment();
-        TestOrganicEquipment(); }
+        TestOrganicEquipment(); TestLevelingEquipment(); }
     catch (std::exception const& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }
