@@ -400,6 +400,13 @@ public:
             if (!CanBotAttackOnVehicle())
                 return;
 
+            if (HasRole(BOT_ROLE_HEAL) && GC_Timer <= diff && !IsCasting())
+            {
+                BuffAndHealGroup(diff);
+                if (GC_Timer > diff || IsCasting())
+                    return;
+            }
+
             Disperse(diff);
 
             DoDevCheck(diff);
@@ -424,14 +431,16 @@ public:
                 MassGroupHeal(diff);
                 ShieldGroup(diff);
                 CheckMending(diff);
-                BuffAndHealGroup(diff);
+                if (!HasRole(BOT_ROLE_HEAL))
+                    BuffAndHealGroup(diff);
             }
             else
             {
                 MassGroupHeal(diff);
                 ShieldGroup(diff);
                 CheckMending(diff);
-                BuffAndHealGroup(diff);
+                if (!HasRole(BOT_ROLE_HEAL))
+                    BuffAndHealGroup(diff);
                 CureGroup(GetSpell(DISPEL_MAGIC_1), diff);
                 CureGroup(GetSpell(CURE_DISEASE_1), diff);
             }

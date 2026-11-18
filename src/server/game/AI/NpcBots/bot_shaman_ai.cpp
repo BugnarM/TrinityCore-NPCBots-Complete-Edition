@@ -959,6 +959,13 @@ public:
             if (!CanBotAttackOnVehicle())
                 return;
 
+            if (HasRole(BOT_ROLE_HEAL) && GC_Timer <= diff && !IsCasting())
+            {
+                BuffAndHealGroup(diff);
+                if (GC_Timer > diff || IsCasting())
+                    return;
+            }
+
             CheckShamanisticRage(diff);
             CheckThunderStorm(diff);
 
@@ -976,7 +983,8 @@ public:
             CheckRacials(diff);
 
             CheckBloodlust(diff);
-            BuffAndHealGroup(diff);
+            if (!HasRole(BOT_ROLE_HEAL))
+                BuffAndHealGroup(diff);
             CheckEarthShield(diff);
             CureGroup(CURE_TOXINS, diff);
             CheckTotems(diff);

@@ -537,6 +537,13 @@ public:
             if (!CanBotAttackOnVehicle())
                 return;
 
+            if (HasRole(BOT_ROLE_HEAL) && GC_Timer <= diff && !IsCasting())
+            {
+                BuffAndHealGroup(diff);
+                if (GC_Timer > diff || IsCasting())
+                    return;
+            }
+
             CheckHibery(diff);
             CheckBarkskin(diff);
 
@@ -559,8 +566,8 @@ public:
             else
                 DoNonCombatActions(diff);
 
-            if (HasRole(BOT_ROLE_RANGED) || !me->IsInCombat() || !me->GetVictim() ||
-                (_form != DRUID_BEAR_FORM && (_form != DRUID_CAT_FORM || !me->GetMap()->IsRaid())))
+            if (!HasRole(BOT_ROLE_HEAL) && (HasRole(BOT_ROLE_RANGED) || !me->IsInCombat() || !me->GetVictim() ||
+                (_form != DRUID_BEAR_FORM && (_form != DRUID_CAT_FORM || !me->GetMap()->IsRaid()))))
                 BuffAndHealGroup(diff);
             if (_form != DRUID_BEAR_FORM && _form != DRUID_CAT_FORM)
             {

@@ -775,7 +775,10 @@ bool bot_ai::doCast(Unit* victim, uint32 spellId, TriggerCastFlags flags)
             {
                 if (JumpingOrFalling() || HasBotCommandState(BOT_COMMAND_STAY))
                     return false;
-                if (!me->GetVictim() && me->IsInWorld() && (me->GetMap()->IsRaid() || me->GetMap()->IsHeroic()) &&
+                bool const groupHeal = HasRole(BOT_ROLE_HEAL) && victim->IsPlayer() && IsInBotParty(victim) &&
+                    m_botSpellInfo->IsPositive() && (m_botSpellInfo->HasEffect(SPELL_EFFECT_HEAL) ||
+                        m_botSpellInfo->HasAura(SPELL_AURA_PERIODIC_HEAL));
+                if (!groupHeal && !me->GetVictim() && me->IsInWorld() && (me->GetMap()->IsRaid() || me->GetMap()->IsHeroic()) &&
                     !m_botSpellInfo->HasAura(SPELL_AURA_MOUNTED))
                     return false;
                 if (!m_botSpellInfo->HasEffect(SPELL_EFFECT_HEAL) && Rand() > (IAmFree() ? 80 : 50))
@@ -1331,8 +1334,21 @@ bool bot_ai::TryHealCandidates(std::vector<Unit*> const& targets, uint32 diff)
         Unit* target = ObjectAccessor::GetUnit(*me, guid);
         if (!CanEvaluateHealTarget(target))
             continue;
+        bool const urgentPlayer = !IAmFree() && HasRole(BOT_ROLE_HEAL) && target->IsPlayer() &&
+            GetHealthPCT(target) <= (target == master ? BotCfg::GetHealingSettings().ownerEmergencyPct : BotCfg::GetHealingSettings().groupEmergencyPct);
+        if ((Feasting() || (me->IsMounted() && !IsWanderer())) && !urgentPlayer)
+            continue;
         if (me->IsMounted())
+        {
+            if (me->IsFlying() || JumpingOrFalling())
+                continue;
             DismountBot();
+        }
+        if (Feasting())
+        {
+            UpdateMana();
+            me->SetStandState(UNIT_STAND_STATE_STAND);
+        }
         if (HealTarget(target, diff))
             return true;
         if (!me->IsAlive() || !me->IsInWorld())
@@ -1345,12 +1361,14 @@ bool bot_ai::TryHealCandidates(std::vector<Unit*> const& targets, uint32 diff)
 }
 void bot_ai::BuffAndHealGroup(uint32 diff)
 {
-    if (GC_Timer > diff || IsCasting() || Feasting() || (me->IsMounted() && !IsWanderer()))
+    if (GC_Timer > diff || IsCasting() || HasBotCommandState(BOT_COMMAND_NO_CAST | BOT_COMMAND_INACTION))
+        return;
+    if ((Feasting() || (me->IsMounted() && !IsWanderer())) && (IAmFree() || !HasRole(BOT_ROLE_HEAL)))
         return;
     if (!IAmFree() && (!master || !master->IsInWorld() || master->FindMap() != me->FindMap()))
         return;
     auto const& cfg = BotCfg::GetHealingSettings();
-    bool const emergency = GetHealthPCT(me) <= 35 || (!IAmFree() && GetHealthPCT(master) < cfg.ownerEmergencyPct);
+    bool const emergency = GetHealthPCT(me) <= 35 || (!IAmFree() && GetHealthPCT(master) <= cfg.ownerEmergencyPct);
     if (_healScanTimer && !emergency)
         return;
     NPCBots::Healing::DecisionScope decisionScope(cfg.diagnostics ? &_healingMetrics : nullptr);
@@ -1420,7 +1438,7 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
         if (me->IsInCombat() || (master->IsInCombat() && !me->GetMap()->IsRaid()))
             return;
     }
-    if (!buffs.empty() && CanDoNonCombatActions())
+    if (!buffs.empty() && !Feasting() && !me->IsMounted() && CanDoNonCombatActions())
     {
         Unit* target = Bcore::Containers::SelectRandomContainerElement(buffs);
         if (CanEvaluateHealTarget(target))
@@ -18502,7 +18520,8 @@ bool bot_ai::GlobalUpdate(uint32 diff)
         (offensiveCast(CURRENT_GENERIC_SPELL) || offensiveCast(CURRENT_CHANNELED_SPELL)))
     {
         auto threatened = [&](Unit const* unit, unsigned threshold) {
-            return CanEvaluateHealTarget(unit) && GetHealthPCT(unit) < threshold &&
+            return CanEvaluateHealTarget(unit) && !unit->IsFullHealth() &&
+                GetHealthPCT(unit) <= std::min<unsigned>(threshold, GetHealHpPctThreshold()) &&
                 me->IsWithinLOSInMap(unit, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::M2);
         };
         bool needHeal = threatened(master, BotCfg::GetHealingSettings().ownerEmergencyPct);

@@ -707,8 +707,11 @@ public:
             if (hp > 90 && !(pointed && me->GetMap()->IsRaid()) && !(target->IsPlayer() || target == master) &&
                 (!target->IsInCombat() || target->getAttackers().empty() || !IsTank(target) || !me->GetMap()->IsRaid()))
                 return false;
-            //try to preserve heal if Divine Plea is active
-            if (hp > 50 && me->GetAuraEffect(SPELL_AURA_OBS_MOD_POWER, SPELLFAMILY_PALADIN, 0x0, 0x0, 0x1))
+            // Divine Plea reduces healing. Keep treating urgent patients even while it is active.
+            unsigned const pleaThreshold = HasRole(BOT_ROLE_HEAL) && target->IsPlayer()
+                ? (target == master ? BotCfg::GetHealingSettings().ownerEmergencyPct : BotCfg::GetHealingSettings().groupEmergencyPct)
+                : 50;
+            if (hp > pleaThreshold && me->GetAuraEffect(SPELL_AURA_OBS_MOD_POWER, SPELLFAMILY_PALADIN, 0x0, 0x0, 0x1))
                 return false;
 
             int32 const hps = GetHPS(target);
@@ -820,6 +823,13 @@ public:
             if (!CanBotAttackOnVehicle())
                 return;
 
+            if (HasRole(BOT_ROLE_HEAL) && GC_Timer <= diff && !IsCasting())
+            {
+                BuffAndHealGroup(diff);
+                if (GC_Timer > diff || IsCasting())
+                    return;
+            }
+
             if (IsPotionReady())
             {
                 if (GetManaPCT(me) < 30)
@@ -842,13 +852,15 @@ public:
             if (me->GetMap()->IsRaid())
             {
                 CureGroup(GetSpell(CLEANSE), diff);
-                BuffAndHealGroup(diff);
+                if (!HasRole(BOT_ROLE_HEAL))
+                    BuffAndHealGroup(diff);
                 CheckHandOfSacrifice(diff);
                 ShieldGroup(diff);
             }
             else
             {
-                BuffAndHealGroup(diff);
+                if (!HasRole(BOT_ROLE_HEAL))
+                    BuffAndHealGroup(diff);
                 CheckHandOfSacrifice(diff);
                 ShieldGroup(diff);
                 CureGroup(GetSpell(CLEANSE), diff);
