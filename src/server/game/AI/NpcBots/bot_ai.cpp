@@ -255,7 +255,9 @@ const std::string& bot_ai::LocalizedNpcText(Player const* forPlayer, uint32 text
 
 void bot_ai::InitializeAI()
 {
-    if (!me->GetSpawnId() && !IsTempBot() && !me->IsSummon() && (!_botData || !_botData->owner))
+    // Hearthstone companions also have no permanent spawn, but use regular templates.
+    if (!me->GetSpawnId() && !IsTempBot() && !me->IsSummon() && (!_botData || !_botData->owner) &&
+        BotDataMgr::GetBotExtraCreatureTemplate(me->GetEntry()))
         SetWanderer();
 
     Reset();
