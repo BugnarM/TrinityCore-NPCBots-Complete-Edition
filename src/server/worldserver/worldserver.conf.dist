@@ -5001,23 +5001,37 @@ NpcBot.WanderingBots.DynamicZone.Enable = 1
 #
 #    NpcBot.WanderingBots.DynamicZone.BotsPerZone
 #        Description: Target per occupied zone, shared evenly if MaxBots is exceeded. Range: 0-100.
-#        Default:     100
-NpcBot.WanderingBots.DynamicZone.BotsPerZone = 100
+#        Default:     50
+NpcBot.WanderingBots.DynamicZone.BotsPerZone = 50
+
+#
+#    NpcBot.WanderingBots.DynamicZone.ProximityRadius
+#        Description: Proximity radius around active players (in yards) for dynamic bot spawning.
+#        Default:     350.0
+NpcBot.WanderingBots.DynamicZone.ProximityRadius = 350.0
+
+#
+#    NpcBot.WanderingBots.DynamicZone.DespawnRadius
+#        Description: Distance beyond proximity radius (in yards) before dynamic bots despawn.
+#        Default:     700.0
+NpcBot.WanderingBots.DynamicZone.DespawnRadius = 700.0
 
 #
 #    NpcBot.WanderingBots.DynamicZone.UpdateInterval
 #        Description: Scan interval in seconds. Range: 1-300. In-flight/teleporting players are skipped.
-#        Default:     15
-NpcBot.WanderingBots.DynamicZone.UpdateInterval = 15
+#        Default:     10
+NpcBot.WanderingBots.DynamicZone.UpdateInterval = 10
 
 #    NpcBot.WanderingBots.DynamicZone.MaxBots
 #        Description: Global dynamic population target limit (0-1000), excluding manual/BG/instance bots.
-NpcBot.WanderingBots.DynamicZone.MaxBots = 100
+#        Default:     50
+NpcBot.WanderingBots.DynamicZone.MaxBots = 50
 
 #    NpcBot.WanderingBots.DynamicZone.SpawnBudget
 #        Description: Maximum spawn attempts per scan (1-32). Zones are served in rotation.
 #                     Equipment and grid loading are spread over successive scans.
-NpcBot.WanderingBots.DynamicZone.SpawnBudget = 25
+#        Default:     10
+NpcBot.WanderingBots.DynamicZone.SpawnBudget = 10
 
 #
 #    NpcBot.DarkKnight.Enable
@@ -5167,7 +5181,7 @@ NpcBot.Wanderer.PlayerAid.Enable = 1
 NpcBot.Wanderer.PlayerAid.Range = 40.0
 NpcBot.Wanderer.PlayerAid.AllowDuel = 0
 NpcBot.Wanderer.PlayerAid.AllowWhileStealthed = 0
-NpcBot.Wanderer.BonesLifetimeSeconds = 1800
+NpcBot.Wanderer.BonesLifetimeSeconds = 300
 NpcBot.Wanderer.ReviveDelayMs = 300000
 Companion.Stone.CooldownSeconds = 18000
 Companion.Heirlooms.Enable = 1

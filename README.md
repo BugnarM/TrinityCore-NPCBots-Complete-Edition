@@ -133,10 +133,13 @@ AOELoot.MaxCorpses = 60
 # DYNAMIC ZONE WANDERERS
 ###############################################################################
 NpcBot.WanderingBots.DynamicZone.Enable = 1
-NpcBot.WanderingBots.DynamicZone.BotsPerZone = 8
-NpcBot.WanderingBots.DynamicZone.UpdateInterval = 15
-NpcBot.WanderingBots.DynamicZone.MaxBots = 2000
-NpcBot.WanderingBots.DynamicZone.SpawnBudget = 50
+NpcBot.WanderingBots.DynamicZone.BotsPerZone = 50
+NpcBot.WanderingBots.DynamicZone.UpdateInterval = 10
+NpcBot.WanderingBots.DynamicZone.MaxBots = 50
+NpcBot.WanderingBots.DynamicZone.SpawnBudget = 10
+NpcBot.WanderingBots.DynamicZone.ProximityRadius = 350.0
+NpcBot.WanderingBots.DynamicZone.DespawnRadius = 700.0
+NpcBot.Wanderer.BonesLifetimeSeconds = 300
 NpcBot.WanderingBots.Continents.Count = 0
 
 ###############################################################################

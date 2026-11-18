@@ -355,7 +355,7 @@ private:
         settings.allowStealthedAid = sConfigMgr->GetBoolDefault("NpcBot.Wanderer.PlayerAid.AllowWhileStealthed", false);
         settings.aidRange = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.Wanderer.PlayerAid.Range", 40.f), 40.f, 5.f, 40.f);
         settings.diagnostics = sConfigMgr->GetBoolDefault("NpcBot.Healing.Diagnostics.Enable", false);
-        settings.bonesSeconds = number("NpcBot.Wanderer.BonesLifetimeSeconds", 1800, 60, 86400);
+        settings.bonesSeconds = number("NpcBot.Wanderer.BonesLifetimeSeconds", 300, 60, 86400);
         settings.reviveMs = number("NpcBot.Wanderer.ReviveDelayMs", 300000, 1000, 3600000);
         settings.companionCooldownSeconds = number("Companion.Stone.CooldownSeconds", 18000, 0, 604800);
         settings.heirlooms = sConfigMgr->GetBoolDefault("Companion.Heirlooms.Enable", true);
