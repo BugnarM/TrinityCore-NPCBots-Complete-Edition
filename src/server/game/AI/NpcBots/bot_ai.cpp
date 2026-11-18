@@ -15552,6 +15552,10 @@ bool bot_ai::_planAutoEquip(NPCBots::AutoEquip::Preset const& preset, Player con
                 proto->Duration || proto->RandomProperty || proto->RandomSuffix ||
                 (preset.kind == Kind::Blue && proto->Quality != ITEM_QUALITY_RARE && proto->InventoryType != INVTYPE_RELIC))
                 continue;
+            if (me->GetLevel() < 80 && proto->RequiredLevel > me->GetLevel())
+                continue;
+            if (receiver && receiver->GetLevel() < 80 && proto->RequiredLevel > receiver->GetLevel())
+                continue;
             if (isTierSlot(slot) && !FitsClassSet(setProfile, proto->ItemSet)) continue;
             bool resilience = std::ranges::any_of(proto->ItemStat, [](auto const& stat) { return stat.ItemStatType == ITEM_MOD_RESILIENCE_RATING && stat.ItemStatValue > 0; });
             bool wrathful = proto->Name1.starts_with("Wrathful Gladiator's");

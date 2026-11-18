@@ -3266,7 +3266,7 @@ bool BotDataMgr::GenerateWanderingBotItemEnchants(Item* item, uint8 slot, uint8 
 
     ItemTemplate const* proto = item->GetTemplate();
 
-    if (proto->RequiredLevel < 60)
+    if (proto->RequiredLevel < 60 || proto->ItemLevel < 100)
         return result;
 
     static const auto is_enchantable = [](ItemTemplate const* p, SpellInfo const* s) {

@@ -31,18 +31,38 @@ inline std::optional<Preset> Parse(std::string_view input, uint8_t level)
     for (char& c : arg)
         if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
 
+    auto levelPreset = [level](Kind kind, std::string const& label) -> Preset {
+        if (level >= 80)
+            return Preset{kind, 187, 219, label + " T7", 7};
+        uint32_t cap = 0, min = 0;
+        if (level < 60)
+        {
+            cap = level + 5;
+            min = cap > 12 ? cap - 12 : 0;
+        }
+        else if (level < 70)
+        {
+            cap = 85 + (level - 60) * 4;
+            min = cap > 20 ? cap - 20 : 65;
+        }
+        else
+        {
+            cap = 145 + (level - 70) * 4;
+            min = cap > 25 ? cap - 25 : 120;
+        }
+        return Preset{kind, min, cap, label + " Level", 0};
+    };
+
     if (arg.empty() || arg == "auto" || arg == "default")
     {
         if (level >= 80) return Preset{Kind::Blue, 187, 200, "Dungeon Blue"};
-        uint32_t cap = std::min<uint32_t>(200, level * 2 + 10);
-        return Preset{Kind::Level, cap > 25 ? cap - 25 : 0, cap, "level-appropriate"};
+        return levelPreset(Kind::Level, "level-appropriate");
     }
 
     if (arg == "organic" || arg == "real" || arg == "random" || arg == "pug")
     {
         if (level >= 80) return Preset{Kind::Organic, 187, 219, "Organic T7", 7};
-        uint32_t cap = std::min<uint32_t>(200, level * 2 + 10);
-        return Preset{Kind::Organic, cap > 25 ? cap - 25 : 0, cap, "Organic Level", 0};
+        return levelPreset(Kind::Organic, "Organic");
     }
     if (arg == "organic t7" || arg == "real t7" || arg == "random t7") return Preset{Kind::Organic, 187, 219, "Organic T7", 7};
     if (arg == "organic t8" || arg == "real t8" || arg == "random t8") return Preset{Kind::Organic, 200, 232, "Organic T8", 8};
