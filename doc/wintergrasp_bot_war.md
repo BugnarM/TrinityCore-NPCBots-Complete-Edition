@@ -45,7 +45,7 @@ For a fresh installation, review the [world migration manifest](../sql/custom/wo
 | East | Sunken Ring → eastern ramp or bridge → wall 190372 → inner wall → vault gate → relic |
 | Defender counterattacks | Fortress exterior → southern towers 190356, 190357, or 190358 → nearby workshops |
 
-Historical technical notes cover changes to [vehicle attacks and capture](wintergrasp_aggression_2026_11_08.md), [workshops and ranks](wintergrasp_realism_2026_11_08.md), [recovery and siege](wintergrasp_upgrades_2026_11_08.md), [native wanderers](wintergrasp_native_wanderers_2026_11_09.md), and [vehicle navigation](wintergrasp_vehicle_navigation_2026_10_26.md).
+Historical technical notes cover changes to [vehicle attacks and capture](archive/wintergrasp/wintergrasp_aggression_2026_11_08.md), [workshops and ranks](archive/wintergrasp/wintergrasp_realism_2026_11_08.md), [recovery and siege](archive/wintergrasp/wintergrasp_upgrades_2026_11_08.md), [native wanderers](archive/wintergrasp/wintergrasp_native_wanderers_2026_11_09.md), and [vehicle navigation](archive/wintergrasp/wintergrasp_vehicle_navigation_2026_10_26.md).
 
 ## Game objects and spell IDs
 

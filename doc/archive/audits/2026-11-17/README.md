@@ -1,6 +1,6 @@
 # Audit TrinityCore / NPCBots — 17 noiembrie 2026
 
-**Raport istoric, anterior remedierilor.** Implementarea solicitată ulterior este descrisă în [IMPLEMENTATION.md](IMPLEMENTATION.md). Patch-ul minim este păstrat doar ca referință; codul integrat conține corecții mai ample.
+**Raport istoric, anterior remedierilor.** Implementarea solicitată ulterior este descrisă în [IMPLEMENTATION.md](../../../audit_2026_11_17/IMPLEMENTATION.md). Patch-ul minim este păstrat doar ca referință; codul integrat conține corecții mai ample.
 
 Sursă verificată: `/root/TrinityCore-3.3.5-with-NPCBots`, `master`, HEAD `ddc4f1521af7`.
 Instalare inspectată: `/home/trinity/server`; build: `/home/trinity/build/npcbots`.
@@ -256,7 +256,7 @@ Loguri brute: `/tmp/trinity-audit-20261117/` (temporare; rezultatul este păstra
 - `city_raid_lifecycle.py`: harness nu are Bot::GetExactDist2d, Config::EventId/CityName, TC_LOG_INFO.
 - `city_raid_route_combat.py`: harness nu reflectă CityRaidBotAI/reinforcing, BossEntry, Focus și metodele Unit. Nu este dovadă că producția nu compilează.
 - `city_raid_navigation.cpp` trebuie lansat prin `city_raid_navigation.py`, care pregătește include/lib/navmesh. Încercarea inițială standalone fără aceste flags a eșuat cu MMapFactory.h lipsă și nu este numărată drept defect de proiect. Wrapper-ul a trecut.
-- `git apply --check doc/audit_2026_11_17/healer_minimal_proposal.patch`: trecut. Patch-ul nu este aplicat și nu a fost compilat ca parte a serverului. Am generat separat `/tmp/trinity-audit-20261117/bot_ai_proposal.cpp` și am verificat întreaga unitate de traducere cu `/usr/bin/c++ -fsyntax-only`, definițiile/include-urile/flag-urile din `game.dir/flags.make` și include-ul directorului NpcBots: **trecut, exit 0**. Log `proposal-syntax.log`; aceasta validează sintaxa/tipurile, nu runtime/link/gameplay.
+- `git apply --check doc/archive/audits/2026-11-17/healer_minimal_proposal.patch`: trecut. Patch-ul nu este aplicat și nu a fost compilat ca parte a serverului. Am generat separat `/tmp/trinity-audit-20261117/bot_ai_proposal.cpp` și am verificat întreaga unitate de traducere cu `/usr/bin/c++ -fsyntax-only`, definițiile/include-urile/flag-urile din `game.dir/flags.make` și include-ul directorului NpcBots: **trecut, exit 0**. Log `proposal-syntax.log`; aceasta validează sintaxa/tipurile, nu runtime/link/gameplay.
 - Verificare dump gzip: trecut pentru toate cele trei arhive; fără import SQL.
 - Conectarea read-only la socket MariaDB a fost refuzată de mediu; schema/datele live și aplicarea migrațiilor nu sunt confirmate. Nu am încercat parole din conf și nu am modificat DB.
 - Build `cmake --build /home/trinity/build/npcbots --target worldserver authserver --parallel 2`: **trecut** pentru sursa curentă. Log în `/tmp/trinity-audit-20261117/build.log`. Fără install/deploy.

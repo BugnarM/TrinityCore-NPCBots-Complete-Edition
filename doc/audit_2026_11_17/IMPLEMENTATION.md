@@ -1,6 +1,6 @@
 # NPCBots audit implementation, November 17, 2026
 
-This report records the changes delivered after the [original audit](README.md). The deployment manifest records the source revision, build identity, and checksums for binaries and configuration.
+This report records the changes delivered after the [original audit](../archive/audits/2026-11-17/README.md). The deployment manifest records the source revision, build identity, and checksums for binaries and configuration.
 
 ## Implemented changes
 

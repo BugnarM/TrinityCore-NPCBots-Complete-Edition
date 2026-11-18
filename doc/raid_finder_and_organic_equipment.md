@@ -39,4 +39,4 @@ The 3.3.5 client receives queue feedback through chat and existing Raid Browser 
 
 For a selected active companion, an organic preset such as `.npcbot autoequip organic t10` applies role- and specialization-aware selection within the preset's limits. Organic presets can mix tiers to meet equipment and set-bonus targets. Attached companions without real equipment can receive organic gear after their level is set. The planner checks item required levels against the bot and the receiving player. [AutoEquip and raid hazards](raid_hazards_and_autoequip.md)
 
-For implementation history, the earlier audit records the original rollout and its verification. [October 2026 audit](prompt_audit_2026_10_25.md)
+For implementation history, the earlier audit records the original rollout and its verification. [October 2026 audit](archive/audits/prompt_audit_2026_10_25.md)

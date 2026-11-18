@@ -19,7 +19,7 @@ validare de gameplay cu un client conectat.
 | 7. Autoequip | Preflight complet pentru planurile fixe și organice, sintaxă Tail pentru `.npcbot autoequip organic t10`, filtrare explicită a ItemSet-urilor pentru cele 19 profile standard. Piesele pentru priest/shaman/druid healer nu mai pot fi înlocuite cu setul DPS doar datorită statisticilor similare. |
 | 8. Organic gear | Corectat slotul ignorat: cămașa este 6, capul este 3. Exact 35% 4p / 35% 2p / 15% 5p / 15% 3p când catalogul permite; off-set-ul nu mai poate completa accidental setul selectat. Implementată efectiv șansa de 10% PvP pe sloturile secundare. Ordine deterministă, identitate stabilă bazată pe șablon/spec/rol, restricții de unicitate și 2H/offhand. |
 | 9. Raid Finder | Înlocuit fluxul care forma câte un raid pentru fiecare solicitant și teleporta doar liderul pe continent. Matchmaking real între solicitări, grupuri indivizibile și facțiuni separate; prioritate numărului de jucători umani, apoi locurilor ocupate. Rezervare înainte de reorganizarea grupurilor; dificultate Normal 10/25; teleportarea tuturor oamenilor în instanță și spawn numai după sosire. |
-| 10. Dynamic Zone Wanderers | Corectate alegerea nivelului pe nod/clasă, facțiunea, izolarea hartă/zonă, patrularea, limitele și curățarea. Detalii în [dynamic_zone_population.md](dynamic_zone_population.md). Teste offline; integrarea în joc nu este încă validată. |
+| 10. Dynamic Zone Wanderers | Corectate alegerea nivelului pe nod/clasă, facțiunea, izolarea hartă/zonă, patrularea, limitele și curățarea. Detalii în [dynamic_zone_population.md](../../dynamic_zone_population.md). Teste offline; integrarea în joc nu este încă validată. |
 
 ## Echipare și proprietatea obiectelor
 
@@ -97,7 +97,7 @@ native de grup. Nu se pretinde implementarea unui astfel de client/UI nou.
 
 Implementarea inițială a fost revizuită. Nivelurile sunt alese pentru fiecare punct și clasă, regulile de facțiune sunt obligatorii, iar deplasarea boților dinamici rămâne în zona de origine. S-au adăugat limite globale, spawn gradual și setări validate. Modul manual își păstrează lista de hărți.
 
-Testul vechi folosea o copie simulată a managerului și nu demonstra integrarea reală. A fost înlocuit cu verificări ale politicii de producție. Raportul [dynamic_zone_population.md](dynamic_zone_population.md) descrie configurația, datele observate, testele și limitele verificării offline.
+Testul vechi folosea o copie simulată a managerului și nu demonstra integrarea reală. A fost înlocuit cu verificări ale politicii de producție. Raportul [dynamic_zone_population.md](../../dynamic_zone_population.md) descrie configurația, datele observate, testele și limitele verificării offline.
 
 ## Verificare
 

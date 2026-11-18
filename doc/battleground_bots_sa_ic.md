@@ -24,11 +24,11 @@ The tactical controller reads gate and objective state once per second, runs Dij
 - Flag and relic interactions use native casts with interruption. The server validates range, line of sight, phase, team, target object, and bot participation.
 - Round changes evacuate vehicles, resurrect bots, clear crowd control and tactical orders, swap roles, and apply preparation. The preparation aura is removed when the round starts. Destroyed gates and demolishers use the battleground's scoring rules.
 
-See the technical notes on [movement and preparation](sa_movement_and_preparation_2026_10_26.md), [gate collision](sa_gate_collision_and_defense_2026_10_26.md), [objective capture](sa_objective_capture_2026_10_27.md), and [vehicle roles](sa_vehicle_roles_and_retention_2026_10_27.md).
+See the technical notes on [movement and preparation](archive/battlegrounds/sa_movement_and_preparation_2026_10_26.md), [gate collision](archive/battlegrounds/sa_gate_collision_and_defense_2026_10_26.md), [objective capture](archive/battlegrounds/sa_objective_capture_2026_10_27.md), and [vehicle roles](archive/battlegrounds/sa_vehicle_roles_and_retention_2026_10_27.md).
 
 ### Isle of Conquest
 
-- Infantry uses keep teleporters in both directions for both factions. The bot rejoins the waypoint graph after transfer without being blocked by waypoint edges on closed gates. [Keep teleporter notes](ioc_keep_teleporters_2026_10_26.md)
+- Infantry uses keep teleporters in both directions for both factions. The bot rejoins the waypoint graph after transfer without being blocked by waypoint edges on closed gates. [Keep teleporter notes](archive/battlegrounds/ioc_keep_teleporters_2026_10_26.md)
 - Eight logical groups of five are assigned by ID across Workshop, Docks, Hangar, Quarry, and Refinery. Captured bases keep sentries, most Workshop and Docks groups escort siege, and a reaction group responds to contested objectives.
 - Flags use the same flow as players, with a cast, contested banner, 60-second timer, capture or defense, messages, scoring, vehicles, and spirit guides. Only fully controlled graveyards with an active spirit guide can resurrect bots. Quarry and Refinery provide resource bonuses, which are refreshed after changes of control or resurrection.
 - After a breach, infantry advances toward the commander. Assigned bots try to capture the keep graveyard first, and some groups defend their own commander when their keep is breached.
