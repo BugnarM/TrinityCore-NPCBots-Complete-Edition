@@ -11727,6 +11727,42 @@ bool Unit::InitTamedPet(Pet* pet, uint8 level, uint32 spell_id)
             if (creature->GetLootMode() > 0)
                 loot->generateMoneyLoot(creature->GetCreatureTemplate()->mingold, creature->GetCreatureTemplate()->maxgold);
 
+            if (looter && !loot->GetPlayerQuestItems().empty() && sConfigMgr->GetBoolDefault("QuestLoot.AutoCollect", true, /*quiet=*/true))
+            {
+                auto collectQuestLoot = [&](Player* recipient)
+                {
+                    if (!recipient || !recipient->IsAlive() || !recipient->IsInWorld() || recipient->HasPendingBind() ||
+                        !creature->InSamePhase(recipient) ||
+                        !creature->IsWithinDistInMap(recipient, sWorld->getFloatConfig(CONFIG_GROUP_XP_DISTANCE)))
+                        return;
+
+                    uint32 const endSlot = loot->GetMaxSlotInLootFor(recipient);
+                    for (uint32 slot = loot->items.size(); slot < endSlot && loot->unlootedCount; ++slot)
+                    {
+                        LootItem const* item = loot->LootItemInSlot(slot, recipient);
+                        if (!item || item->is_looted || !item->needs_quest || item->follow_loot_rules ||
+                            (!item->rollWinnerGUID.IsEmpty() && item->rollWinnerGUID != recipient->GetGUID()) ||
+                            !recipient->HasQuestForItem(item->itemid) ||
+                            !item->AllowedForPlayer(recipient, loot->lootOwnerGUID))
+                            continue;
+
+                        recipient->StoreLootItem(uint8(slot), loot);
+                    }
+                };
+
+                if (Group const* recipientGroup = creature->GetLootRecipientGroup())
+                {
+                    // The selected looter gets first claim on shared quest drops.
+                    if (looter->GetGroup() == recipientGroup)
+                        collectQuestLoot(looter);
+                    for (GroupReference const* ref = recipientGroup->GetFirstMember(); ref; ref = ref->next())
+                        if (ref->GetSource() != looter)
+                            collectQuestLoot(ref->GetSource());
+                }
+                else if (creature->GetLootRecipient() == looter)
+                    collectQuestLoot(looter);
+            }
+
             //npcbot: spawn wandering bot kill reward
             if (creature->IsNPCBot() && creature->IsWandererBot())
                 BotMgr::OnBotWandererKilled(creature, looter);

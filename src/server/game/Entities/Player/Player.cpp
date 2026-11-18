@@ -24778,14 +24778,20 @@ void Player::StoreLootItem(uint8 lootSlot, Loot* loot)
     {
         Item* newitem = StoreNewItem(dest, item->itemid, true, item->randomPropertyId, item->GetAllowedLooters());
 
+        if (!newitem)
+            return;
+
         if (qitem)
         {
             qitem->is_looted = true;
             //freeforall is 1 if everyone's supposed to get the quest item.
-            if (item->freeforall || loot->GetPlayerQuestItems().size() == 1)
-                SendNotifyLootItemRemoved(lootSlot);
-            else
-                loot->NotifyQuestItemRemoved(qitem->index);
+            if (loot->HasActiveLooters())
+            {
+                if (item->freeforall || loot->GetPlayerQuestItems().size() == 1)
+                    SendNotifyLootItemRemoved(lootSlot);
+                else
+                    loot->NotifyQuestItemRemoved(qitem->index);
+            }
         }
         else
         {
@@ -24812,7 +24818,9 @@ void Player::StoreLootItem(uint8 lootSlot, Loot* loot)
 
         SendNewItem(newitem, uint32(item->count), false, false, true);
         UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_ITEM, item->itemid, item->count);
-        UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_TYPE, GetLootTypeForClient(loot->loot_type), item->count);
+        // Quest loot can be collected before the first corpse loot window is opened.
+        LootType const lootType = qitem && loot->loot_type == LOOT_NONE ? LOOT_CORPSE : loot->loot_type;
+        UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_TYPE, GetLootTypeForClient(lootType), item->count);
         UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_LOOT_EPIC_ITEM, item->itemid, item->count);
 
         // LootItem is being removed (looted) from the container, delete it from the DB.

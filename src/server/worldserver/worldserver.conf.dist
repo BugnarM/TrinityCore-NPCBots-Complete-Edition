@@ -5126,6 +5126,14 @@ CityRaid.Reward.Gold = 10
 CityRaid.Reward.Seconds = 180
 
 #
+#    QuestLoot.AutoCollect
+#        Description: Collect eligible creature quest drops on kill, within MaxGroupXPDistance.
+#                     Items that follow group loot rules and items that do not fit stay on the corpse.
+#        Default:     1 - Enabled
+#                     0 - Disabled
+QuestLoot.AutoCollect = 1
+
+#
 #    AOELoot.Enable
 #        Description: Enable Area of Effect (AoE) Looting.
 #                     Automatically loots all nearby corpses when looting an NPC,
