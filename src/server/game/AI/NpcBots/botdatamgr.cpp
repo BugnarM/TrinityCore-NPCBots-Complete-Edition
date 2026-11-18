@@ -1037,7 +1037,37 @@ public:
 
         auto const [bot_class, orig_entry] = Bcore::Containers::SelectRandomContainerElement(eligible);
         auto const range = *NPCBots::DynamicZone::SpawnLevels(nodeMin, nodeMax, BotDataMgr::GetMinLevelForBotClass(bot_class));
-        if (!target_level) target_level = urand(range.min, range.max);
+        if (!overridePos)
+        {
+            auto const* extras = BotDataMgr::SelectNpcBotExtras(orig_entry);
+            uint32 const faction = sWorld->IsFFAPvPRealm() ? uint32(FACTION_TEMPLATE_NEUTRAL_HOSTILE) :
+                BotDataMgr::GetDefaultFactionForBotRaceClass(bot_class, extras->race);
+            std::array<bool, DEFAULT_MAX_LEVEL + 1> reachable{};
+            for (auto const& link : spawnLoc->GetLinks())
+            {
+                auto const [min, max] = link.wp->GetLevels();
+                if (!NPCBots::DynamicZone::InScope(link.wp->GetMapId(), link.wp->GetZoneId(), spawnLoc->GetMapId(), spawnLoc->GetZoneId()) ||
+                    !bot_ai::IsWanderNodeAvailableForBotFaction(link.wp, faction, false))
+                    continue;
+
+                for (unsigned level = range.min; level <= range.max; ++level)
+                    reachable[level] |= NPCBots::DynamicZone::CanTravelAtLevel(level, min, max);
+            }
+            if (!target_level)
+            {
+                std::vector<uint8> levels;
+                for (unsigned level = range.min; level <= range.max; ++level)
+                    if (reachable[level])
+                        levels.push_back(uint8(level));
+                if (levels.empty())
+                    return 0;
+                target_level = Bcore::Containers::SelectRandomContainerElement(levels);
+            }
+            else if (!reachable[target_level])
+                return 0;
+        }
+        else if (!target_level)
+            target_level = urand(range.min, range.max);
         CreatureTemplateContainer const& all_templates = sObjectMgr->GetCreatureTemplates();
         while (all_templates.contains(++next_bot_id) || _botsExtraCreatureTemplates.contains(next_bot_id));
         CreatureTemplate const* orig_template = ASSERT_NOTNULL(sObjectMgr->GetCreatureTemplate(orig_entry));

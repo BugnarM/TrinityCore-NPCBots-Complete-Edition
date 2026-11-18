@@ -30,6 +30,14 @@ int main()
         Require(!InScope(1, 40, 0, 40), "Dynamic bot cannot change continent");
         Require(!InScope(0, 33, 0, 40), "Dynamic bot cannot move to another zone");
 
+        Require(CanTravelAtLevel(76, 78, 80), "A two-level step up is allowed on a travel edge");
+        Require(!CanTravelAtLevel(75, 78, 80), "Reject a larger upward level gap");
+        Require(!CanTravelAtLevel(80, 76, 79), "Reject over-level travel");
+        Require(OverlappingTravelLevels({76, 80}, 78, 80), "A faction exit can cover part of a spawn range");
+        Require(!OverlappingTravelLevels({76, 80}, 70, 74), "A lower-level exit cannot support this anchor");
+        Require(SpawnPriority(0, false, 100.f) < SpawnPriority(1, true, 20.f), "Spread before reusing a busy anchor");
+        Require(SpawnPriority(0, true, 100.f) < SpawnPriority(0, false, 20.f), "Prefer a marked anchor at equal density");
+
         auto const westfall = SpawnLevels(10, 20, 1);
         Require(westfall && westfall->min == 10 && westfall->max == 20, "Use node level, not visiting player's level");
         Require(!SpawnLevels(1, 10, 55), "Death knight cannot appear in starter zone");

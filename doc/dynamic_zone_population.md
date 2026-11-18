@@ -68,3 +68,19 @@ Compilarea nucleului și instalarea binarului sunt consemnate în manifestul arh
 Binar: `/home/trinity/server/bin/worldserver`. SHA256: `c97fba0e19fa124eb0b1e99421eea1ba05461f4cc69fa789a4a7730beacc6526`.
 
 Backup, surse, loguri și manifest: `/home/trinity/source-archives/dynamic-zone-20261025-y3798w4a`. Compilarea finală nu a emis avertismente. Configurația activă are modul dinamic pornit și `Continents.Count = 0`; serverele de joc au rămas oprite.
+
+
+## Spawn spacing and November route updates
+
+The dynamic controller evaluates player proximity and checks that an anchor has at least one same-zone exit for the selected faction. The generated level must be usable on an exit. Candidate selection favors the areas with fewer nearby bots, then marked spawn points, then proximity to players. Road nodes remain eligible unless they carry the movement-only flag `0x80000`. The original global and zone limits still apply, with an additional cap around each spawn point.
+
+```ini
+NpcBot.WanderingBots.DynamicZone.SpawnSpacingRadius = 50.0
+NpcBot.WanderingBots.DynamicZone.MaxNearbyBots = 8
+```
+
+Both options are read at each scan. The movement controller prefers destinations outside its four most recent visited nodes when the current node has alternatives. Flags that explicitly allow backtracking retain their existing behavior. The normal faction, level, zone and link-weight rules still apply.
+
+The [route migration](../sql/custom/world/npcbot_2026_11_18_05_wanderer_route_refinement.sql) adds 23 waypoints, repairs open-world returns and adds ground routes through Storm Peaks, Icecrown, Sholazar Basin, Zul’Drak, Dragonblight, Netherstorm and Deadwind Pass. Ulduar and the Black Temple have local circuits for the tested exterior ground section. The Naxxramas approach stays on the ground below the citadel. The Tempest Keep flight approach is outside these ground routes. Existing battleground and Wintergrasp objective graphs retain their directed links.
+
+The SQL graph is loaded when worldserver starts. Use the migration manifest for a fresh install. For an existing realm, check that the anchors and previous migrations are present and back up the database before applying the route migration.

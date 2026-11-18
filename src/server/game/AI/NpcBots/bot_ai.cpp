@@ -19546,6 +19546,11 @@ void bot_ai::Evade()
             {
                 OnWanderNodeReached();
 
+                if (_dynamicWanderZone && _recentTravelNodes.front() != _travel_node_cur->GetWPId())
+                {
+                    std::rotate(_recentTravelNodes.begin(), _recentTravelNodes.end() - 1, _recentTravelNodes.end());
+                    _recentTravelNodes.front() = _travel_node_cur->GetWPId();
+                }
                 WanderNode const* nextNode = GetNextTravelNode(&pos, false);
                 if (!nextNode)
                 {
@@ -19909,6 +19914,7 @@ void bot_ai::SetDynamicWanderZone(WanderNode const* spawn)
 {
     _dynamicWanderMap = spawn->GetMapId();
     _dynamicWanderZone = spawn->GetZoneId();
+    _recentTravelNodes.fill(0);
     _travel_node_cur = spawn;
     _travel_node_last = nullptr;
     homepos.Relocate(spawn);
@@ -19979,7 +19985,7 @@ WanderNode const* bot_ai::GetNextWanderNode(Position const* fromPos, uint8 lvl, 
     auto node_viable = [this](WanderNode const* wp, uint8 lvl) -> bool {
         return NPCBots::DynamicZone::InScope(wp->GetMapId(), wp->GetZoneId(), _dynamicWanderMap, _dynamicWanderZone) &&
             (_dynamicWanderZone || !sMapStore.LookupEntry(wp->GetMapId())->IsContinent() || BotCfg::IsBotGenerationEnabledWorldMapId(wp->GetMapId())) &&
-            (lvl + 2 >= wp->GetLevels().first && lvl <= wp->GetLevels().second);
+            NPCBots::DynamicZone::CanTravelAtLevel(lvl, wp->GetLevels().first, wp->GetLevels().second);
     };
 
     uint32 faction = me->GetFaction();
@@ -20025,6 +20031,16 @@ WanderNode const* bot_ai::GetNextWanderNode(Position const* fromPos, uint8 lvl, 
     }
     if (llinks.size() > 1 && _travel_node_last && !_travel_node_cur->HasFlag(BotWPFlags::BOTWP_FLAG_CAN_BACKTRACK_FROM))
         std::erase_if(llinks, [this](WanderNodeLink const* wpl) { return wpl->wp == _travel_node_last; });
+    if (_dynamicWanderZone && llinks.size() > 1 && !_travel_node_cur->HasFlag(BotWPFlags::BOTWP_FLAG_CAN_BACKTRACK_FROM))
+    {
+        bool const weighted = std::ranges::any_of(llinks, [](auto const* link) { return link->weight > 0; });
+        auto isFresh = [&](auto const* link) {
+            return (!weighted || link->weight > 0) &&
+                std::ranges::find(_recentTravelNodes, link->Id()) == _recentTravelNodes.end();
+        };
+        if (std::ranges::any_of(llinks, isFresh))
+            std::erase_if(llinks, [&](auto const* link) { return !isFresh(link); });
+    }
     if (!llinks.empty())
     {
         WanderNodeLink const* wpl = llinks.size() == 1u ? llinks.front() : *Bcore::Containers::SelectRandomWeightedContainerElement(llinks, LinkWeightExtractor());

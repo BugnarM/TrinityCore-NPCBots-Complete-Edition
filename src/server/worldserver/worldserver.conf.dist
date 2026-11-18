@@ -5033,6 +5033,16 @@ NpcBot.WanderingBots.DynamicZone.MaxBots = 50
 #        Default:     10
 NpcBot.WanderingBots.DynamicZone.SpawnBudget = 10
 
+#    NpcBot.WanderingBots.DynamicZone.SpawnSpacingRadius
+#        Description: Nearby radius (0-250 yards) for counting dynamic bots around spawn nodes.
+#                     A value of 0 disables the spacing radius and the nearby limit.
+NpcBot.WanderingBots.DynamicZone.SpawnSpacingRadius = 50.0
+
+#    NpcBot.WanderingBots.DynamicZone.MaxNearbyBots
+#        Description: Skip a spawn node when this many dynamic bots (0-100) are within the spacing radius.
+#                     A value of 0 disables the limit while still preferring quieter nodes.
+NpcBot.WanderingBots.DynamicZone.MaxNearbyBots = 8
+
 #
 #    NpcBot.DarkKnight.Enable
 #        Description: Enable or disable Dark Knight Nemesis open-world boss roaming in populated zones.

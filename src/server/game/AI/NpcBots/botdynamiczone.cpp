@@ -14,6 +14,10 @@
 #include "Containers.h"
 #include "Config.h"
 
+#include <array>
+#include <limits>
+#include <unordered_set>
+
 namespace NPCBots::DynamicZone
 {
 DynamicZoneMgr* DynamicZoneMgr::Instance()
@@ -51,6 +55,11 @@ void DynamicZoneMgr::Update(uint32 diff)
 
     float const proximityRadius = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.ProximityRadius", 400.0f), 400.f, 0.f, 5000.f);
     float const despawnRadius = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.DespawnRadius", proximityRadius * 2.5f), proximityRadius * 2.5f, proximityRadius, 15000.f);
+
+    float const spawnSeparation = NPCBots::Healing::FiniteClamp(
+        sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.SpawnSpacingRadius", 50.f), 50.f, 0.f, 250.f);
+    unsigned const nearbyLimit = Normalize(sConfigMgr->GetIntDefault(
+        "NpcBot.WanderingBots.DynamicZone.MaxNearbyBots", 8), 0, 100);
 
     // Queue removals through BotDataMgr: never delete map-owned creatures here.
     for (auto it = _populatedZones.begin(); it != _populatedZones.end();)
@@ -127,71 +136,60 @@ void DynamicZoneMgr::Update(uint32 diff)
         else ++it;
     }
 
+    struct SpawnCandidate
+    {
+        WanderNode const* node;
+        float playerDistance;
+        std::array<bool, 2> teamAllowed;
+        unsigned nearbyBots = 0;
+    };
     struct ZoneNodes
     {
         uint64 key;
-        std::vector<WanderNode const*> nodes;
+        std::vector<SpawnCandidate> nodes;
     };
     std::vector<ZoneNodes> candidates;
     for (auto const& [key, playersList] : active)
     {
         uint32 const map = uint32(key >> 32), zone = uint32(key);
         ZoneNodes entry{key, {}};
-        std::vector<WanderNode const*> spawns;
+        std::vector<SpawnCandidate> fallback;
         WanderNode::DoForAllZoneWPs(zone, [&](WanderNode const* wp) {
             auto const [min, max] = wp->GetLevels();
-            if (wp->GetMapId() != map || wp->HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT) ||
-                wp->GetLinks().empty() || !SpawnLevels(min, max, 1)) return;
+            auto const levels = SpawnLevels(min, max, 1);
+            if (wp->GetMapId() != map || !levels || wp->HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT))
+                return;
 
-            if (proximityRadius > 0.0f)
-            {
-                bool nearPlayer = false;
-                for (Player const* pl : playersList)
-                {
-                    if (pl->IsInDist2d(wp, proximityRadius))
-                    {
-                        nearPlayer = true;
-                        break;
-                    }
-                }
-                if (!nearPlayer)
-                    return;
-            }
+            float distance = std::numeric_limits<float>::max();
+            for (Player const* player : playersList)
+                distance = std::min(distance, player->GetExactDist2d(wp));
+            if (proximityRadius > 0.f && distance > despawnRadius)
+                return;
 
-            entry.nodes.push_back(wp);
-            if (wp->HasFlag(BotWPFlags::BOTWP_FLAG_SPAWN)) spawns.push_back(wp);
+            auto canSpawn = [&](uint32 faction) {
+                if (sWorld->IsFFAPvPRealm())
+                    faction = FACTION_TEMPLATE_NEUTRAL_HOSTILE;
+                return bot_ai::IsWanderNodeAvailableForBotFaction(wp, faction, false, true) &&
+                    std::ranges::any_of(wp->GetLinks(), [&](auto const& link) {
+                        auto const [nextMin, nextMax] = link.wp->GetLevels();
+                        return InScope(link.wp->GetMapId(), link.wp->GetZoneId(), map, zone) &&
+                            OverlappingTravelLevels(*levels, nextMin, nextMax) &&
+                            bot_ai::IsWanderNodeAvailableForBotFaction(link.wp, faction, false);
+                    });
+            };
+            SpawnCandidate candidate{wp, distance,
+                {canSpawn(FACTION_TEMPLATE_ALLIANCE_DEFAULT), canSpawn(FACTION_TEMPLATE_HORDE_DEFAULT)}};
+            if (!candidate.teamAllowed[0] && !candidate.teamAllowed[1])
+                return;
+            if (proximityRadius == 0.f || distance <= proximityRadius)
+                entry.nodes.push_back(candidate);
+            else
+                fallback.push_back(candidate);
         });
-
-        // Fallback: If no waypoints were within proximityRadius, select closest to avoid empty zone
-        if (entry.nodes.empty() && proximityRadius > 0.0f)
-        {
-            WanderNode const* closestWP = nullptr;
-            float minD = despawnRadius > 0.f ? despawnRadius : proximityRadius;
-            WanderNode::DoForAllZoneWPs(zone, [&](WanderNode const* wp) {
-                auto const [min, max] = wp->GetLevels();
-                if (wp->GetMapId() != map || wp->HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT) ||
-                    wp->GetLinks().empty() || !SpawnLevels(min, max, 1)) return;
-
-                for (Player const* pl : playersList)
-                {
-                    float d = pl->GetExactDist2d(wp);
-                    if (d < minD)
-                    {
-                        minD = d;
-                        closestWP = wp;
-                    }
-                }
-            });
-            if (closestWP)
-            {
-                entry.nodes.push_back(closestWP);
-                if (closestWP->HasFlag(BotWPFlags::BOTWP_FLAG_SPAWN))
-                    spawns.push_back(closestWP);
-            }
-        }
-
-        // Keep all eligible road/wander waypoints in entry.nodes so bots spawn naturally distributed
-        if (entry.nodes.empty()) continue;
+        if (entry.nodes.empty())
+            entry.nodes = std::move(fallback);
+        if (entry.nodes.empty())
+            continue;
 
         auto& pop = _populatedZones[key];
         pop.mapId = map;
@@ -199,9 +197,10 @@ void DynamicZoneMgr::Update(uint32 diff)
         pop.players = uint32(playersList.size());
         pop.minLevel = 80;
         pop.maxLevel = 1;
-        for (auto* wp : entry.nodes)
+        for (auto const& candidate : entry.nodes)
         {
-            auto const range = *SpawnLevels(wp->GetLevels().first, wp->GetLevels().second, 1);
+            auto const [min, max] = candidate.node->GetLevels();
+            auto const range = *SpawnLevels(min, max, 1);
             pop.minLevel = std::min(pop.minLevel, range.min);
             pop.maxLevel = std::max(pop.maxLevel, range.max);
         }
@@ -263,10 +262,7 @@ void DynamicZoneMgr::Update(uint32 diff)
         if (pop.activeBots.size() >= pop.target) continue;
         _lastSpawnZone = entry.key;
         Bcore::Containers::RandomShuffle(entry.nodes);
-        // Spawn up to budget across candidate nodes in this zone with strict 50/50 Alliance/Horde balance
-        size_t nodeIdx = 0;
-        size_t const numNodes = entry.nodes.size();
-        uint32 consecutiveFailures = 0;
+        std::array<std::unordered_set<WanderNode const*>, 2> failed;
 
         uint32 allianceCount = 0;
         uint32 hordeCount = 0;
@@ -274,6 +270,9 @@ void DynamicZoneMgr::Update(uint32 diff)
         {
             if (Creature const* bot = BotDataMgr::FindBot(id))
             {
+                if (bot->IsInWorld() && bot->GetMapId() == pop.mapId)
+                    for (auto& candidate : entry.nodes)
+                        candidate.nearbyBots += bot->IsInDist2d(candidate.node, spawnSeparation);
                 uint32 team = BotDataMgr::GetTeamForFaction(bot->GetFaction());
                 if (team == ALLIANCE)
                     ++allianceCount;
@@ -285,18 +284,31 @@ void DynamicZoneMgr::Update(uint32 diff)
         uint32 const maxZoneAlliance = (pop.target + 1) / 2;
         uint32 const maxZoneHorde = (pop.target + 1) / 2;
 
-        while (budget > 0 && pop.activeBots.size() < pop.target && numNodes > 0)
-        {
-            bool const canAlliance = (globalAllianceCount < maxGlobalAlliance) && (allianceCount < maxZoneAlliance);
-            bool const canHorde = (globalHordeCount < maxGlobalHorde) && (hordeCount < maxZoneHorde);
+        auto pick = [&](std::size_t team) -> SpawnCandidate* {
+            SpawnCandidate* best = nullptr;
+            auto priority = [](SpawnCandidate const& candidate) {
+                return SpawnPriority(candidate.nearbyBots, candidate.node->HasFlag(BotWPFlags::BOTWP_FLAG_SPAWN),
+                    candidate.playerDistance);
+            };
+            for (auto& candidate : entry.nodes)
+                if (candidate.teamAllowed[team] && !failed[team].contains(candidate.node) &&
+                    (!spawnSeparation || !nearbyLimit || candidate.nearbyBots < nearbyLimit) &&
+                    (!best || priority(candidate) < priority(*best)))
+                    best = &candidate;
+            return best;
+        };
 
-            if (!canAlliance && !canHorde)
+        while (budget && pop.activeBots.size() < pop.target)
+        {
+            SpawnCandidate* alliance = globalAllianceCount < maxGlobalAlliance && allianceCount < maxZoneAlliance ? pick(0) : nullptr;
+            SpawnCandidate* horde = globalHordeCount < maxGlobalHorde && hordeCount < maxZoneHorde ? pick(1) : nullptr;
+            if (!alliance && !horde)
                 break;
 
             int32 preferredTeam = -1;
-            if (canAlliance && !canHorde)
+            if (alliance && !horde)
                 preferredTeam = ALLIANCE;
-            else if (!canAlliance && canHorde)
+            else if (!alliance && horde)
                 preferredTeam = HORDE;
             else if (allianceCount < hordeCount)
                 preferredTeam = ALLIANCE;
@@ -309,8 +321,7 @@ void DynamicZoneMgr::Update(uint32 diff)
             else
                 preferredTeam = urand(0, 1) ? ALLIANCE : HORDE;
 
-            WanderNode const* wp = entry.nodes[nodeIdx % numNodes];
-            nodeIdx++;
+            WanderNode const* wp = (preferredTeam == ALLIANCE ? alliance : horde)->node;
             --budget;
             if (uint32 id = BotDataMgr::SpawnDynamicZoneBot(0, wp, preferredTeam))
             {
@@ -329,14 +340,11 @@ void DynamicZoneMgr::Update(uint32 diff)
                         ++globalHordeCount;
                     }
                 }
-                consecutiveFailures = 0;
+                for (auto& candidate : entry.nodes)
+                    candidate.nearbyBots += wp->GetExactDist2d(candidate.node) <= spawnSeparation;
             }
             else
-            {
-                consecutiveFailures++;
-                if (consecutiveFailures >= numNodes)
-                    break;
-            }
+                failed[preferredTeam == ALLIANCE ? 0 : 1].insert(wp);
         }
     }
 
@@ -391,7 +399,7 @@ void DynamicZoneMgr::Update(uint32 diff)
                 WanderNode const* spawnLoc = nullptr;
                 auto itCand = std::find_if(candidates.begin(), candidates.end(), [key](auto const& zn) { return zn.key == key; });
                 if (itCand != candidates.end() && !itCand->nodes.empty())
-                    spawnLoc = Trinity::Containers::SelectRandomContainerElement(itCand->nodes);
+                    spawnLoc = Trinity::Containers::SelectRandomContainerElement(itCand->nodes).node;
                 else
                     spawnLoc = Trinity::Containers::SelectRandomContainerElement(zoneWps);
 

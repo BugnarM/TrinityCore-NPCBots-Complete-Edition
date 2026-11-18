@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <tuple>
 
 namespace NPCBots::DynamicZone
 {
@@ -26,6 +27,22 @@ constexpr std::optional<LevelRange> SpawnLevels(unsigned min, unsigned max, unsi
     max = std::min(max, cap);
     if (min > max || max > 255) return std::nullopt;
     return LevelRange{std::uint8_t(min), std::uint8_t(max)};
+}
+
+constexpr bool CanTravelAtLevel(unsigned level, unsigned minimum, unsigned maximum)
+{
+    return level + 2 >= minimum && level <= maximum;
+}
+
+constexpr bool OverlappingTravelLevels(LevelRange source, unsigned minimum, unsigned maximum)
+{
+    return source.min <= maximum && unsigned(source.max) + 2 >= minimum;
+}
+
+constexpr auto SpawnPriority(unsigned nearbyBots, bool markedSpawn, float playerDistance)
+{
+    // Spread newcomers before reusing an anchor. The nearest road remains an option.
+    return std::tuple{nearbyBots, !markedSpawn, playerDistance};
 }
 
 constexpr bool InScope(std::uint32_t map, std::uint32_t zone, std::uint32_t homeMap, std::uint32_t homeZone)

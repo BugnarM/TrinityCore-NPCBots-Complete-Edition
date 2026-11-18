@@ -178,5 +178,40 @@
     "after": [
       "npcbot_2026_11_15_01_wintergrasp_wander_links.sql"
     ]
+  },
+  {
+    "file": "npcbot_2026_11_18_01_durotar_south_wanderers.sql",
+    "sha256": "a9d4b633c9a941375cedbe2566bbb8db498809ff8676924e5ee53eaa4823c75b",
+    "after": [
+      "2026_11_16_01_companion_hearthstone_setup.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_18_02_azuremyst_isle_wanderers.sql",
+    "sha256": "f98c6a7df3854af806d4522ad758e09683d5b86ae11dd18cc2706d11102cd1b1",
+    "after": [
+      "npcbot_2026_11_18_01_durotar_south_wanderers.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_18_03_wander_spawns_optimization.sql",
+    "sha256": "74ca297c938a5bcc2385b8dc60e834eb5bb647514f3282f3155a48917482edfe",
+    "after": [
+      "npcbot_2026_11_18_02_azuremyst_isle_wanderers.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_18_04_missing_zones_wander_network.sql",
+    "sha256": "019b4a5c4e2924874a31ba8197747414b4699d3a79eb892448a83208609b0ca4",
+    "after": [
+      "npcbot_2026_11_18_03_wander_spawns_optimization.sql"
+    ]
+  },
+  {
+    "file": "npcbot_2026_11_18_05_wanderer_route_refinement.sql",
+    "sha256": "256d205b2f409f0ced8ecf6bc84e597472065eae1e8e530bc6962907a003164a",
+    "after": [
+      "npcbot_2026_11_18_04_missing_zones_wander_network.sql"
+    ]
   }
 ]

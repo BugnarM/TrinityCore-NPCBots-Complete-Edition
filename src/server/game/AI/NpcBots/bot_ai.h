@@ -821,6 +821,7 @@ private:
     uint32 _dynamicWanderMap{};
     uint32 _dynamicWanderZone{};
     uint8 _baseLevel{};
+    std::array<uint32, 4> _recentTravelNodes{};
     WanderNode const* _travel_node_last{};
     WanderNode const* _travel_node_cur{};
     uint32 _spawnTruceTimer{};
