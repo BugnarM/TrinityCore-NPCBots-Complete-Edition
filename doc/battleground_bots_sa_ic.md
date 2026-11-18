@@ -1,15 +1,8 @@
-# NPCBots în Strand of the Ancients și Isle of Conquest
+# Strand of the Ancients and Isle of Conquest bots
 
-Implementare: 23 octombrie 2026, TrinityCore 3.3.5 cu NPCBots.
+Wandering NPCBots fill vacant slots through the battleground queue, up to 15 participants per team in Strand of the Ancients (607) and 40 in Isle of Conquest (628). Human players count toward these targets. The native battleground template sets the final limit. Generated bots use their class AI, equipment, healing, and PvP rotations. The tactical controller applies to wandering bots in these maps.
 
-## Capacitate și participare
-
-- Strand of the Ancients (SA, harta 607): țintă de **15 participanți pe echipă**.
-- Isle of Conquest (IC, harta 628): țintă de **40 participanți pe echipă**.
-- Jucătorii umani sunt incluși în această țintă; boții completează locurile prin sistemul existent de coadă NPCBots. Limitele șablonului battlegroundului rămân autoritare.
-- Participanții autonomi sunt NPCBots reali, cu AI-ul existent de clasă, echipament, vindecare și rotații PvP. Controlerul nou se aplică wandering bots în SA/IC; companionii angajați nu primesc automat aceste ordine.
-
-Configurația instalată are deja:
+## Example configuration
 
 ```ini
 NpcBot.WanderingBots.Continents.Count = 0
@@ -19,103 +12,52 @@ NpcBot.WanderingBots.BG.TargetTeamPlayersCount.SA = 15
 NpcBot.WanderingBots.BG.TargetTeamPlayersCount.IC = 40
 ```
 
-## Trasee și ordine
+## Routing and objectives
 
-Controlerul tactic citește starea reală a porților și obiectivelor o dată pe secundă. Folosește Dijkstra pe rețeaua SQL de waypointuri, apoi mișcare cu pathfinding nativ. Muchiile porților adverse intacte sunt închise. Nu există teleportare de recuperare sau deplasare directă de rezervă prin porți. Fiecare bot păstrează waypointul curent până îl atinge, iar mici decalaje laterale separă membrii formației.
-
-Migrarea rezervă numai ID-urile **5200–5226** pe harta 607 și **5300–5322** pe harta 628: 27 noduri SA și 23 noduri IC. Nu șterge alte trasee personalizate. ID-urile sunt contractul dintre SQL și regulile din `botbgtactics.h`; schimbarea lor cere actualizarea ambelor și a testului.
+The tactical controller reads gate and objective state once per second, runs Dijkstra on the SQL waypoint graph, and uses native pathfinding for movement. Intact enemy gates block graph edges and physical passage. Bots keep a waypoint until they reach it, and lateral offsets separate formation members. The [base migration](../sql/custom/world/2026_10_23_01_battleground_bots_sa_ic.sql) reserves IDs 5200–5226 on map 607 and 5300–5322 on map 628. Coordinate changes to waypoint IDs with the tactical rules and tests.
 
 ### Strand of the Ancients
 
-- Șoferii păstrează vehiculele sănătoase; vehiculele atacatoare asediază porți,
-  iar infanteria capturează steaguri. Apărătorii țin fața porții și pot ocupa
-  ambele tunuri native. Căutarea vehiculelor include ambele porturi și verifică
-  accesibilitatea. Detalii în `sa_vehicle_roles_and_retention_2026_10_27.md`.
-- Relicva vulnerabilă are prioritate față de steagurile necapturate. Capturatorii
-  desemnați rămân pe jos și nu abandonează interacțiunile pentru vehicule sau
-  bombe. Detalii și regresii în `sa_objective_capture_2026_10_27.md`.
-- Porțile intacte sunt verificate fizic și pentru mișcarea din luptă, pentru
-  ambele echipe și vehiculele boților. Apărătorii folosesc drumuri, coborâri
-  verificate de pe zid și teleportere native; apărarea finală ține exteriorul
-  camerei. Detalii în `sa_gate_collision_and_defense_2026_10_26.md`.
-- În pregătirea ambelor runde, ambele echipe stau la spawn. Mișcarea tactică
-  începe după pornirea rundei. Checkpointul comandat este păstrat până la sosire,
-  pentru a evita întoarcerile repetate lângă debarcader/cimitir. Corecția din
-  26 octombrie 2026 este documentată în `sa_movement_and_preparation_2026_10_26.md`.
-- Atacatorii aleg două culoare și avansează în ordinea nativă: Green/Blue, Purple/Red, Yellow, Ancient, relicvă. O poartă laterală deschisă permite continuarea etapei corespunzătoare.
-- O parte dintre infanteriști capturează cimitirele disponibile; ceilalți escortează vehiculele sau asaltează frontul.
-- Apărătorii se repoziționează la frontul activ și pot ocupa tunurile native. AI-ul de clasă execută lupta și vindecarea.
-- Atacatorii folosesc demolisherele existente și pot transporta bombe de la depozite, apoi planta încărcături native lângă poartă.
-- Capturarea steagurilor și activarea relicvei trec prin vraja nativă de interacțiune, cu timp de cast și posibilitate de întrerupere. Serverul validează distanța, vizibilitatea, faza, echipa, obiectul și participarea botului.
-- Schimbarea rundelor evacuează vehiculele, resuscitează boții, curăță controlul și comenzile tactice, inversează rolurile și aplică pregătirea. Pregătirea este eliminată la începutul fiecărei runde.
-- Poarta și demolisherul distruse folosesc punctajul specific SA. A fost eliminată acordarea unui tip de punctaj de captură nesuportat de SA, care putea opri serverul.
+- Both teams stay at their starts during preparation. After the round starts, attackers advance through Green/Blue, Purple/Red, Yellow, Ancient, and the relic. Breaching a side gate can open the corresponding stage.
+- Drivers keep healthy demolishers and can search both harbors for reachable replacements. Infantry captures graveyards, escorts vehicles, or attacks the front. Defenders relocate to the active gate, use verified wall descents and native teleporters, and can occupy both cannons.
+- A vulnerable relic takes priority over uncaptured flags. Designated capturers stay on foot and finish interactions. Gate assaults use vehicle weapons and native seaforium charges from bomb depots.
+- Flag and relic interactions use native casts with interruption. The server validates range, line of sight, phase, team, target object, and bot participation.
+- Round changes evacuate vehicles, resurrect bots, clear crowd control and tactical orders, swap roles, and apply preparation. The preparation aura is removed when the round starts. Destroyed gates and demolishers use the battleground's scoring rules.
+
+See the technical notes on [movement and preparation](sa_movement_and_preparation_2026_10_26.md), [gate collision](sa_gate_collision_and_defense_2026_10_26.md), [objective capture](sa_objective_capture_2026_10_27.md), and [vehicle roles](sa_vehicle_roles_and_retention_2026_10_27.md).
 
 ### Isle of Conquest
 
-- Teleporterele fortărețelor sunt folosite explicit de infanteria autonomă,
-  în ambele sensuri și pentru ambele facțiuni. După transfer, waypointurile de
-  pe porți închise nu mai blochează reatașarea la graf. Corecția și verificările
-  sunt în `ioc_keep_teleporters_2026_10_26.md`.
-- Boții primesc opt grupe logice de câte cinci după ID, repartizate inițial între Workshop, Docks, Hangar, Quarry și Refinery. Repartizarea efectivă depinde de ID-urile participanților disponibili.
-- Bazele capturate păstrează santinele; majoritatea grupelor din Workshop/Docks escortează asediul. Grupul de reacție încearcă să recupereze obiective contestate.
-- Steagurile folosesc același flux ca jucătorii: cast, banner contestat, cronometru nativ de 60 secunde, captură/apărare, mesaje, punctaj, vehicule și spirit guides.
-- Numai cimitirele complet controlate, cu spirit guide activ, sunt eligibile pentru înviere. Quarry și Refinery nu sunt indexate ca cimitire.
-- După breșa unei porți adverse, infanteria avansează spre comandant; membri desemnați încearcă întâi capturarea cimitirului din fortăreață. Unele grupe apără comandantul propriu când fortăreața este penetrată.
-- Moartea boților consumă întăririle o singură dată, inclusiv pentru căderi. Omorurile din vehicule conduse de NPCBots sunt atribuite șoferului. Moartea comandantului folosește victoria nativă.
-- Bonusurile Quarry/Refinery sunt sincronizate și pentru boți după schimbarea controlului sau înviere.
-- Membri ai grupei Hangar pot folosi teleportarea spre transportul nativ și tunurile gunshipului. Catapultele pot lansa pasageri NPCBots cu evenimentul nativ de salt.
+- Infantry uses keep teleporters in both directions for both factions. The bot rejoins the waypoint graph after transfer without being blocked by waypoint edges on closed gates. [Keep teleporter notes](ioc_keep_teleporters_2026_10_26.md)
+- Eight logical groups of five are assigned by ID across Workshop, Docks, Hangar, Quarry, and Refinery. Captured bases keep sentries, most Workshop and Docks groups escort siege, and a reaction group responds to contested objectives.
+- Flags use the same flow as players, with a cast, contested banner, 60-second timer, capture or defense, messages, scoring, vehicles, and spirit guides. Only fully controlled graveyards with an active spirit guide can resurrect bots. Quarry and Refinery provide resource bonuses, which are refreshed after changes of control or resurrection.
+- After a breach, infantry advances toward the commander. Assigned bots try to capture the keep graveyard first, and some groups defend their own commander when their keep is breached.
+- Death consumes reinforcements once, including falls. NPCBot vehicle kills are attributed to the driver. Commander deaths use the native victory flow.
+- The Hangar group can use native transport teleportation and gunship cannons. Catapults can launch bot passengers through the native jump event.
 
-## Vehicule și explozibili
+## Vehicles and explosives
 
-Boții ocupă vehiculele battlegroundului, inclusiv locuri de pasager sau turele disponibile. Nu creează vehicule înlocuitoare. Vindecătorii rămân de regulă pe jos. Un jucător prietenos aflat lângă vehicul are prioritate, iar botul poate elibera postul.
+Bots occupy existing battleground vehicles, including passenger and turret seats. Healers usually remain on foot. A friendly player near the vehicle has priority and the bot can give up its seat. Vehicle AI selects spells from the actual vehicle template. Shots, rams, bombs, and gate damage use native effects. Cannons prioritize nearby enemy vehicles and lead moving targets. Dismounting restores the vehicle faction. Ground crews disembark for the final relic or commander assault.
 
-Armele sunt alese dintre vrăjile efectiv prezente pe șablonul vehiculului. Tragerea, loviturile de berbec, bombele și distrugerea porților folosesc efectele native, fără scădere artificială de viață. Tunurile prioritizează vehiculele ostile apropiate și estimează poziția țintelor în mișcare. Părăsirea vehiculului restabilește facțiunea sa și nu îl șterge. La asaltul final asupra relicvei/comandantului, echipajele terestre coboară.
+SA bots stage on the beach. The cinematic boat ride remains a player flow, and autonomous bomb disarming is outside the current AI. Catapult launches target the exterior front. Rooftop and parapet infiltration and tactical parachute drops require client validation.
 
-## Fișiere principale
+## Implementation entry points
 
-- `src/server/game/AI/NpcBots/bot_battlegrounds.cpp`: controler tactic, deplasare, vehicule, bombe, interacțiuni.
-- `src/server/game/AI/NpcBots/botbgtactics.h`: reguli pure pentru porți, etape și repartizarea grupelor.
-- `src/server/game/AI/NpcBots/bot_ai.{h,cpp}`: integrare în ciclul AI și intrare/ieșire din vehicule.
-- `src/server/game/Battlegrounds/Zones/Battleground{SA,IC}.{h,cpp}`: stări native, capturi, runde, punctaj, cimitire și condiții de victorie.
-- `src/server/game/Battlegrounds/Battleground.cpp`: eliminarea bonusurilor de echipă și de pe NPCBots.
-- `src/server/game/Spells/SpellEffects.cpp`: finalizarea castului de interacțiune NPCBot.
-- `src/server/game/Entities/Unit/Unit.cpp`: atribuirea omorurilor din vehicule.
-- `src/server/scripts/Northrend/IsleOfConquest/isle_of_conquest.cpp`: transport și lansarea pasagerilor NPCBots.
-- `sql/custom/world/2026_10_23_01_battleground_bots_sa_ic.sql`: migrarea idempotentă a celor 50 de noduri.
-- `contrib/tests/siege_battlegrounds.cpp`: verificarea regulilor împreună cu graful SQL de producție.
+| Area | Source |
+| --- | --- |
+| Tactical controller and policy | `src/server/game/AI/NpcBots/bot_battlegrounds.cpp` and `botbgtactics.h` |
+| Native rounds, captures, graveyards, and scoring | `src/server/game/Battlegrounds/Zones/BattlegroundSA.cpp` and `BattlegroundIC.cpp` |
+| Interaction cast completion and vehicle kill credit | `src/server/game/Spells/SpellEffects.cpp` and `src/server/game/Entities/Unit/Unit.cpp` |
+| Isle of Conquest transport and catapult launch | `src/server/scripts/Northrend/IsleOfConquest/isle_of_conquest.cpp` |
 
-## Verificare și instalare
+## Verification
 
-Migrarea a fost aplicată în **world și world2**, într-o tranzacție comună. În ambele baze au fost verificate 27 noduri SA și 23 IC; numărul rândurilor din afara intervalelor administrate a rămas neschimbat. Backupurile anterioare sunt în `/root/sa-ic-backups/20261023T203025Z`.
-
-Verificări automate:
-
-1. Compilarea completă a `worldserver`, inclusiv noul fișier C++, și recompilarea după ultimele ajustări.
-2. Testul C++ citește SQL-ul de producție și verifică toate cele 64 combinații ale porților SA și IC, accesul la relicvă/comandanți, ieșirea din fortăreața proprie, legăturile reciproce și acoperirea celor cinci baze.
-3. Migrarea a fost executată de două ori într-o bază MySQL izolată, cu rânduri-santinelă în afara intervalelor. Rândurile au fost păstrate.
-4. `git diff --check`; existența fișierelor de hartă și mmaps pentru 607/628.
-
-Reproducerea verificărilor din rădăcina repositoryului:
-
-```bash
+```sh
 c++ -std=c++20 -O2 -Wall -Wextra -pedantic contrib/tests/siege_battlegrounds.cpp -o /tmp/siege-bg-test
 /tmp/siege-bg-test
-cmake -S . -B build
-cmake --build build --target worldserver -j4
-git diff --check
+cmake --build build --target worldserver --parallel 4
 ```
 
-Executabilul rezultat, `build/bin/RelWithDebInfo/bin/worldserver`, a fost instalat în `/home/trinity/server/bin/worldserver`, după salvarea executabilului anterior. SHA-256 al sursei și destinației coincide: `78a9b70c5032c9b0e08321a8c4d24335d2b271353865ee6ccc79fff4e0402de4`. Starea finală și hashurile sunt consemnate în `installation.json` din directorul de backup. **worldserver și authserver sunt oprite** și trebuie păstrate astfel până la instrucțiunea utilizatorului.
+The suite reads the production graph and checks gate-state combinations, access to the relic and commanders, exits from a team's own keep, reciprocal links, and coverage of the five bases. The base SQL was also applied twice on a separate MySQL database with sentinel rows outside its reserved ranges.
 
-## Verificare necesară din client
-
-Compilarea și testele grafului nu demonstrează deplasarea vizuală, geometria fiecărui traseu sau performanța unei partide complete. Nu a fost pornit serverul pentru un playtest.
-
-După pornirea autorizată, se intră în coada SA/IC prin battlemaster. Comanda GM `.debug bg` comută modul de testare a cerinței minime de jucători; nu creează singură o partidă. `.bf start` aparține sistemului battlefield și nu este comanda de pornire SA/IC.
-
-- SA: verificați cele două runde și inversarea rolurilor, dispariția pregătirii, fiecare breșă, capturile cimitirelor, demolisherele, tunurile, încărcăturile și victoria la relicvă.
-- IC: verificați captură/apărare contestată și cronometrul de 60 secunde, spawnul vehiculelor, bonusurile resurselor, învierea, breșa fortăreței, cimitirul interior, lupta cu comandantul și victoria prin întăriri.
-- Ambele: verificați partide mixte cu jucători, eliberarea vehiculelor pentru oameni, întreruperea casturilor, atribuirea omorurilor din vehicule și lipsa blocajelor la waypointuri.
-- Hangar/catapulte: verificați poziționarea pe transport, mișcarea tunurilor și saltul pasagerilor înainte de a considera aceste rute validate vizual.
-
-Limite explicite: atacatorii NPCBots SA sunt pregătiți pe plajă; nu simulează călătoria cinematică în bărci, care rămâne nativă pentru jucători. Nu există dezamorsare autonomă a bombelor. Lansarea catapultelor urmărește frontul exterior; infiltrarea pe acoperișuri/parapete și debarcarea tactică cu parașuta nu sunt validate. Încărcarea CPU la efective maxime trebuie măsurată într-o partidă reală.
+Use a battlemaster to queue in a client. `.debug bg` toggles minimum-player testing rules. Verify both SA rounds, preparation and role swaps, objectives, vehicles, and relic victory. In IC, verify the contested timer, resource buffs, resurrection, keep breach and interior graveyard, commander victory, and reinforcement victory. In mixed matches, check vehicle handoff, interrupted casts, kill attribution, transport movement, and blocked waypoints. Measure performance at full participation separately.

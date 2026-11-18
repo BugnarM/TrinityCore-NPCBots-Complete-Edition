@@ -1,42 +1,16 @@
-> Actualizare 25 octombrie 2026: consultați [auditul curent](prompt_audit_2026_10_25.md) pentru echiparea organică, bonusurile de set pe spec și instalarea actuală. Starea din 24 octombrie de mai jos este istorică.
+# Raid hazards and NPCBot AutoEquip
 
-# Raid: evitarea efectelor de sol și echipare rapidă
+## Hazard avoidance
 
-## Evitarea pericolelor
+`bot_ai::CheckHazardAvoidance()` runs before normal class rotations and movement in `GlobalUpdate()`. Every 250 ms it checks hostile dynamic objects and creature triggers near the bot, including Defile, Slime Puddle, Choking Gas Bomb, Shadow Trap, and Legion Flame. Defile and Slime Puddle use encounter scaling. Legion Flame uses the 3-yard radius from damage spell 66877.
 
-`bot_ai::CheckHazardAvoidance()` rulează înaintea rotațiilor de clasă și a
-mișcărilor obișnuite din `GlobalUpdate()`. Verifică la 250 ms efectele din jurul
-botului, inclusiv când proprietarul se află departe de el. Folosește obiectele
-dinamice ostile și trigger-ele de creatură pentru Defile, Slime Puddle,
-Choking Gas Bomb, Shadow Trap și Legion Flame. Raza Defile/Slime urmează scala
-folosită în scripturile encounter-urilor; Legion Flame folosește spell-ul de
-daune 66877 (3 m), nu aura periodică 66201 (care nu are rază în DBC).
+The bot prefers a 5-yard sidestep and considers 32 directions, favoring short exits. For larger hazards it extends the destination outside the perimeter with a safety margin and a 40-yard limit. The destination must clear all nearby hazards. The routine checks line of sight, height, and every segment of the mmap route. A bot can leave a hazard that already contains it. Routes that enter another hazard or carry the bot farther into its current hazard are rejected.
 
-Evitarea preferă un pas lateral de 5 m. Dacă balta este prea mare sau crește,
-destinația este extinsă până în afara perimetrului, cu marjă de siguranță și
-limită de 40 m. Sunt evaluate 32 de direcții, cu prioritate pentru ieșirile
-scurte. Destinația trebuie să evite **toate** pericolele din apropiere.
+A valid exit interrupts the current cast and takes movement priority. If no safe path exists, normal class AI can continue. Hazard avoidance applies in dungeons and raids, including Finder bots. Controlled bots, teleports, jumps, and encounter vehicle passengers are excluded. `FULLSTOP` and `INACTION` suppress avoidance. `STAY` permits emergency movement. Effects with more than 4 yards of vertical separation are ignored. This is reactive avoidance of supported ground effects.
 
-Sunt verificate vizibilitatea, diferența de nivel, traseul mmap și fiecare
-segment al traseului. Botul poate ieși din balta în care se află, dar nu poate
-alege un segment care intră într-o altă baltă sau care îl duce mai adânc în
-cea inițială. Nu există fallback care ignoră obstacolele. Dacă există o ieșire
-validă, castul este întrerupt, botul aleargă, iar mișcarea are prioritate până
-la ieșire. Dacă nu există o cale sigură, rutina nu blochează vindecările și
-restul AI-ului.
+## AutoEquip
 
-Rutina este activă în dungeon-uri și raiduri, inclusiv pentru boții RDF. Nu
-mută pasagerii/vehiculele de encounter (Abomination are o mecanică proprie cu
-slime), boții controlați sau aflați în teleport/săritură. `FULLSTOP` și
-`INACTION` opresc evitarea; `STAY` permite deplasarea de urgență. Efectele de pe
-alte etaje, cu diferență Z mai mare de 4 m, sunt ignorate.
-
-Aceasta este evitare reactivă a efectelor existente, nu o implementare completă
-a tuturor mecanicilor raidurilor sau predicția viitoarelor casturi.
-
-## Comanda de echipare
-
-Selectează un NPCBot propriu, angajat și activ, apoi folosește:
+Select one of your active companions. Both owner and bot must be out of combat, and the bot must be alive and clear of vehicles and teleports. The command requires RBAC permission `RBAC_PERM_COMMAND_NPCBOT_CREATENEW` (70036). It applies to bots in the caller's BotMgr.
 
 ```text
 .npcbot autoequip
@@ -47,59 +21,28 @@ Selectează un NPCBot propriu, angajat și activ, apoi folosește:
 .npcbot autoequip t10
 .npcbot autoequip wrathful
 .npcbot autoequip 264
+.npcbot autoequip organic t10
 ```
 
-Comanda generează obiecte și folosește permisiunea administrativă deja existentă
-`RBAC_PERM_COMMAND_NPCBOT_CREATENEW` (70036). Nu cere activarea modului GM,
-dar contul trebuie să aibă permisiunea. Chiar și un GM trebuie să aibă botul
-angajat activ în propriul BotMgr; comanda nu modifică boți liberi, boții altor
-proprietari sau summon-uri temporare. Proprietarul și botul trebuie să fie în afara luptei, iar botul să fie în
-viață și să nu fie într-un vehicul sau teleport.
-
-| Preset | Interval principal | Piesele de set |
+| Preset | Primary item-level band | Selection |
 | --- | --- | --- |
-| `blue`, `dungeon`, `preraid` | 187–200 | Rare; relicvele potrivite de ilvl 200 pot fi epice |
-| `t7`, `naxx` | 200–213 | T7, cinci piese din același ItemSet |
-| `t8`, `ulduar` | 219–232 | T8 (armura originală are ilvl 219/226) |
-| `t9`, `toc` | 232–258 | T9, respectând facțiunea proprietarului |
-| `t10`, `icc` | 251–277 | T10, cinci piese compatibile |
-| `wrathful`, `pvp` | 251–284 | Wrathful; include armele elite, dacă sunt compatibile |
-| Număr `1`–`284` | cap minus 15 până la cap | Fără obligația unui ItemSet; capul este strict |
+| `blue`, `dungeon`, `preraid` | 187–200 | Rare gear, with eligible epic item-level 200 relics |
+| `t7`, `naxx` | 200–213 | Five pieces from the same Tier 7 ItemSet |
+| `t8`, `ulduar` | 219–232 | Tier 8 armor, originally item level 219 or 226 |
+| `t9`, `toc` | 232–258 | Tier 9 for the owner's faction |
+| `t10`, `icc` | 251–277 | Five compatible Tier 10 pieces |
+| `wrathful`, `pvp` | 251–284 | Wrathful gear, including compatible elite weapons |
+| Number from `1` to `284` | Cap minus 15 through cap | Strict item-level cap and optional set bonuses |
 
-Presetările sunt insensibile la majuscule. Fără parametru (`auto`/`default`),
-la nivelul 80 se folosește `blue`, iar sub 80 o limită adaptată nivelului.
-Presetările numite Wrath necesită nivelul 80. Clasele personalizate pot folosi
-`blue`, selecția după nivel sau capul numeric; nu au preseturi T7–T10/Wrathful.
+Presets are case-insensitive. `auto` and `default` use a level-scaled selection below 80 and the blue preset at 80. Named endgame tier and Wrathful presets require level 80. Custom classes can use blue, level-scaled, or numeric selection. For optional tier mixing, see [organic equipment](raid_finder_and_organic_equipment.md).
 
-Selecția folosește catalogul existent, regulile native de echipare, nivelul,
-clasa, specializarea și ponderile de statistici ale rolului. Include un
-supliment separat pentru arme rare și relicve, respectând lista de obiecte
-dezactivate. Relicvele Wrath sunt filtrate pe specializare/rol. Pentru PvP,
-armura de set este efectiv Wrathful, celelalte obiecte sunt PvP (inclusiv
-Medallion/Battlemaster), iar relicvele pot rămâne PvE dacă acesta este efectul potrivit pentru rol (de exemplu tank).
+Planning uses the native equipment rules, allowed item catalog, level, class, spec, role stat weights, and separate entries for rare weapons and compatible relics. It checks two-handed weapons, off-hand compatibility, Titan's Grip, unique items, and shared uniqueness categories across normal and heroic variants. PvP uses Wrathful set pieces and PvP accessories, with PvE relics where appropriate for the role. If an accessory has no suitable item in the primary band, the command can use a lower one and reports how many slots took that fallback.
 
-Sunt respectate arma cu două mâini/offhand, Titan's Grip, obiectele unice și
-categoriile de unicitate pentru variantele normal/heroic. Accesoriile care nu
-există în interval pot folosi un obiect inferior, fără depășirea capului;
-mesajul comenzii raportează numărul acestor sloturi. De exemplu, catalogul
-conține Medallion ilvl 264 și Battlemaster ilvl 245 pentru cele două trinketuri
-PvP. Trinketurile nu trebuie să aibă intelect/agilitate dacă oferă alte
-statistici sau efecte relevante. Nu se promite un set BiS.
+The replacement is planned and allocated before existing gear is removed. The companion's shirt is retained. Native unequip handling returns player items to inventory or by mail when inventory is full. Generated items are bound, eligible items receive enchants, and normal equipment handling updates stats, combat procs, and character database persistence. Existing gear is retained on ordinary attachment when already suitable for the bot's level.
 
-Planul și obiectele noi sunt pregătite înainte de dezechipare. Lipsa unui set
-complet compatibil produce eroare înainte să fie atinse obiectele existente.
-Obiectele vechi sunt returnate prin `_unequip()` în inventar sau prin poștă
-când inventarul este plin; cămașa este păstrată. Obiectele noi sunt soulbound,
-primesc enchant-urile generatorului și sunt echipate prin `_equip()`, inclusiv
-actualizarea blocării, dual wield, proc-urilor, statisticilor și persistenței
-în CharacterDatabase. Repetarea comenzii păstrează aceeași selecție la aceleași
-date de intrare. Angajarea/spawn-ul obișnuit nu înlocuiește echipamentul.
+The [AutoEquip help migration](../sql/custom/world/npcbot_2026_10_24_00_autoequip.sql) installs help for `.help npcbot autoequip`.
 
-Ajutorul `.help npcbot autoequip` se poate instala prin migrarea
-`sql/custom/world/npcbot_2026_10_24_00_autoequip.sql` în baza world activă.
-În această instalare baza este `world2`.
-
-## Verificări
+## Verification
 
 ```sh
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic contrib/tests/hazard_avoidance_and_autoequip_test.cpp -o /tmp/hazard-autoequip-test
@@ -107,33 +50,6 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic contrib/tests/hazard_avoidanc
 cmake --build build --target worldserver --parallel 4
 ```
 
-Auditul read-only al catalogului `world2` a confirmat cinci sloturi pentru
-toate cele 111 ItemSet-uri: 19 T7, 19 T8, 38 T9, 19 T10 și 16 Wrathful,
-cu respectarea listei de obiecte dezactivate.
+The suite includes the production `bothazard.h` and `botautoequip.h` headers. It checks 181,704 routes across 8,000 randomized layouts and samples each path independently. Equipment tests cover invalid presets, item-level thresholds, five-piece set selection, and uniqueness conflicts. The suite also supports AddressSanitizer and UndefinedBehaviorSanitizer.
 
-Testul include direct headerele de producție `bothazard.h` și `botautoequip.h`.
-Validează 181.704 trasee în 8.000 de configurații aleatoare, cu eșantionare
-independentă a segmentelor, plus preseturi invalide, praguri de ilvl, identitatea
-seturilor, selecția a cinci piese și conflicte de unicitate. Poate fi compilat
-și cu AddressSanitizer/UndefinedBehaviorSanitizer. Aceste teste nu simulează
-clientul, serverul de hartă, casturile sau salvarea itemelor în timp real.
-
-Validarea în joc rămâne necesară: Defile în creștere, Legion Flame, slime
-suprapus/lângă ziduri, revenirea la DPS/heal după ieșire, tank cu shield,
-Fury cu două arme, caster cu staff/offhand, toate clasele și presetările,
-inventar plin, repetarea comenzii și relog/restart pentru persistență.
-Nu porni worldserver/authserver fără solicitarea explicită a utilizatorului.
-
-## Starea instalării — 24 octombrie 2026
-
-- `worldserver` a fost compilat integral, fără erori sau avertismente.
-- Binarul instalat: `/home/trinity/server/bin/worldserver`.
-- SHA256 verificat identic cu rezultatul compilării:
-  `248e5765690d379fd2cf30210cc257c4aa02d2974954521097c6b72f6a25f02f`.
-- Backup: `/root/npcbots-hazard-autoequip-backup-20261024/`; include binarul
-  anterior, configurația, manifestul și logul compilării.
-- Ajutorul comenzii a fost instalat în `world2.command`. Configurația activă
-  nu a fost modificată.
-- Testele noi, ASan/UBSan și regresiile RDF/arene/SA/IC/Wintergrasp au trecut.
-- `worldserver` și `authserver` au rămas oprite; porturile 8085/3724 nu ascultă.
-  Validarea encounter-urilor și a echipării cu un client WoW este în așteptare.
+The historical world catalog check found five slots for 111 eligible ItemSets (19 Tier 7, 19 Tier 8, 38 Tier 9, 19 Tier 10, and 16 Wrathful). In a client, check growing Defile, Legion Flame, overlapping hazards near walls, and resumption of healing or DPS after leaving the hazard. Test shields, Fury dual wield, caster weapons, full bags, and gear persistence after relog or restart.

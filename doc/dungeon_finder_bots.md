@@ -1,13 +1,10 @@
-# RDF automat cu NPCBots
+# Dungeon Finder with NPCBots
 
-Completarea automată se face în coada normală Dungeon Finder, după un interval
-configurabil. Matchmaking-ul încearcă întâi să formeze grupuri cu jucătorii
-existenți. După expirarea intervalului, păstrează combinația compatibilă cu cei mai
-mulți participanți disponibili și rezervă boții necesari pentru un tank, un healer
-și trei DPS. Sunt acceptate înscrierea solo, grupurile incomplete, boții angajați
-incluși în grup și continuarea unei instanțe deja începute.
+The standard Dungeon Finder attempts human matchmaking first. After a configurable wait, it keeps the largest compatible set of available players and reserves bots to fill one tank, one healer, and three DPS slots. Solo players, incomplete groups, eligible hired companions, and groups continuing an active instance can use bot fill.
 
-## Configurare
+## Configuration
+
+Example for filling random and explicitly selected normal or heroic dungeons after one second:
 
 ```ini
 NpcBot.Enable = 1
@@ -18,65 +15,23 @@ NpcBot.DungeonBots.Queue.WaitTime = 1
 NpcBot.DungeonBots.Queue.RandomOnly = 0
 ```
 
-Profilul instalat, actualizat la 26 octombrie 2026, completează după o secundă
-cozile random și selecțiile individuale normale/eroice. Restricțiile native de
-nivel, echipament și lockout rămân aplicabile. La schimbarea configurației,
-worldserver era oprit; valorile noi se încarcă la următoarea pornire.
+The wait starts when players finish role selection and enter the queue. `0` permits immediate bot fill after a human matchmaking attempt. The maximum wait is 3,600 seconds, and negative values fall back to 45. An older queue entry can match compatible players who joined more recently. Queues are checked at most once per second.
 
-Limita de un companion personal pentru conturile non-GM nu include boții
-generați pentru Finder. Un jucător solo poate primi patru boți; cu un companion
-personal inclus în grup poate primi încă trei. Vezi `npcbot_player_limits.md`.
+With `RandomOnly = 1`, players must select a random dungeon or seasonal Dungeon Finder event. With `0`, they can also choose specific normal and heroic instances. The normal checks for level, equipment, lockouts, roles, faction, ignored players, and common eligible dungeons still apply. Compatible groups retain their players and role assignments. Disabling NPCBots, dungeon access, or Dungeon Finder integration stops bot fill.
 
-`WaitTime` se măsoară în secunde, de la intrarea în coadă, după alegerea rolurilor.
-Valoarea `0` permite completarea imediată după încercarea de matchmaking uman;
-limita superioară este 3600 de secunde. Valorile negative folosesc implicit 45.
-Un participant mai vechi poate forma un grup și cu jucători compatibili care au
-intrat mai recent în coadă. Cozile sunt reverificate cel mult o dată pe secundă.
+Finder bots are separate from the non-GM personal companion limit. A solo player can receive four bots. A player who queues with a personal companion can receive three more when the roles fit. [Personal companion limits](npcbot_player_limits.md)
 
-Cu `RandomOnly = 1`, participanții umani trebuie să fi selectat un dungeon random
-sau un eveniment sezonier RDF. Valoarea `0` permite și selecții explicite de
-instanțe normale/eroice. Nu se creează raiduri prin acest mecanism.
+## Proposals and template reservations
 
-Distribuția păstrează controalele existente pentru roluri, facțiune, ignorări,
-intersecția dungeon-urilor eligibile și verificarea inițială a restricțiilor LFG.
-Nu sunt eliminate roluri sau membri pentru a forța completarea unui grup
-incompatibil. Dezactivarea modulului, accesului NPCBots în dungeon sau integrării
-Dungeon Finder oprește completarea automată.
+Humans confirm each new proposal and bot slots accept automatically. Existing members continuing a group already in its instance retain native automatic acceptance. Bot placeholders have proposal-specific GUIDs and exist in the confirmation window. They stay outside the player queue, persistent participant state, and wait-time statistics.
 
-## Propunerea și șabloanele de boți
+Templates are checked and reserved before the proposal appears. The reservation matches class to role so that a flexible class cannot consume the only template needed for another role. It respects class minimum levels, enabled classes, and race filters. When the complete role roster cannot be reserved, the group stays queued. A template cannot serve two proposals at once or be borrowed by battleground or arena generation while reserved.
 
-Fiecare propunere nouă cere confirmarea jucătorilor umani. Numai locurile
-completate cu boți sunt acceptate automat. Pentru continuarea unui grup deja în
-instanță se păstrează acceptarea automată nativă a membrilor existenți.
+Declines, timeouts, and owner disconnects release the reservation. Failed teleports have a 120-second reservation timeout. Acceptance rechecks player presence and reservation availability.
 
-Locurile de boți din fereastra de confirmare au GUID-uri distincte între propuneri.
-Ele există exclusiv în propunere: nu intră în coada de jucători, nu primesc stare
-persistentă de participant și nu intră în statisticile timpilor de așteptare.
-Șabloanele sunt verificate și rezervate înainte de afișarea propunerii. Alocarea
-folosește matching între clase și roluri, astfel încât o clasă flexibilă să nu
-consume singurul șablon disponibil pentru un alt rol obligatoriu.
+Actual bots are created when the leader enters the instance. If the leader is already inside, replacements appear without requiring a map change. Assigned roles are retained for later replacements. Random groups and generated bots receive `Luck of the Draw`. Generated bots are excluded from achievements that count random human party members. The feature reuses the existing NPCBot template and equipment pools.
 
-Rezerva respectă nivelul minim al clasei, clasele activate și filtrarea raselor.
-Dacă nu poate forma întregul complement de roluri, grupul rămâne în coadă fără o
-propunere incompletă. Șabloanele rezervate nu pot fi împrumutate simultan de altă
-propunere sau de generatorul de boți pentru battleground-uri/arene.
-
-Refuzarea sau expirarea propunerii eliberează rezerva. Deconectarea proprietarului
-eliberează de asemenea șabloanele, iar o limită de 120 de secunde recuperează
-rezervările rămase după un teleport nereușit. La acceptare sunt reverificate
-prezența jucătorilor și disponibilitatea rezervării.
-
-Boții reali sunt creați la intrarea liderului în instanță. Dacă liderul se află
-deja în dungeon, completarea se face direct, fără a depinde de un nou eveniment
-de schimbare a hărții. Rolurile efectiv atribuite sunt păstrate pentru
-completări/continuări ulterioare. Grupurile random și boții generați beneficiază
-de `Luck of the Draw`. Boții nu sunt numărați drept jucători umani aleatorii pentru
-realizările RDF legate de gruparea cu alți jucători.
-
-Această implementare reutilizează șabloanele și echiparea generatorului existent.
-Nu necesită o migrare SQL nouă și nu modifică datele din `world2` la instalare.
-
-## Verificări offline
+## Verification
 
 ```sh
 g++ -std=c++20 -O2 -Wall -Wextra -Werror contrib/tests/dungeon_finder_bots.cpp -o /tmp/lfg-bots-test
@@ -84,30 +39,15 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror contrib/tests/dungeon_finder_bots.cpp -
 cmake --build build --target worldserver --parallel 4
 ```
 
-Suita folosește funcțiile de producție pentru eligibilitatea temporală,
-completarea rolurilor, alocarea șabloanelor și generarea contoarelor de GUID.
-Compară 12.000 de distribuții de clase cu o căutare exhaustivă independentă și
-verifică insuficiența șabloanelor, rolurile incompatibile și revenirea contorului
-la capătul intervalului. Se poate rula și cu AddressSanitizer/UndefinedBehaviorSanitizer.
+The standalone suite uses production policy for timing, role fill, template allocation, and GUID counters. It compares 12,000 class distributions with an independent exhaustive search and checks insufficient templates, incompatible roles, and counter wraparound. It can also run with AddressSanitizer and UndefinedBehaviorSanitizer.
 
-Aceste teste nu pornesc realm-ul și nu simulează clientul WoW sau teleportarea.
+## In-game checks
 
-## Validarea în joc, după autorizarea pornirii
-
-1. Un DPS solo în RDF: fără propunere cu boți înainte de termen; apoi un tank,
-   un healer și doi DPS, după acceptarea jucătorului.
-2. Tank/healer solo și grupuri de 2–4 participanți: compoziție finală 1/1/3.
-3. Cinci oameni compatibili înainte de termen: matchmaking uman normal.
-4. Două propuneri simultane: ferestre și răspunsuri independente, fără GUID-uri
-   reutilizate și fără șabloane împrumutate de două ori.
-5. Refuz, expirare, ieșire din coadă și deconectare: fără grupuri fantomă sau
-   rezervări persistente; participanții care acceptaseră sunt readăugați normal.
-6. Un membru pleacă dintr-o instanță activă: continuarea completează rolul lipsă,
-   chiar dacă liderul nu mai schimbă harta.
-7. Mod dezactivat, șabloane insuficiente și selecție explicită cu `RandomOnly = 1`:
-   fără completare automată. Verificați păstrarea controalelor de nivel și lockout.
-8. Verificați teleportarea, echiparea, rolurile, buff-ul, loot-ul și curățarea
-   boților la terminarea/ieșirea din dungeon.
-
-`worldserver` și `authserver` trebuie să rămână oprite până la solicitarea
-explicită a utilizatorului.
+1. Queue as a solo DPS and confirm that the proposal appears after the configured wait. Accept and verify that the group receives a tank, healer, and two DPS bots.
+2. Repeat as a solo tank or healer and with two to four participants. The final composition should be one tank, one healer, and three DPS.
+3. Queue five compatible humans before the deadline and verify human matchmaking.
+4. Create two simultaneous proposals and check independent responses, distinct GUIDs, and exclusive template reservations.
+5. Decline, time out, leave the queue, and disconnect in separate runs. Check cleanup and normal requeue behavior for members who accepted.
+6. Replace a departing member while the leader stays inside the dungeon. Check replacement role, gear, and cleanup on completion or departure.
+7. Check disabled fill, insufficient templates, an explicit selection under `RandomOnly = 1`, and level and lockout restrictions.
+8. Check teleportation, `Luck of the Draw`, and loot in a live client.

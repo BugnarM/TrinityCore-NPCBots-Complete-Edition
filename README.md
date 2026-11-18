@@ -170,6 +170,8 @@ In game, commands start with a period. In the server console, omit it for comman
 
 ## Troubleshooting
 
+**The build fails after switching branches or changing dependencies.** Configure a fresh build directory and rebuild the intended revision. When reporting a problem, include the commit, OS, compiler, CMake version, configuration command, and the relevant compiler or linker output.
+
 **My priest is in the group but does not heal.** Open **Manage Roles** and confirm **Heal** is enabled. Discipline and Holy are specializations. The Heal toggle enables the companion's group-healing routine. Then check its per-bot health threshold, healing spell toggles, mana, and access to the target. An injured player needs to be on the same map and phase, in range, and reachable for the spell. A controlled caster or a player in active GM mode can also block a cast.
 
 **An owned bot is missing after a restart.** Check `.npcbot info <player>` and the startup log. If the log says the entry is missing from `creature`, check that entry's saved ownership and spawn records against a backup. The bot needs a loadable spawn to be attached again.

@@ -1,15 +1,10 @@
-# Arene cu NPCBots
+# Arena bots
 
-Implementarea completează echipele 2v2, 3v3 și 5v5 în Nagrand (559), Blade's Edge
-(562), Ruins of Lordaeron (572), Dalaran Sewers (617) și Ring of Valor (618).
-Sunt acceptate intrarea solo și grupurile incomplete. Dimensiunea cerută de coadă
-rămâne obligatorie; boții nu măresc echipa peste limita arenei. Grupurile rămase în
-coadă sunt reverificate la cinci secunde, cu anularea automată după invitație sau
-ieșirea din coadă.
+NPCBots fill vacant slots in 2v2, 3v3, and 5v5 teams in Nagrand (559), Blade's Edge (562), Ruins of Lordaeron (572), Dalaran Sewers (617), and the Ring of Valor (618). Solo players and incomplete groups can queue. The bracket determines the team size. Pending groups are rechecked every five seconds until an invitation is issued or they leave the queue.
 
-## Configurare
+## Configuration
 
-În `worldserver.conf`:
+In `worldserver.conf`:
 
 ```ini
 NpcBot.Enable = 1
@@ -20,55 +15,25 @@ NpcBot.WanderingBots.Arena.TargetTeamSize.3v3 = 3
 NpcBot.WanderingBots.Arena.TargetTeamSize.5v5 = 5
 ```
 
-Valoarea `0` dezactivează completarea unui bracket. Orice altă valoare este
-normalizată la 2, 3 sau 5, după bracket. Nu este necesară activarea generării
-boților pentru continente sau battleground-uri. Clasele de boți trebuie să aibă
-șabloane disponibile în rezerva generatorului. Dacă nu există suficienți boți
-pentru ambele echipe, generarea este abandonată fără a introduce o echipă cotată
-incompletă în matchmaking.
+Use `0` to disable bot fill for a bracket. Other values normalize to the bracket size. The generator needs available class templates, independently of continent and battleground bot generation. If either team cannot be filled, the proposal is abandoned.
 
-Coada cotată păstrează verificarea apartenenței jucătorilor la echipa de arenă.
-Când există participanți generați, meciul este de antrenament: nu modifică rating,
-MMR sau realizări cotate și refuzarea invitației nu penalizează ratingul.
-Adversarul sintetic are `ArenaTeamId = 0`; identitatea echipei reale nu este copiată
-pe boți. Meciurile între echipe umane complete păstrează comportamentul existent.
+Rated queues still verify arena team membership. Matches with generated participants are practice matches. They leave rating, MMR, and rated achievements unchanged, and declining the invitation carries no rating penalty. The generated opponent has `ArenaTeamId = 0`. Full human teams use normal rated matchmaking.
 
-## Noduri și deplasare
+## Navigation and combat
 
-Migrarea `sql/custom/world/2026_10_24_00_arena_bot_mesh.sql` este tranzacțională și
-idempotentă: 11 noduri pe hartă, 55 în total. Șterge exclusiv ID-urile definite în
-migrare. Fiecare graf are două puncte de spawn, legături reciproce și noduri de
-adăpost marcate prin `BOTWP_FLAG_ARENA_COVER`.
+The [arena mesh migration](../sql/custom/world/2026_10_24_00_arena_bot_mesh.sql) is transactional and repeatable. It replaces only its reserved IDs and installs 11 nodes on each of the five maps. Each graph has two spawn points, reciprocal links, and cover nodes marked `BOTWP_FLAG_ARENA_COVER`.
 
-Boții folosesc poziția de start a echipei atribuite de matchmaking. După teleport,
-graful de deplasare este selectat pe harta instanței reale, chiar dacă generatorul
-a folosit altă hartă pentru pregătirea boților. Steagurile Gold/Green și relațiile
-aliat/inamic folosesc echipa meciului, inclusiv pentru pet-uri și meciuri între
-jucători din aceeași facțiune. În Ring of Valor, boții aflați încă la baza
-ascensoarelor sunt mutați pe podeaua arenei la finalul animației platformelor,
-folosind timerul existent al hărții. Nu se bazează pe mișcarea trimisă de un client.
+Bots use the starting position assigned by matchmaking and pick the waypoint graph for the actual instance after teleporting. Gold/Green flags and ally/enemy relationships follow the match team, including for pets and same-faction opponents. In the Ring of Valor, the map timer moves bots still at the base of the elevators to the arena floor when the platform animation ends.
 
-AI-ul selectează o țintă comună pe baza vieții și defensivelor, evită țintele aflate
-sub control fără atacatori și încearcă Polymorph, Blind, Fear sau Hammer of Justice
-pe healerul advers care nu este ținta principală. Se păstrează verificările normale
-ale vrăjilor: cost, cooldown, rază, imunități și vizibilitate. Defensivele disponibile
-sunt prioritizate sub 30% viață; Shield Wall necesită scut și stance-ul permis de
-vrăjile clasei.
+Team AI selects a shared target using health and defensive effects. It avoids crowd-controlled targets without attackers and can use Polymorph, Blind, Fear, or Hammer of Justice on an enemy healer outside the main focus. Native spell checks apply to costs, cooldowns, range, immunities, and line of sight. Bots prioritize available defensive abilities below 30% health. Shield Wall requires the appropriate stance and a shield.
 
-Healerii generați caută adăpost numai când un caster îi atacă. Destinația trebuie
-să rupă vizibilitatea adversarului, să păstreze vizibilitatea pacientului și să fie
-accesibilă prin navmesh. Vindecarea unui aliat sub 40% viață are prioritate.
-Vizibilitatea și obstacolele mobile sunt verificate la rulare; graful SQL singur
-nu demonstrează că fiecare poziție este un adăpost valid în fiecare moment.
+Generated healers seek cover when attacked by a caster. A candidate must break enemy line of sight, preserve sight of the patient, and be reachable on the navmesh. Healing an ally below 40% takes priority. Line of sight and moving obstacles are checked at runtime.
 
-Un bot eliminat nu se reînvie și nu este teleportat la cimitir. Moartea prin
-cădere, pet-uri și mediu declanșează verificarea victoriei după creditarea kill-ului.
-Eliminarea simultană a ambelor echipe produce remiză. Verificarea nu încheie arena
-în perioada de pregătire.
+Eliminated bots remain dead until the match ends. Falls, pets, and environmental deaths trigger the victory check after kill credit. Simultaneous team elimination results in a draw. Victory checks are suspended during preparation.
 
-## Verificare fără pornirea serverului
+## Verification
 
-Din rădăcina repository-ului:
+From the repository root:
 
 ```sh
 g++ -std=c++20 -O2 -Wall -Wextra -Werror "$PWD/contrib/tests/arena_bots.cpp" -o /tmp/arena-test
@@ -76,12 +41,7 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror "$PWD/contrib/tests/arena_bots.cpp" -o 
 cmake --build build --target worldserver --parallel 4
 ```
 
-Testul folosește aceleași funcții de calcul ca serverul pentru completare,
-normalizarea configurării, dimensiunile grupurilor, steaguri și victorie.
-Validează și grafurile SQL, inclusiv drumurile permise fiecărei facțiuni și
-respingerea muchiilor lipsă, izolate sau între hărți. Nu necesită un realm activ.
-
-Verificarea bazei active:
+The standalone suite exercises production policies for team fill, configuration normalization, team flags, and victory. It checks faction-compatible SQL routes and rejects missing, isolated, and cross-map edges.
 
 ```sql
 SELECT mapid, COUNT(*), SUM((flags & 1048576) != 0) AS cover_nodes
@@ -90,17 +50,6 @@ WHERE id BETWEEN 5400 AND 5490
 GROUP BY mapid;
 ```
 
-Rezultatul așteptat: `559: 11/4`, `562: 11/2`, `572: 11/4`, `617: 11/2`, `618: 11/4`
-(noduri totale / adăposturi).
+Expected totals and cover counts are 559 (11/4), 562 (11/2), 572 (11/4), 617 (11/2), and 618 (11/4).
 
-## Validare în joc, numai după autorizarea pornirii
-
-Pentru fiecare hartă și fiecare bracket, verificați solo și grup complet, apoi un
-grup incomplet pentru 3v3/5v5. Confirmați numărul de participanți, pozițiile inițiale,
-deschiderea porților, steagurile și ostilitatea. Repetați cu echipe umane de aceeași
-facțiune și cu boți în echipa câștigătoare după moartea jucătorului. Verificați
-refuzarea invitației, ieșirea din coadă, deconectarea, moartea prin cădere, lipsa
-reînvierii și absența modificărilor de rating în meciurile de antrenament.
-
-Testarea vizuală a deplasării pe pod, prin țevi și pe ascensoare rămâne necesară.
-Serverul trebuie să rămână oprit până la comanda explicită a utilizatorului.
+In a client, check each map and bracket with a solo player, a full group, and an incomplete group where applicable. Verify participant counts, starting positions, gates, flags, hostile reactions, and same-faction teams. Check wins after the player dies, invitation declines, queue exits, disconnects, falls, respawn rules, and practice rating. Observe movement on bridges, pipes, and elevators.
