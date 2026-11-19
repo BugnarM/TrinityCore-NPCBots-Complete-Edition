@@ -23,6 +23,12 @@ int main()
     assert(CanAttach(1, 4, false, true));  // Staff bypasses personal attachment limits.
     assert(!CanAttach(0, 0, false, false));
 
+    // A realm configured for 4 companions (1 healer, 1 tank, 2 dps)
+    assert(PersonalLimit(39, 4, false) == 4);
+    assert(CanAttach(4, 0, false, false));
+    assert(CanAttach(4, 3, false, false));
+    assert(!CanAttach(4, 4, false, false));
+
     // A solo DPS gets four bots. Bringing one personal DPS bot needs only three.
     auto solo = MissingRoles(std::vector<std::uint8_t>{ Roles[2] });
     assert(solo && std::accumulate(solo->begin(), solo->end(), 0u) == 4);

@@ -4234,10 +4234,10 @@ NpcBot.MaxBots = 1,1,1,1,1,1,1,1,1
 #                     Applies to hiring and reattaching owned/shared companions.
 #                     Generated Dungeon/Raid Finder bots use group capacity instead.
 #                     GM accounts bypass personal/class attachment limits (technical counter ceiling: 255).
-#        Default:     1
+#        Default:     4
 #        Range:       0-39
 
-NpcBot.MaxBots.NonGM = 1
+NpcBot.MaxBots.NonGM = 4
 
 #
 #    NpcBot.MaxBotsPerClass

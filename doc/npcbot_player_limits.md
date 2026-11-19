@@ -1,6 +1,6 @@
 # Personal companions and Finder group limits
 
-`NpcBot.MaxBots.NonGM` controls how many personal companions a non-GM account can recruit and control. A value of `1` limits the character to one active personal companion. The check applies during recruitment, through the recruiter menu, when taking control, and when reattaching an owned or shared bot. GM security is evaluated for the account independently of `.gm on/off`. The normal recruitment path retains the GM level-based setting in `NpcBot.MaxBots`. The Companion Hearthstone has its own GM exception. Normal hire costs and eligibility rules still apply.
+`NpcBot.MaxBots.NonGM` controls how many personal companions a non-GM account can recruit and control. A value of `4` limits the character to four active personal companions (allowing a full 5-player party with 1 Tank, 1 Healer, and 2 DPS). The check applies during recruitment, through the recruiter menu, when taking control, and when reattaching an owned or shared bot. GM security is evaluated for the account independently of `.gm on/off`. The normal recruitment path retains the GM level-based setting in `NpcBot.MaxBots`. The Companion Hearthstone has its own GM exception. Normal hire costs and eligibility rules still apply.
 
 A character with more previously owned companions than the current limit can reattach only up to that limit at the same time. Existing ownership and equipment are retained. Use the NPCBot recruiter or the Companion Hearthstone to obtain a companion.
 

@@ -376,7 +376,7 @@ private:
         _enableNpcBots                  = sConfigMgr->GetBoolDefault("NpcBot.Enable", true);
         _logToDB                        = sConfigMgr->GetBoolDefault("NpcBot.LogToDB", true);
         _maxClassNpcBots                = sConfigMgr->GetIntDefault("NpcBot.MaxBotsPerClass", 1);
-        _maxPlayerNpcBots               = uint8(std::clamp(sConfigMgr->GetIntDefault("NpcBot.MaxBots.NonGM", 1), 0, 39));
+        _maxPlayerNpcBots               = uint8(std::clamp(sConfigMgr->GetIntDefault("NpcBot.MaxBots.NonGM", 4), 0, 39));
         _maxAccountNpcBots              = sConfigMgr->GetIntDefault("NpcBot.MaxBotsPerAccount", 0);
         _filterRaces                    = sConfigMgr->GetBoolDefault("NpcBot.Botgiver.FilterRaces", false);
         _shared_ownership_options       = sConfigMgr->GetIntDefault("NpcBot.SharedOwnership.Options", 0);

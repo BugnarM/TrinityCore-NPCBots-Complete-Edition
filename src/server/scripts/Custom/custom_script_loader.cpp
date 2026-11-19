@@ -31,9 +31,12 @@
 #include "DBCStores.h"
 #include "Config.h"
 #include "ObjectMgr.h"
+#include "ObjectAccessor.h"
+#include "CompanionPartyPolicy.h"
 #include <cmath>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 
 enum DarkKnightSpells
@@ -374,202 +377,156 @@ public:
 
 /*
  * Companion Hearthstone System (Item 70901) & .companion command:
- * For Non-GM: strictly 1 companion limit. Toggling dismisses or switches class. 5h cooldown after 1st use.
- * For GM: UNLIMITED companions! Can summon as many companions as desired. 0 cooldown.
- * Dismissing:
- * - Targeting an owned bot and using .companion / stone or .companion dismiss: dismisses targeted bot.
- * - .companion dismiss (without target) for GM: dismisses all companion bots.
+ * In open world (via Companion Hearthstone or .companion):
+ * - Players can have up to 4 companions (forming a balanced 5-player party: 1 Tank, 1 Healer, 2 DPS).
+ * - Allocation sequence & rules:
+ *     1) Companion #1 MUST be Healer & DPS (Priest, Paladin, Shaman, Druid with BOT_ROLE_HEAL | BOT_ROLE_DPS).
+ *     2) Maximum 1 Healer across all companions (no 2 healers allowed).
+ *     3) Composition: 1 Tank, 1 Healer, 2 DPS.
+ *        - Slot 1: Healer & DPS
+ *        - Slot 2: Tank & DPS
+ *        - Slot 3: DPS
+ *        - Slot 4: DPS
+ * - Dismissing:
+ *     - Targeting a personal companion: dismisses that specific companion.
+ *     - Using .companion dismiss or stone without a target when at max (4) companions: dismisses all companions.
  */
 static bool IsPersonalCompanion(Creature const* bot)
 {
-    return bot && !bot->IsSummon() && !bot->IsTempBot();
+    return bot && !bot->GetSpawnId() && !bot->IsSummon() && !bot->IsTempBot();
 }
 
 static void DismissCompanion(Player* player, Creature* bot)
 {
-    if (!bot) return;
-    bool const generated = !bot->GetSpawnId();
+    if (!bot)
+        return;
     player->GetBotMgr()->RemoveBot(bot->GetGUID(), BOT_REMOVE_DISMISS);
-    if (generated)
-        bot->DespawnOrUnsummon();
+    bot->DespawnOrUnsummon();
+}
+
+static uint32 GetCompanionCooldown(Player const* player, uint64 now, uint32 duration)
+{
+    if (!duration)
+        return 0;
+    if (QueryResult result = CharacterDatabase.Query(Trinity::StringFormat(
+        "SELECT last_use_time FROM character_companion_stone WHERE guid = {}", player->GetGUID().GetCounter()).c_str()))
+        return NPCBots::Companions::CooldownRemaining(now, result->Fetch()[0].GetUInt64(), duration);
+    return 0;
+}
+
+static void SetCompanionItemCooldown(Player* player, uint32 seconds)
+{
+    player->GetSpellHistory()->ResetCooldown(55884, true);
+    if (!seconds)
+        return;
+    player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::seconds(seconds));
+    WorldPackets::Spells::SpellCooldown packet;
+    packet.Caster = player->GetGUID();
+    packet.Flags = 0;
+    packet.SpellCooldowns.emplace_back(55884, seconds * 1000);
+    player->SendDirectMessage(packet.Write());
 }
 
 static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool dismissAction = false)
 {
-    if (!player || !player->IsInWorld())
+    using namespace NPCBots::Companions;
+    if (!player || !player->IsInWorld() || player->IsBeingTeleported() || !player->GetSession())
         return false;
 
+    // Serialize the shared template selection and its attachment.
     static std::mutex companionInvocationMutex;
     std::lock_guard invocationLock(companionInvocationMutex);
-    bool const isGM = (player->GetSession() && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER);
-    uint32 const guidLow = player->GetGUID().GetCounter();
-    time_t const now = GameTime::GetGameTime();
-    uint64 const COOLDOWN_SECONDS = BotCfg::GetHealingSettings().companionCooldownSeconds;
+    bool const isGM = player->GetSession()->GetSecurity() >= SEC_GAMEMASTER;
+    uint64 const now = GameTime::GetGameTime();
+    uint32 const duration = isGM ? 0 : BotCfg::GetHealingSettings().companionCooldownSeconds;
+    ChatHandler chat(player->GetSession());
+    auto startCooldown = [&] {
+        if (!duration)
+            return;
+        CharacterDatabase.DirectExecute(Trinity::StringFormat(
+            "REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})",
+            player->GetGUID().GetCounter(), now).c_str());
+        SetCompanionItemCooldown(player, duration);
+    };
 
-    // 0. Handle explicit dismiss action (.companion dismiss / clear)
-    if (dismissAction)
+    std::vector<ObjectGuid> activeCompanions;
+    unsigned healers = 0;
+    unsigned tanks = 0;
+    std::set<uint8> existingClasses;
+    for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
+        if (IsPersonalCompanion(bot))
+        {
+            activeCompanions.push_back(guid);
+            existingClasses.insert(bot->GetBotClass());
+            healers += bot->GetBotAI()->HasRole(BOT_ROLE_HEAL);
+            tanks += bot->GetBotAI()->HasRole(BOT_ROLE_TANK);
+        }
+
+    if (!requestedClass)
+        if (Unit* target = player->GetSelectedUnit(); target && target->IsCreature() &&
+            player->GetBotMgr()->GetBot(target->GetGUID()) && IsPersonalCompanion(target->ToCreature()))
+        {
+            chat.PSendSysMessage("Companionul %s a fost concediat.", target->GetName().c_str());
+            DismissCompanion(player, target->ToCreature());
+            player->CastSpell(player, 64034, true);
+            return true;
+        }
+
+    if (dismissAction || (!requestedClass && activeCompanions.size() >= MaxCompanions))
     {
-        if (Unit* target = player->GetSelectedUnit())
+        if (activeCompanions.empty())
         {
-            if (target->IsCreature() && IsPersonalCompanion(target->ToCreature()) && player->GetBotMgr()->GetBot(target->GetGUID()))
-            {
-                std::string name = target->GetName();
-                DismissCompanion(player, target->ToCreature());
-                ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
-                player->CastSpell(player, 64034, true); // Visual puff
-                return true;
-            }
-        }
-
-        if (isGM)
-        {
-            if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
-            {
-                std::vector<ObjectGuid> companions;
-                for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
-                    if (IsPersonalCompanion(bot)) companions.push_back(guid);
-                if (companions.empty()) return false;
-                for (ObjectGuid guid : companions)
-                    DismissCompanion(player, player->GetBotMgr()->GetBot(guid));
-                ChatHandler(player->GetSession()).SendSysMessage("All companion bots have been dismissed.");
-                player->CastSpell(player, 64034, true);
-                return true;
-            }
-            else
-            {
-                ChatHandler(player->GetSession()).SendSysMessage("You have no companion bots to dismiss.");
-                return false;
-            }
-        }
-        else
-        {
-            // Non-GM dismiss active bot
-            if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
-            {
-                Creature* activeBot = nullptr;
-                for (auto const& [_, bot] : *player->GetBotMgr()->GetBotMap())
-                    if (IsPersonalCompanion(bot)) { activeBot = bot; break; }
-                if (activeBot)
-                {
-                    std::string name = activeBot->GetName();
-                    DismissCompanion(player, activeBot);
-                    ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
-                    player->CastSpell(player, 64034, true);
-                    return true;
-                }
-            }
+            chat.SendSysMessage("Nu ai niciun companion activ de concediat.");
             return false;
         }
+        for (ObjectGuid guid : activeCompanions)
+            DismissCompanion(player, player->GetBotMgr()->GetBot(guid));
+        chat.SendSysMessage("Toti companionii au fost concediati.");
+        player->CastSpell(player, 64034, true);
+        if (!GetCompanionCooldown(player, now, duration))
+            startCooldown();
+        return true;
     }
-
-    // Check first use and cooldown in database (only for non-GM)
-    bool firstUseDone = false;
-    uint64 lastUseTime = 0;
-
-    QueryResult cResult = CharacterDatabase.Query(Trinity::StringFormat("SELECT first_use_done, last_use_time FROM character_companion_stone WHERE guid = {}", guidLow).c_str());
-    if (cResult)
+    if (activeCompanions.size() >= MaxCompanions)
     {
-        Field* fields = cResult->Fetch();
-        firstUseDone = (fields[0].GetUInt8() != 0);
-        lastUseTime = fields[1].GetUInt64();
+        chat.SendSysMessage("Ai deja patru companioni. Foloseste .companion dismiss pentru a-i retrage.");
+        return false;
     }
-
-    if (firstUseDone && !isGM)
+    if ((!isGM && player->IsInCombat()) || player->GetMap()->GetInstanceId())
     {
-        uint64 const diff = (now > lastUseTime) ? (now - lastUseTime) : 0;
-        if (diff < COOLDOWN_SECONDS)
-        {
-            uint32 const remSec = static_cast<uint32>(COOLDOWN_SECONDS - diff);
-            uint32 const hours = remSec / 3600;
-            uint32 const mins = (remSec % 3600) / 60;
-            ChatHandler(player->GetSession()).PSendSysMessage("|cffff0000[Companion Hearthstone]|r Piatra este in cooldown! Timp ramas: %u ore si %u minute.", hours, mins);
-            return false;
-        }
+        chat.SendSysMessage("Cheama companionii in afara luptei si inainte de a intra intr-o instanta.");
+        return false;
     }
-
-    Creature* previousCompanion = nullptr;
-    // Keep the previous bot attached until the new creature has been constructed.
-    if (!isGM)
+    if (uint32 remaining = GetCompanionCooldown(player, now, duration))
     {
-        if (player->HaveBot() && player->GetBotMgr()->GetBotMap() && !player->GetBotMgr()->GetBotMap()->empty())
-        {
-            Creature* activeBot = nullptr;
-            for (auto const& [guid, bot] : *player->GetBotMgr()->GetBotMap())
-            {
-                if (IsPersonalCompanion(bot))
-                {
-                    activeBot = bot;
-                    break;
-                }
-            }
-
-            if (activeBot)
-            {
-                // If player requested the same class or toggled without argument, dismiss it
-                if (requestedClass == 0 || activeBot->GetBotClass() == requestedClass)
-                {
-                    std::string name = activeBot->GetName();
-                    DismissCompanion(player, activeBot);
-                    ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
-                    player->CastSpell(player, 64034, true); // Visual puff
-
-                    // Update cooldown
-                    if (!firstUseDone)
-                    {
-                        CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
-                        player->GetSpellHistory()->ResetCooldown(55884, true);
-                        ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul a fost retras. (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
-                    }
-                    else
-                    {
-                        CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
-                        const uint32 cdMs = COOLDOWN_SECONDS * 1000;
-                        player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::seconds(COOLDOWN_SECONDS));
-
-                        WorldPackets::Spells::SpellCooldown spellCooldown;
-                        spellCooldown.Caster = player->GetGUID();
-                        spellCooldown.Flags = 0;
-                        spellCooldown.SpellCooldowns.emplace_back(55884, cdMs);
-                        player->SendDirectMessage(spellCooldown.Write());
-
-                        ChatHandler(player->GetSession()).SendSysMessage("|cff00ccff[Companion Hearthstone]|r Cooldown de 5 ore activat.");
-                    }
-                    return true;
-                }
-                else
-                {
-                    previousCompanion = activeBot;
-                }
-            }
-        }
-    }
-    else
-    {
-        // GM: if GM has an owned companion bot selected as target and ran .companion without class argument, dismiss that targeted bot
-        if (requestedClass == 0)
-        {
-            if (Unit* target = player->GetSelectedUnit())
-            {
-                if (target->IsCreature() && player->GetBotMgr()->GetBot(target->GetGUID()))
-                {
-                    std::string name = target->GetName();
-                    DismissCompanion(player, target->ToCreature());
-                    ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has been dismissed.", name.c_str());
-                    player->CastSpell(player, 64034, true);
-                    return true;
-                }
-            }
-        }
-    }
-
-    // 2. Summon companion bot
-    if (!isGM && player->IsInCombat())
-    {
-        ChatHandler(player->GetSession()).SendSysMessage("You cannot summon a companion bot while in combat!");
+        chat.PSendSysMessage("Piatra este in cooldown pentru inca %u secunde.", remaining);
+        SetCompanionItemCooldown(player, remaining);
         return false;
     }
 
-    // Pick race matching player's team (Alliance / Horde)
+    Role const targetRole = NextRole(healers, tanks);
+    bool const canUseDeathKnight = player->GetClass() == CLASS_DEATH_KNIGHT || player->GetLevel() >= 55;
+    if (requestedClass)
+    {
+        if (requestedClass == BOT_CLASS_DEATH_KNIGHT && !canUseDeathKnight)
+        {
+            chat.SendSysMessage("Companionii Death Knight necesita nivelul 55.");
+            return false;
+        }
+        bool const healing = requestedClass == BOT_CLASS_PRIEST || requestedClass == BOT_CLASS_PALADIN ||
+            requestedClass == BOT_CLASS_SHAMAN || requestedClass == BOT_CLASS_DRUID;
+        bool const tanking = requestedClass == BOT_CLASS_WARRIOR || requestedClass == BOT_CLASS_PALADIN ||
+            requestedClass == BOT_CLASS_DEATH_KNIGHT || requestedClass == BOT_CLASS_DRUID;
+        if (!CanFill(targetRole, healing, tanking))
+        {
+            chat.SendSysMessage(targetRole == Role::Healer ?
+                "Urmatorul companion trebuie sa poata vindeca: priest, paladin, shaman sau druid." :
+                "Urmatorul companion trebuie sa poata tanka: warrior, paladin, death knight sau druid.");
+            return false;
+        }
+    }
+
+    // 5. Query matching bot templates
     bool isAlliance = (player->GetRaceMask() & RACEMASK_ALLIANCE) != 0;
     std::string raceFilter = isAlliance ? "1, 3, 4, 7, 11" : "2, 5, 6, 8, 10";
 
@@ -581,18 +538,33 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
     }
     else
     {
-        if (player->GetClass() == CLASS_DEATH_KNIGHT || player->GetLevel() >= 55)
+        if (targetRole == Role::Healer)
+        {
+            // Healing classes: Paladin (2), Priest (5), Shaman (7), Druid (11)
             query = "SELECT entry FROM creature_template_npcbot_extras WHERE race IN (" + raceFilter +
-                    ") AND class BETWEEN 1 AND 11 ORDER BY RAND() LIMIT 20";
-        else
+                    ") AND class IN (2, 5, 7, 11) ORDER BY RAND() LIMIT 20";
+        }
+        else if (targetRole == Role::Tank)
+        {
+            // Tank classes: Warrior (1), Paladin (2), Druid (11), DK (6 if lvl >= 55)
+            if (canUseDeathKnight)
+                query = "SELECT entry FROM creature_template_npcbot_extras WHERE race IN (" + raceFilter +
+                        ") AND class IN (1, 2, 6, 11) ORDER BY RAND() LIMIT 20";
+            else
+                query = "SELECT entry FROM creature_template_npcbot_extras WHERE race IN (" + raceFilter +
+                        ") AND class IN (1, 2, 11) ORDER BY RAND() LIMIT 20";
+        }
+        else // Role::Damage
+        {
+            // DPS classes: Hunter (3), Rogue (4), Mage (8), Warlock (9)
             query = "SELECT entry FROM creature_template_npcbot_extras WHERE race IN (" + raceFilter +
-                    ") AND class IN (1, 2, 3, 4, 5, 7, 8, 9, 11) ORDER BY RAND() LIMIT 20";
+                    ") AND class IN (3, 4, 8, 9) ORDER BY RAND() LIMIT 20";
+        }
     }
 
     QueryResult result = WorldDatabase.Query(query.c_str());
     if (!result && requestedClass != 0)
     {
-        // Fallback: any race for requested class
         std::string fallbackQuery = "SELECT entry FROM creature_template_npcbot_extras WHERE class = " +
                                     std::to_string(requestedClass) + " ORDER BY RAND() LIMIT 20";
         result = WorldDatabase.Query(fallbackQuery.c_str());
@@ -623,6 +595,13 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
         NpcBotData const* data = BotDataMgr::SelectNpcBotData(candidate);
         if (!BotDataMgr::FindBot(candidate) && !alreadyOwned && (!data || !data->owner))
         {
+            // Avoid duplicate class if possible for DPS variety
+            NpcBotExtras const* candExtras = BotDataMgr::SelectNpcBotExtras(candidate);
+            if (candExtras && existingClasses.contains(candExtras->bclass) && result->GetRowCount() > 1)
+            {
+                if (!botEntry) botEntry = candidate;
+                continue;
+            }
             botEntry = candidate;
             break;
         }
@@ -642,22 +621,128 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
     }
 
     uint32 faction = BotDataMgr::GetDefaultFactionForBotRaceClass(extras->bclass, extras->race);
-    uint8 spec = BotDataMgr::SelectSpecForClass(extras->bclass);
-    uint32 roles = BotDataMgr::DefaultRolesForClass(extras->bclass, spec) | BOT_ROLE_PARTY;
+    uint8 spec = BOT_SPEC_DEFAULT;
+    uint32 roles = BOT_ROLE_PARTY;
 
-    if (!BotDataMgr::SelectNpcBotData(botEntry))
+    if (targetRole == Role::Healer)
+    {
+        switch (extras->bclass)
+        {
+            case BOT_CLASS_PRIEST:
+                spec = (urand(0, 1) == 0) ? BOT_SPEC_PRIEST_HOLY : BOT_SPEC_PRIEST_DISCIPLINE;
+                roles |= BOT_ROLE_HEAL | BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            case BOT_CLASS_PALADIN:
+                spec = BOT_SPEC_PALADIN_HOLY;
+                roles |= BOT_ROLE_HEAL | BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_SHAMAN:
+                spec = BOT_SPEC_SHAMAN_RESTORATION;
+                roles |= BOT_ROLE_HEAL | BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            case BOT_CLASS_DRUID:
+                spec = BOT_SPEC_DRUID_RESTORATION;
+                roles |= BOT_ROLE_HEAL | BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            default:
+                spec = BotDataMgr::SelectSpecForClass(extras->bclass);
+                roles |= BOT_ROLE_HEAL | BOT_ROLE_DPS;
+                break;
+        }
+    }
+    else if (targetRole == Role::Tank)
+    {
+        switch (extras->bclass)
+        {
+            case BOT_CLASS_WARRIOR:
+                spec = BOT_SPEC_WARRIOR_PROTECTION;
+                roles |= BOT_ROLE_TANK | BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_PALADIN:
+                spec = BOT_SPEC_PALADIN_PROTECTION;
+                roles |= BOT_ROLE_TANK | BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_DEATH_KNIGHT:
+                spec = BOT_SPEC_DK_BLOOD;
+                roles |= BOT_ROLE_TANK | BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_DRUID:
+                spec = BOT_SPEC_DRUID_FERAL;
+                roles |= BOT_ROLE_TANK | BOT_ROLE_DPS;
+                break;
+            default:
+                spec = BotDataMgr::SelectSpecForClass(extras->bclass);
+                roles |= BOT_ROLE_TANK | BOT_ROLE_DPS;
+                break;
+        }
+    }
+    else // Role::Damage
+    {
+        switch (extras->bclass)
+        {
+            case BOT_CLASS_MAGE:
+                spec = BOT_SPEC_MAGE_FROST;
+                roles |= BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            case BOT_CLASS_WARLOCK:
+                spec = BOT_SPEC_WARLOCK_AFFLICTION;
+                roles |= BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            case BOT_CLASS_HUNTER:
+                spec = BOT_SPEC_HUNTER_MARKSMANSHIP;
+                roles |= BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            case BOT_CLASS_ROGUE:
+                spec = BOT_SPEC_ROGUE_COMBAT;
+                roles |= BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_WARRIOR:
+                spec = BOT_SPEC_WARRIOR_FURY;
+                roles |= BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_PALADIN:
+                spec = BOT_SPEC_PALADIN_RETRIBUTION;
+                roles |= BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_PRIEST:
+                spec = BOT_SPEC_PRIEST_SHADOW;
+                roles |= BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            case BOT_CLASS_DEATH_KNIGHT:
+                spec = BOT_SPEC_DK_FROST;
+                roles |= BOT_ROLE_DPS;
+                break;
+            case BOT_CLASS_SHAMAN:
+                spec = BOT_SPEC_SHAMAN_ELEMENTAL;
+                roles |= BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            case BOT_CLASS_DRUID:
+                spec = BOT_SPEC_DRUID_BALANCE;
+                roles |= BOT_ROLE_DPS | BOT_ROLE_RANGED;
+                break;
+            default:
+                spec = BotDataMgr::SelectSpecForClass(extras->bclass);
+                roles |= BOT_ROLE_DPS;
+                break;
+        }
+    }
+
+    NpcBotData const* oldData = BotDataMgr::SelectNpcBotData(botEntry);
+    uint8 oldSpec = oldData ? oldData->spec : spec;
+    uint32 oldRoles = oldData ? oldData->roles : roles;
+    auto restoreTemplate = [&] {
+        if (oldData)
+        {
+            BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_SPEC, &oldSpec);
+            BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_ROLES, &oldRoles);
+        }
+    };
+    if (!oldData)
         BotDataMgr::AddNpcBotData(botEntry, roles, spec, faction);
     else
     {
-        uint32 existingRoles = BotDataMgr::SelectNpcBotData(botEntry)->roles | BOT_ROLE_PARTY;
-        BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_ROLES, &existingRoles);
-    }
-
-    // BotMgr commits ownership only after successful attachment.
-    if (player->GetMap()->GetInstanceId())
-    {
-        ChatHandler(player->GetSession()).SendSysMessage("Summon your companion before entering an instance.");
-        return false;
+        BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_SPEC, &spec);
+        BotDataMgr::UpdateNpcBotData(botEntry, NPCBOT_UPDATE_ROLES, &roles);
     }
 
     Position pos = player->GetPosition();
@@ -665,58 +750,82 @@ static bool ToggleCompanionBot(Player* player, uint8 requestedClass = 0, bool di
     if (!bot->LoadBotCreatureFromDB(0, player->GetMap(), true, true, botEntry, &pos))
     {
         delete bot;
+        restoreTemplate();
         ChatHandler(player->GetSession()).SendSysMessage("Failed to spawn companion bot!");
         return false;
     }
 
-    // Align bot phase mask with player immediately (crucial in Acherus / phased zones)
     bot->SetPhaseMask(player->GetPhaseMask(), true);
 
-    if (previousCompanion)
-        player->GetBotMgr()->RemoveBot(previousCompanion->GetGUID(), BOT_REMOVE_DISMISS);
     if (player->GetBotMgr()->AddBot(bot, true) == BOT_ADD_SUCCESS)
     {
-        if (previousCompanion && !previousCompanion->GetSpawnId())
-            previousCompanion->DespawnOrUnsummon();
         bot->GetBotAI()->SetWanderer(false);
-        bot->GetBotAI()->ToggleRole(BOT_ROLE_PARTY, true);
         bot->SetNpcFlag(UNIT_NPC_FLAG_GOSSIP);
-        player->GetBotMgr()->AddBotToGroup(bot);
+        if (!player->GetBotMgr()->AddBotToGroup(bot))
+        {
+            DismissCompanion(player, bot);
+            restoreTemplate();
+            chat.SendSysMessage("Companionul nu a putut intra in grup.");
+            return false;
+        }
+
+        // Explicitly enforce roles on the spawned bot
+        if (targetRole == Role::Healer)
+        {
+            if (!bot->GetBotAI()->HasRole(BOT_ROLE_HEAL))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_HEAL, true);
+            if (!bot->GetBotAI()->HasRole(BOT_ROLE_DPS))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_DPS, true);
+            if (bot->GetBotAI()->HasRole(BOT_ROLE_TANK))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_TANK, true);
+        }
+        else if (targetRole == Role::Tank)
+        {
+            if (!bot->GetBotAI()->HasRole(BOT_ROLE_TANK))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_TANK, true);
+            if (!bot->GetBotAI()->HasRole(BOT_ROLE_DPS))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_DPS, true);
+            if (bot->GetBotAI()->HasRole(BOT_ROLE_HEAL))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_HEAL, true);
+        }
+        else // Role::Damage
+        {
+            if (!bot->GetBotAI()->HasRole(BOT_ROLE_DPS))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_DPS, true);
+            if (bot->GetBotAI()->HasRole(BOT_ROLE_HEAL))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_HEAL, true);
+            if (bot->GetBotAI()->HasRole(BOT_ROLE_TANK))
+                bot->GetBotAI()->ToggleRole(BOT_ROLE_TANK, true);
+        }
+        if (!bot->GetBotAI()->HasRole(BOT_ROLE_PARTY))
+            bot->GetBotAI()->ToggleRole(BOT_ROLE_PARTY, true);
 
         player->CastSpell(player, 64036, true); // Visual light effect
-        ChatHandler(player->GetSession()).PSendSysMessage("Companion bot %s has arrived to fight by your side!", bot->GetName().c_str());
 
-        // Update cooldown only for non-GM
-        if (!isGM)
+        uint32 const newCount = uint32(activeCompanions.size() + 1);
+        char const* roleLabel = (targetRole == Role::Healer) ? "Healer & DPS" :
+                                (targetRole == Role::Tank)   ? "Tank" : "DPS";
+
+        ChatHandler(player->GetSession()).PSendSysMessage(
+            "|cff00ff00[Companion Hearthstone]|r Companion #%u: %s (%s) a sosit! (%u/%u companioni)",
+            newCount, bot->GetName().c_str(), roleLabel, newCount, uint32(MaxCompanions));
+
+        if (newCount == MaxCompanions)
         {
-            if (!firstUseDone)
-            {
-                CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, 0)", guidLow).c_str());
-                player->GetSpellHistory()->ResetCooldown(55884, true);
-                ChatHandler(player->GetSession()).SendSysMessage("|cff00ff00[Companion Hearthstone]|r Insotitorul tau de leveling a sosit! (Prima utilizare: fara cooldown. Urmatoarele utilizari vor avea cooldown de 5 ore.)");
-            }
-            else
-            {
-                CharacterDatabase.DirectExecute(Trinity::StringFormat("REPLACE INTO character_companion_stone (guid, first_use_done, last_use_time) VALUES ({}, 1, {})", guidLow, uint64(now)).c_str());
-                const uint32 cdMs = COOLDOWN_SECONDS * 1000;
-                player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::seconds(COOLDOWN_SECONDS));
-
-                WorldPackets::Spells::SpellCooldown spellCooldown;
-                spellCooldown.Caster = player->GetGUID();
-                spellCooldown.Flags = 0;
-                spellCooldown.SpellCooldowns.emplace_back(55884, cdMs);
-                player->SendDirectMessage(spellCooldown.Write());
-
-                ChatHandler(player->GetSession()).SendSysMessage("|cff00ccff[Companion Hearthstone]|r Cooldown de 5 ore activat.");
-            }
+            ChatHandler(player->GetSession()).SendSysMessage(
+                "|cff00ccff[Companion Hearthstone]|r Ai format grupul complet de 4 companioni: 1 Healer, 1 Tank, 2 DPS!");
         }
+
+        if (newCount == MaxCompanions && duration)
+            startCooldown();
+        else
+            SetCompanionItemCooldown(player, 0);
         return true;
     }
     else
     {
-        bot->DespawnOrUnsummon(); // map-owned after LoadBotCreatureFromDB succeeded
-        if (previousCompanion && player->GetBotMgr()->AddBot(previousCompanion, true) != BOT_ADD_SUCCESS)
-            TC_LOG_ERROR("npcbots", "Could not restore companion {} for {} after failed class switch", previousCompanion->GetEntry(), player->GetGUID().ToString());
+        bot->DespawnOrUnsummon();
+        restoreTemplate();
         ChatHandler(player->GetSession()).SendSysMessage("Could not attach companion bot!");
         return false;
     }
@@ -734,11 +843,64 @@ public:
     }
 };
 
+namespace
+{
+std::mutex heirloomDeliveryMutex;
+AsyncCallbackProcessor<TransactionCallback> heirloomDeliveryCallbacks;
+std::unordered_set<uint32> pendingHeirloomDeliveries;
+std::unordered_set<uint32> failedHeirloomDeliveries;
+
+bool HeirloomDeliveryUnavailable(uint32 guid)
+{
+    std::lock_guard lock(heirloomDeliveryMutex);
+    return pendingHeirloomDeliveries.contains(guid) || failedHeirloomDeliveries.contains(guid);
+}
+
+void QueueHeirloomDelivery(ObjectGuid guid, CharacterDatabaseTransaction transaction, bool complete, bool announce)
+{
+    std::lock_guard lock(heirloomDeliveryMutex);
+    pendingHeirloomDeliveries.insert(guid.GetCounter());
+    heirloomDeliveryCallbacks.AddCallback(CharacterDatabase.AsyncCommitTransaction(std::move(transaction))).AfterComplete(
+        [guid, complete, announce](bool success)
+        {
+            pendingHeirloomDeliveries.erase(guid.GetCounter());
+            Player* player = ObjectAccessor::FindConnectedPlayer(guid);
+            if (!success)
+            {
+                TC_LOG_ERROR("scripts", "Heirloom delivery could not be saved for {}", guid.ToString());
+                if (player && player->GetSession())
+                {
+                    failedHeirloomDeliveries.insert(guid.GetCounter());
+                    ChatHandler(player->GetSession()).SendSysMessage("Heirloom delivery could not be saved. Reconnect before retrying.");
+                }
+                return;
+            }
+            if (announce && player && player->GetSession())
+                ChatHandler(player->GetSession()).SendSysMessage(complete ? "Heirloom package delivered." :
+                    "Partial heirloom delivery saved. Free bag space and reconnect to receive the remaining items.");
+        });
+}
+
+class companion_delivery_worldscript : public WorldScript
+{
+public:
+    companion_delivery_worldscript() : WorldScript("companion_delivery_worldscript") { }
+
+    void OnUpdate(uint32 /*diff*/) override
+    {
+        std::lock_guard lock(heirloomDeliveryMutex);
+        heirloomDeliveryCallbacks.ProcessReadyCallbacks();
+    }
+};
+}
+
 static bool GrantClassHeirlooms(Player* player, bool announce = true)
 {
     if (!player || !BotCfg::GetHealingSettings().heirlooms || player->IsBeingTeleported())
         return false;
     uint32 const guid = player->GetGUID().GetCounter();
+    if (HeirloomDeliveryUnavailable(guid))
+        return false;
     if (CharacterDatabase.Query(Trinity::StringFormat("SELECT 1 FROM character_heirlooms_received WHERE guid = {}", guid).c_str()))
         return true;
     std::unordered_map<uint32, uint32> delivered;
@@ -1015,13 +1177,7 @@ static bool GrantClassHeirlooms(Player* player, bool announce = true)
         transaction->PAppend("REPLACE INTO character_heirloom_delivery (guid, item, count) VALUES ({}, {}, {})", guid, item, count);
     if (complete)
         transaction->PAppend("INSERT IGNORE INTO character_heirlooms_received (guid) VALUES ({})", guid);
-    CharacterDatabase.DirectCommitTransaction(transaction);
-
-    if (announce && grantedCount > 0)
-    {
-        ChatHandler(player->GetSession()).SendSysMessage(complete ? "Heirloom package delivered." : "Partial heirloom delivery saved; free bag space and reconnect to receive the remaining items.");
-        ChatHandler(player->GetSession()).SendSysMessage("|cffe6cc80[Heirlooms]|r Bonus de experienta (+XP), arme, inele si talismane echipate/adaugate in inventar.");
-    }
+    QueueHeirloomDelivery(player->GetGUID(), std::move(transaction), complete, announce && grantedCount > 0);
     return complete;
 }
 
@@ -1030,12 +1186,16 @@ class companion_playerscript : public PlayerScript
 public:
     companion_playerscript() : PlayerScript("companion_playerscript") { }
 
+    void OnLogout(Player* player) override
+    {
+        std::lock_guard lock(heirloomDeliveryMutex);
+        failedHeirloomDeliveries.erase(player->GetGUID().GetCounter());
+    }
+
     void OnLogin(Player* player, bool /*firstLogin*/) override
     {
         if (!player)
             return;
-
-        uint32 const guidLow = player->GetGUID().GetCounter();
 
         GrantClassHeirlooms(player, true);
 
@@ -1052,32 +1212,9 @@ public:
             }
         }
 
-        // 3. Synchronize active cooldown upon login
-        QueryResult cResult = CharacterDatabase.Query(Trinity::StringFormat("SELECT first_use_done, last_use_time FROM character_companion_stone WHERE guid = {}", guidLow).c_str());
-        if (cResult)
-        {
-            Field* fields = cResult->Fetch();
-            bool firstUseDone = (fields[0].GetUInt8() != 0);
-            uint64 lastUseTime = fields[1].GetUInt64();
-
-            if (firstUseDone && lastUseTime > 0)
-            {
-                time_t const now = GameTime::GetGameTime();
-                uint64 const diff = (now > lastUseTime) ? (now - lastUseTime) : 0;
-                uint64 const COOLDOWN_SECONDS = BotCfg::GetHealingSettings().companionCooldownSeconds;
-                if (diff < COOLDOWN_SECONDS)
-                {
-                    uint32 const remSec = static_cast<uint32>(COOLDOWN_SECONDS - diff);
-                    player->GetSpellHistory()->AddCooldown(55884, ITEM_COMPANION_STONE, std::chrono::seconds(remSec));
-
-                    WorldPackets::Spells::SpellCooldown spellCooldown;
-                    spellCooldown.Caster = player->GetGUID();
-                    spellCooldown.Flags = 0;
-                    spellCooldown.SpellCooldowns.emplace_back(55884, remSec * 1000);
-                    player->SendDirectMessage(spellCooldown.Write());
-                }
-            }
-        }
+        if (player->GetSession()->GetSecurity() < SEC_GAMEMASTER)
+            if (uint32 remaining = GetCompanionCooldown(player, GameTime::GetGameTime(), BotCfg::GetHealingSettings().companionCooldownSeconds))
+                SetCompanionItemCooldown(player, remaining);
     }
 };
 
@@ -1122,7 +1259,7 @@ public:
         GrantClassHeirlooms(player, true);
 
         if (handler->GetSession() && player != handler->GetSession()->GetPlayer())
-            handler->PSendSysMessage("Granted heirlooms to %s.", player->GetName().c_str());
+            handler->PSendSysMessage("Checked heirloom delivery for %s.", player->GetName().c_str());
         return true;
     }
 
@@ -1202,7 +1339,12 @@ public:
                 dismissAction = true;
         }
 
-        // Otherwise toggle/summon companion
+        if (classArg && !requestedClass && !dismissAction)
+        {
+            handler->SendSysMessage("Clasa companionului nu este recunoscuta.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
         return ToggleCompanionBot(player, requestedClass, dismissAction);
     }
 };
@@ -1512,6 +1654,7 @@ void AddCustomScripts()
     new item_companion_stone();
     new companion_commandscript();
     new companion_playerscript();
+    new companion_delivery_worldscript();
     new boss_illidan_worldboss_script();
     new AutoLearnSpellsScript();
 }

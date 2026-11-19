@@ -22,6 +22,7 @@ code=r'''
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <utility>
 using uint8=std::uint8_t;using uint16=std::uint16_t;using uint32=std::uint32_t;
 namespace Trinity{template<class... Args>std::string StringFormat(std::string s,Args... args){auto add=[&](auto value){s.replace(s.find("{}"),2,std::to_string(value));};(add(args),...);return s;}}
 enum{CLASS_WARRIOR=1,CLASS_PALADIN=2,CLASS_HUNTER=3,CLASS_ROGUE=4,CLASS_PRIEST=5,CLASS_DEATH_KNIGHT=6,CLASS_SHAMAN=7,CLASS_MAGE=8,CLASS_WARLOCK=9,CLASS_DRUID=11,TEAM_ALLIANCE=0,NULL_SLOT=255,NULL_BAG=255,EQUIP_ERR_OK=0};
@@ -53,19 +54,33 @@ struct Player{
  void SaveToDB(CharacterDatabaseTransaction transaction){transaction->saved=true;transaction->inventory=inventory;}
  void* GetSession()const{return nullptr;}
 };
+CharacterDatabaseTransaction pendingTransaction;
+bool HeirloomDeliveryUnavailable(uint32){return bool(pendingTransaction);}
+void QueueHeirloomDelivery(Player::Guid,CharacterDatabaseTransaction transaction,bool,bool)
+{
+    assert(!pendingTransaction);
+    pendingTransaction=std::move(transaction);
+}
+bool CompleteHeirloomDelivery()
+{
+    auto transaction=std::exchange(pendingTransaction, {});
+    assert(transaction);
+    try { CharacterDatabase.DirectCommitTransaction(transaction);return true; }
+    catch(std::runtime_error const&) { return false; }
+}
 struct ChatHandler{explicit ChatHandler(void*){}void SendSysMessage(char const*){}};
 METHOD
 int main(){
- {Player partial;partial.capacity=3;assert(!GrantClassHeirlooms(&partial,false));assert(!CharacterDatabase.received&&CharacterDatabase.ledger.at(41600)==3&&CharacterDatabase.inventory.at(41600)==3);}
+ {Player partial;partial.capacity=3;assert(!GrantClassHeirlooms(&partial,false));assert(!GrantClassHeirlooms(&partial,false)&&partial.totalGranted==3);assert(CompleteHeirloomDelivery());assert(!CharacterDatabase.received&&CharacterDatabase.ledger.at(41600)==3&&CharacterDatabase.inventory.at(41600)==3);}
  --CharacterDatabase.inventory[41600]; // one delivered bag sold before reconnect
- {Player reconnect;assert(GrantClassHeirlooms(&reconnect,false));assert(CharacterDatabase.received&&CharacterDatabase.ledger.at(41600)==4&&CharacterDatabase.inventory.at(41600)==3);assert(reconnect.spells.contains(198)&&!reconnect.spells.contains(199));}
+ {Player reconnect;assert(GrantClassHeirlooms(&reconnect,false));assert(!CharacterDatabase.received);assert(CompleteHeirloomDelivery());assert(CharacterDatabase.received&&CharacterDatabase.ledger.at(41600)==4&&CharacterDatabase.inventory.at(41600)==3);assert(reconnect.spells.contains(198)&&!reconnect.spells.contains(199));}
  auto delivered=CharacterDatabase.inventory;CharacterDatabase.inventory.erase(42947);
  {Player repeat;assert(GrantClassHeirlooms(&repeat,false));assert(repeat.totalGranted==0&&!repeat.inventory.contains(42947));}
  CharacterDatabase={};CharacterDatabase.fail=true;
- try{Player crash;GrantClassHeirlooms(&crash,false);assert(false);}catch(std::runtime_error const&){}
+ {Player crash;GrantClassHeirlooms(&crash,false);assert(!CompleteHeirloomDelivery());}
  assert(CharacterDatabase.inventory.empty()&&CharacterDatabase.ledger.empty()&&!CharacterDatabase.received);
  CharacterDatabase.fail=false;
- {Player retry;retry.equip=true;assert(GrantClassHeirlooms(&retry,false));assert(CharacterDatabase.received&&CharacterDatabase.inventory.at(41600)==4);}
+ {Player retry;retry.equip=true;assert(GrantClassHeirlooms(&retry,false));assert(CompleteHeirloomDelivery());assert(CharacterDatabase.received&&CharacterDatabase.inventory.at(41600)==4);}
  std::cout<<"PASS: production heirloom grant resumes partial delivery, prevents sold-item regrants and commits inventory+ledger together\n";
 }
 '''.replace('METHOD',method)
