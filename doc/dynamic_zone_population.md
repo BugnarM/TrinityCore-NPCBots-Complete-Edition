@@ -18,7 +18,7 @@ NpcBot.WanderingBots.DynamicZone.SpawnSpacingRadius = 50.0
 NpcBot.WanderingBots.DynamicZone.MaxNearbyBots = 8
 ```
 
-The per-zone target accepts 0–100, the global limit 0–1,000, the scan interval 1–300 seconds, and the spawn budget 1–32 attempts per scan. The controller shares the global budget across eligible zones and rotates attempts among them. The actual population depends on suitable nodes, local spacing, available templates, and faction limits.
+The per-zone target accepts 0–1,000, the global limit 0–5,000, the scan interval 1–300 seconds, and the spawn budget 1–200 attempts per scan. The controller shares the global budget across eligible zones and rotates attempts among them. The actual population depends on suitable nodes, local spacing, available templates, and faction limits.
 
 Set `NpcBot.WanderingBots.Continents.Count = 0` to run only dynamic continental populations. `NpcBot.WanderingBots.Continents.Maps` governs manual populations. When dynamic spawning is enabled at startup, the core loads the continental routes independently of that manual selection. If the feature was disabled at startup and maps were excluded from the manual list, restart to load their route data before enabling population there.
 

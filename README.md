@@ -20,7 +20,7 @@ Take a companion into the field, meet roaming adventurers while questing, or put
 > [!IMPORTANT]
 > **You must save your credentials.** We do not send usernames or passwords by email. If you lose your saved credentials, your dashboard session, and your recovery code, you may lose access to your account and characters.
 
-Build a party with up to four companions, watch wanderers fight and assist nearby players, or join a bot-supported Wintergrasp battle. On the PTR, wanderers have a **3-minute** revive timer. Ordinary open-world combat spawns covered by the respawn update return in **2 minutes**. [Report a bug or share feedback](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/issues/new)
+Build a party with up to four companions, watch wanderers fight and assist nearby players, or join a bot-supported Wintergrasp battle. The PTR allows up to **150 wanderers per zone** and **400 worldwide**. Wanderers have a **3-minute** revive timer. Ordinary open-world combat spawns covered by the respawn update return in **2 minutes**. [Report a bug or share feedback](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/issues/new)
 
 ## What you can do
 
