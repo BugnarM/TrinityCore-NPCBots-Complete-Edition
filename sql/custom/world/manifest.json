@@ -220,5 +220,12 @@
     "after": [
       "npcbot_2026_11_18_05_wanderer_route_refinement.sql"
     ]
+  },
+  {
+    "file": "2026_11_19_02_open_world_mob_respawn.sql",
+    "sha256": "b38ec81e3b6fe25e10107dd73c8e6ac1c6118e06fc07a12f4f1c7588a7996eb5",
+    "after": [
+      "npcbot_2026_11_19_01_wanderer_spawn_routes.sql"
+    ]
   }
 ]
