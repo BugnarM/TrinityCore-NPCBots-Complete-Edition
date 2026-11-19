@@ -4842,6 +4842,15 @@ NpcBot.WanderingBots.Continents.Maps = 0,1,530,571
 NpcBot.WanderingBots.Continents.XPGain = 1.0
 
 #
+#    NpcBot.Wanderer.ShareKillDistance
+#        Description: Maximum distance in yards from a creature killed by a free NPCBot
+#                     to the nearest eligible friendly player for kill credit, XP, and loot rights.
+#                     Automatic quest loot also checks MaxGroupXPDistance.
+#        Default:     50.0 (0 disables sharing)
+
+NpcBot.Wanderer.ShareKillDistance = 50.0
+
+#
 #    NpcBot.WanderingBots.KillReward.Money
 #    NpcBot.WanderingBots.KillReward.ItemCount
 #    NpcBot.WanderingBots.KillReward.ItemQuality
