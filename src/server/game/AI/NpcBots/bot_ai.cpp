@@ -3784,11 +3784,27 @@ bool bot_ai::CanBotAttack(Unit const* target, int8 byspell, bool secondary) cons
 
     if (master->IsInCombat() || target->IsInCombat() || IsWanderer() || (IAmFree() && me->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE) || pulling)
     {
-        //if master is killed pursue to the end)
-        if (!master->IsAlive() || target->IsControlledByPlayer() || pulling || (followdist > 0 && (master->GetDistance(target) <= foldist || HasBotCommandState(BOT_COMMAND_STAY))))
+        bool isAttackingParty = false;
+        if (!IAmFree() && master)
         {
-            //if stationery check own distance
-            if (!HasBotCommandState(BOT_COMMAND_STAY) || ((!IsRanged() && !secondary) ? me->IsWithinMeleeRange(target) : me->GetDistance(target) <= foldist))
+            if (IsInBotParty(target->GetVictim()))
+                isAttackingParty = true;
+            else
+            {
+                for (Unit* att : me->getAttackers())
+                    if (att == target) { isAttackingParty = true; break; }
+                if (!isAttackingParty)
+                    for (Unit* att : master->getAttackers())
+                        if (att == target) { isAttackingParty = true; break; }
+            }
+        }
+
+        //if master is killed pursue to the end, or if target is actively attacking our party
+        if (!master->IsAlive() || target->IsControlledByPlayer() || pulling || isAttackingParty || (followdist > 0 && (master->GetDistance(target) <= foldist || HasBotCommandState(BOT_COMMAND_STAY))))
+        {
+            //if stationery check own distance (allow attacking active attackers within 50 yds)
+            float maxAllowDist = isAttackingParty ? 50.0f : foldist;
+            if (!HasBotCommandState(BOT_COMMAND_STAY) || ((!IsRanged() && !secondary) ? me->IsWithinMeleeRange(target) : me->GetDistance(target) <= maxAllowDist))
             {
                 if (byspell == -1 || !mainMask || !target->IsImmunedToDamage(SpellSchoolMask(mainMask)))
                 {
@@ -4419,11 +4435,27 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
     bool dropTarget = followdist == 0 && master->IsAlive();
     if (!dropTarget && (!u || IAmFree()) && master->IsAlive() && mytar && mytar == opponent)
     {
+        bool targetAttackingParty = false;
+        if (!IAmFree() && master)
+        {
+            if (IsInBotParty(mytar->GetVictim()))
+                targetAttackingParty = true;
+            else
+            {
+                for (Unit* att : me->getAttackers())
+                    if (att == mytar) { targetAttackingParty = true; break; }
+                if (!targetAttackingParty)
+                    for (Unit* att : master->getAttackers())
+                        if (att == mytar) { targetAttackingParty = true; break; }
+            }
+        }
+        float allowedLeash = targetAttackingParty ? 50.0f : foldist;
+
         dropTarget = !me->CanSeeOrDetect(mytar) || (IAmFree() ?
             me->GetDistance(mytar) > (IsWanderer() ? float(followdist + 10) : foldist) :
             HasBotCommandState(BOT_COMMAND_STAY) ?
-            (!IsRanged() ? !me->IsWithinMeleeRange(mytar) : me->GetDistance(mytar) > foldist) :
-            (master->GetDistance(mytar) > foldist || (master->GetDistance(mytar) > foldist * 0.75f && !mytar->IsWithinLOSInMap(me, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::M2))));
+            (!IsRanged() ? !me->IsWithinMeleeRange(mytar) : me->GetDistance(mytar) > allowedLeash) :
+            (master->GetDistance(mytar) > allowedLeash || (master->GetDistance(mytar) > allowedLeash * 0.75f && !mytar->IsWithinLOSInMap(me, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::M2))));
     }
     if (dropTarget)
     {
@@ -4496,13 +4528,18 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
             }
         }
     }
-    else if (!canAttack)
+
+    if (!canAttack)
     {
-        //check attackers
+        //check attackers of me, master, and pets
         u = nullptr;
         for (Unit* att : me->getAttackers())
             if (_canSwitchToTarget(u, att, byspell))
                 u = att;
+        if (!u && !IAmFree() && master)
+            for (Unit* att : master->getAttackers())
+                if (_canSwitchToTarget(u, att, byspell))
+                    u = att;
         if (!u && botPet)
             for (Unit* att : botPet->getAttackers())
                 if (_canSwitchToTarget(u, att, byspell))
@@ -5744,9 +5781,14 @@ bool bot_ai::_canSwitchToTarget(Unit const* from, Unit const* newTarget, int8 by
                 CanBotAttack(newTarget, byspell))
                 return true;
         }
-        else if (!from && me->GetDistance(newTarget) < 0.75f * _getAttackDistance(float(master->GetBotMgr()->GetBotFollowDist())) &&
-            CanBotAttack(newTarget, byspell))
-            return true;
+        else
+        {
+            // If bot has no current target, allow engaging any valid attacker within 50 yards (covers ranged attackers)
+            // If bot already has a target, only switch if within standard leash distance
+            float maxDist = (!from) ? 50.0f : (0.75f * _getAttackDistance(float(master->GetBotMgr()->GetBotFollowDist())));
+            if (me->GetDistance(newTarget) <= maxDist && CanBotAttack(newTarget, byspell))
+                return true;
+        }
     }
 
     return false;
@@ -11970,7 +12012,7 @@ void bot_ai::OnOwnerDamagedBy(Unit* attacker)
     if (HasBotCommandState(BOT_COMMAND_FULLSTOP | BOT_COMMAND_INACTION))
         return;
 
-    if (!attacker->IsPlayer() && !attacker->IsNPCBot() && Rand() < 90)
+    if (!attacker || !attacker->isTargetableForAttack(false))
         return;
 
     bool byspell = false;
@@ -11990,6 +12032,13 @@ void bot_ai::OnOwnerDamagedBy(Unit* attacker)
         default:
             //BOT_LOG_ERROR("entities.player", "minion_ai: OnOwnerDamagedBy() - unknown bot class {}", uint8(_botclass));
             break;
+    }
+
+    if (!me->GetVictim() && CanBotAttack(attacker, byspell))
+    {
+        SetBotCommandState(BOT_COMMAND_COMBATRESET);
+        me->Attack(attacker, !HasRole(BOT_ROLE_RANGED));
+        return;
     }
 
     if (!_canSwitchToTarget(me->GetVictim(), attacker, byspell))
@@ -16751,6 +16800,9 @@ void bot_ai::DamageTaken(Unit* attacker, uint32& /*damage*/, DamageEffectType /*
 {
     if (attacker && _spawnTruceTimer > 0)
         _spawnTruceTimer = 0;
+
+    if (attacker && (attacker->IsInCombat() || me->IsInCombat()))
+        OnOwnerDamagedBy(attacker);
 }
 
 void bot_ai::DamageDealt(Unit* victim, uint32& damage, DamageEffectType /*damageType*/)

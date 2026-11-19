@@ -138,7 +138,7 @@ class NearestHostileUnitCheck
             //        if (Spell* spell = u->GetCurrentSpell(i))
             //            if (ai->IsInBotParty(spell->m_targets.GetUnitTarget()))
             //                return true;
-            if (!berserk && !ai->IsInBotParty(u->GetVictim()))
+            if (!berserk && !ai->IsInBotParty(u->GetVictim()) && !ai->IsInBotParty(u->GetTarget()))
                 return INVALID;
 
             if (free && !berserk && u->IsControlledByPlayer() && !u->IsInCombat())
