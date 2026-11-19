@@ -80,6 +80,7 @@
 #include "TransportMgr.h"
 #include "Unit.h"
 #include "UpdateTime.h"
+#include "Util.h"
 #include "VMapFactory.h"
 #include "VMapManager2.h"
 #include "WardenCheckMgr.h"
@@ -87,8 +88,11 @@
 #include "WeatherMgr.h"
 #include "WhoListStorage.h"
 #include "WorldSession.h"
+#include "botdatamgr.h"
 
 #include <boost/asio/ip/address.hpp>
+#include <filesystem>
+#include <fstream>
 
 TC_GAME_API std::atomic<bool> World::m_stopEvent(false);
 TC_GAME_API uint8 World::m_ExitCode = SHUTDOWN_EXIT_CODE;
@@ -2354,6 +2358,49 @@ void World::LoadAutobroadcasts()
 }
 
 /// Update the World !
+namespace
+{
+void PublishRealmPopulation(uint32 players)
+{
+    static auto nextUpdate = GameTime::Now();
+    auto const now = GameTime::Now();
+    if (now < nextUpdate)
+        return;
+
+    nextUpdate = now + Seconds(5);
+    std::string const path = sConfigMgr->GetStringDefault("RealmPopulationFile", "");
+    if (path.empty())
+        return;
+
+    uint32 bots = 0;
+    {
+        std::shared_lock lock(*BotDataMgr::GetLock());
+        bots = uint32(std::ranges::count_if(BotDataMgr::GetExistingNPCBots(), [](Creature const* bot) { return bot->IsInWorld(); }));
+    }
+
+    uint32 const pid = GetPID();
+    std::string const temporaryPath = path + '.' + std::to_string(pid) + ".tmp";
+    std::ofstream snapshot(temporaryPath, std::ios::trunc);
+    snapshot << pid << ' ' << players << ' ' << bots << '\n';
+    snapshot.close();
+
+    std::error_code error;
+    if (snapshot)
+        std::filesystem::rename(temporaryPath, path, error);
+
+    static bool writeFailed = false;
+    bool const failed = !snapshot || bool(error);
+    if (failed)
+    {
+        if (!writeFailed)
+            TC_LOG_ERROR("server.worldserver", "Could not publish realm population to {}", path);
+
+        std::filesystem::remove(temporaryPath, error);
+    }
+    writeFailed = failed;
+}
+}
+
 void World::Update(uint32 diff)
 {
     TC_METRIC_TIMER("world_update_time_total");
@@ -2618,6 +2665,8 @@ void World::Update(uint32 diff)
         TC_METRIC_TIMER("world_update_time", TC_METRIC_TAG("type", "Update world scripts"));
         sScriptMgr->OnWorldUpdate(diff);
     }
+
+    PublishRealmPopulation(GetPlayerCount());
 
     {
         TC_METRIC_TIMER("world_update_time", TC_METRIC_TAG("type", "Update metrics"));

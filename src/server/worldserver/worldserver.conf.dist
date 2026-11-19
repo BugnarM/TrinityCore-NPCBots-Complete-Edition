@@ -439,6 +439,15 @@ CheckGameObjectLoS = 1
 UpdateUptimeInterval = 10
 
 #
+#    RealmPopulationFile
+#        Description: Optional path to publish a realm population snapshot every five seconds.
+#                     Each line contains the worldserver PID, online players and in-world NPCBots.
+#                     Use a directory writable by worldserver and protected from untrusted writers.
+#        Default:     "" - Disabled
+
+RealmPopulationFile = ""
+
+#
 #    LogDB.Opt.ClearInterval
 #        Description: Time (in minutes) for the WUPDATE_CLEANDB timer that clears the `logs` table
 #                     of old entries.
