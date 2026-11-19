@@ -1,6 +1,7 @@
 // g++ -std=c++20 -O2 -Wall -Wextra -Werror contrib/tests/dynamic_zone_test.cpp -o /tmp/dynamic-zone-test
 // Exercises production policy, rather than a second simulated implementation.
 #include "../../src/server/game/AI/NpcBots/botdynamiczonepolicy.h"
+#include "../../src/server/game/AI/NpcBots/bothealingpolicy.h"
 #include <climits>
 #include <iostream>
 #include <stdexcept>
@@ -16,11 +17,12 @@ int main()
 {
     try
     {
-        std::uint32_t scan = 0, remaining = 300000;
-        for (unsigned tick = 0; tick < 6000; ++tick)
+        std::uint32_t scan = 0, remaining = NPCBots::Healing::Settings{}.reviveMs;
+        Require(remaining == 180000, "Wanderer revive delay defaults to three minutes");
+        for (unsigned tick = 0; tick < 3600; ++tick)
             if (auto elapsed = ScanElapsed(scan, 50, 2000))
                 remaining = remaining > *elapsed ? remaining - *elapsed : 0;
-        Require(remaining == 0 && scan == 0, "Five-minute cooldown must expire after five real minutes, not scan count");
+        Require(remaining == 0 && scan == 0, "Wanderer cooldown must expire after three real minutes");
         Require(*ScanElapsed(scan, UINT32_MAX, 2000) == UINT32_MAX, "Lag spike must saturate safely");
         Require(ZoneKey(0, 12) != ZoneKey(1, 12), "Same zone on different maps must not share population");
         Require(ZoneKey(0, 12) != ZoneKey(0, 40), "Zones must remain distinct");

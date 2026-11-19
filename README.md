@@ -2,7 +2,25 @@
 
 Run a solo, co-op, or community **Wrath of the Lich King** realm with NPC companions, roaming adventurers, and bot-supported PvE and PvP. This fork builds on TrinityCore and Trickerer's NPCBots and uses the **3.3.5a client, build 12340**.
 
-[Install on Linux](#install-on-linux) · [Configure the realm](#configuration) · [Player and GM commands](#player-and-gm-commands) · [Troubleshooting](#troubleshooting) · [Technical documentation](#technical-documentation)
+[Play on the public PTR](#play-on-the-public-ptr) · [Install on Linux](#install-on-linux) · [Configure the realm](#configuration) · [Player and GM commands](#player-and-gm-commands) · [Troubleshooting](#troubleshooting) · [Technical documentation](#technical-documentation)
+
+## Play on the public PTR
+
+Take a companion into the field, meet roaming adventurers while questing, or put together a bot-supported group for a dungeon. The public test realm runs this project, and the portal shows its current status. **[Open the realm portal and create an account](https://wow.remaris.ro/)**
+
+1. Click **Instant Create & Log In**. You can choose your own credentials or leave the fields blank to generate them.
+2. Save your username and password in a password manager before leaving the dashboard. You can also generate a one-time recovery code under **Account recovery**.
+3. If the realm shows **OFFLINE**, click **Start Server** after signing in and wait for **ONLINE**. The PTR starts on demand and goes offline after being idle.
+4. In your **Wrath of the Lich King 3.3.5a client (build 12340)**, set the following in `Data/<locale>/realmlist.wtf`, for example `Data/enUS/realmlist.wtf`. Launch `WoW.exe` and log in with your PTR username and password.
+
+   ```text
+   set realmlist logon.remaris.ro
+   ```
+
+> [!IMPORTANT]
+> **You must save your credentials.** We do not send usernames or passwords by email. If you lose your saved credentials, your dashboard session, and your recovery code, you may lose access to your account and characters.
+
+Build a party with up to four companions, watch wanderers fight and assist nearby players, or join a bot-supported Wintergrasp battle. On the PTR, wanderers have a **3-minute** revive timer. Ordinary open-world combat spawns covered by the respawn update return in **2 minutes**. [Report a bug or share feedback](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/issues/new)
 
 ## What you can do
 
@@ -15,8 +33,6 @@ Run a solo, co-op, or community **Wrath of the Lich King** realm with NPC compan
 | **Arena and battlegrounds** | Bot-supported 2v2, 3v3, and 5v5 arenas, objective and vehicle AI in Strand of the Ancients and Isle of Conquest, and optional Wintergrasp siege battles with a target of 40 per faction. |
 | **Capital city raids** | Stormwind and Orgrimmar events use 40 attackers, configurable defense rosters, graveyard reinforcement waves, throne-room leashes, and rewards for eligible participants. |
 | **Loot and leveling** | Eligible creature quest drops go into bags on kill. Opening a corpse can gather eligible nearby loot into one window. The realm can also grant starter heirlooms and bags, auto-learn trainer spells, and run ghosts at 3× movement speed. |
-
-To ask about access to a test realm, [open a GitHub issue](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/issues/new).
 
 ## Install on Linux
 
@@ -123,7 +139,7 @@ The defaults below come from [worldserver.conf.dist](src/server/worldserver/worl
 | `NpcBot.WanderingBots.DynamicZone.DespawnRadius` | `700.0` | Distance from players used to retire wanderers. |
 | `NpcBot.WanderingBots.DynamicZone.UpdateInterval` | `10` | Seconds between population scans. |
 | `NpcBot.WanderingBots.DynamicZone.SpawnBudget` | `10` | Maximum new dynamic bots per scan. |
-| `NpcBot.Wanderer.ReviveDelayMs` | `300000` | Five-minute revive delay for wanderers eligible to respawn. City raid waves have their own timers. |
+| `NpcBot.Wanderer.ReviveDelayMs` | `180000` | Three-minute revive delay for wanderers eligible to respawn. City raid waves have their own timers. |
 | `NpcBot.Wanderer.BonesLifetimeSeconds` | `300` | Bones become eligible for cleanup after five minutes. Removal occurs on a cleanup pass. |
 | `NpcBot.Healing.Emergency.OwnerHealthPct` / `GroupHealthPct` | `60` / `50` | Emergency thresholds for a bot's owner and other group players. The group key is `NpcBot.Healing.Emergency.GroupHealthPct`. |
 | `NpcBot.Healing.TopOff.HealthPct` / `MinManaPct` | `95` / `25` | Out-of-combat top-off ceiling and mana floor for topping off above 85% health. The mana key is `NpcBot.Healing.TopOff.MinManaPct`. |

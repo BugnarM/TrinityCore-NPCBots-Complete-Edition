@@ -5218,7 +5218,7 @@ NpcBot.Wanderer.PlayerAid.Range = 40.0
 NpcBot.Wanderer.PlayerAid.AllowDuel = 0
 NpcBot.Wanderer.PlayerAid.AllowWhileStealthed = 0
 NpcBot.Wanderer.BonesLifetimeSeconds = 300
-NpcBot.Wanderer.ReviveDelayMs = 300000
+NpcBot.Wanderer.ReviveDelayMs = 180000
 Companion.Stone.CooldownSeconds = 18000
 Companion.Heirlooms.Enable = 1
 # Event-only boundaries in yards; focus and boss targets cannot bypass them.

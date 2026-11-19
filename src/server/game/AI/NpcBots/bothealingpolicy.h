@@ -17,7 +17,7 @@ struct Settings
     bool diagnostics = false, aoeLoot = true, heirlooms = true;
     unsigned topOffPct = 95, minManaPct = 25, ownerEmergencyPct = 60, groupEmergencyPct = 50;
     unsigned idleScanMs = 750, combatScanMs = 250, retryMs = 750;
-    unsigned bonesSeconds = 1800, reviveMs = 300000, companionCooldownSeconds = 18000;
+    unsigned bonesSeconds = 1800, reviveMs = 180000, companionCooldownSeconds = 18000;
     unsigned maxCorpses = 60;
     float aidRange = 40.f, lootRange = 120.f, ghostSpeed = 3.f, defenderLeash = 65.f, bossLeash = 90.f;
 };
