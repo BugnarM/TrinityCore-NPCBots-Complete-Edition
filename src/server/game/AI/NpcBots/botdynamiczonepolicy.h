@@ -6,6 +6,9 @@
 #include <cstdint>
 #include <optional>
 #include <tuple>
+#include <vector>
+
+class WanderNode;
 
 namespace NPCBots::DynamicZone
 {
@@ -34,10 +37,24 @@ constexpr bool CanTravelAtLevel(unsigned level, unsigned minimum, unsigned maxim
     return level + 2 >= minimum && level <= maximum;
 }
 
+constexpr std::optional<LevelRange> TravelLevelOverlap(LevelRange source, unsigned minimum, unsigned maximum)
+{
+    return SpawnLevels(source.min, std::min<unsigned>(source.max, maximum), minimum > 2 ? minimum - 2 : 1, source.max);
+}
+
 constexpr bool OverlappingTravelLevels(LevelRange source, unsigned minimum, unsigned maximum)
 {
-    return source.min <= maximum && unsigned(source.max) + 2 >= minimum;
+    return TravelLevelOverlap(source, minimum, maximum).has_value();
 }
+
+inline auto EligibleSpawnLevels(std::vector<std::uint8_t> const& routeLevels, LevelRange range, unsigned targetLevel = 0)
+{
+    auto const first = std::lower_bound(routeLevels.begin(), routeLevels.end(), targetLevel ? std::max<unsigned>(targetLevel, range.min) : range.min);
+    auto const last = std::upper_bound(first, routeLevels.end(), targetLevel ? std::min<unsigned>(targetLevel, range.max) : range.max);
+    return std::pair{first, last};
+}
+
+std::vector<std::uint8_t> GetSpawnRouteLevels(WanderNode const& node, std::uint32_t spawnFaction, std::uint32_t movementFaction);
 
 constexpr auto SpawnPriority(unsigned nearbyBots, bool markedSpawn, float playerDistance)
 {

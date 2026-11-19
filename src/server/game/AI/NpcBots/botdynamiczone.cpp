@@ -20,6 +20,33 @@
 
 namespace NPCBots::DynamicZone
 {
+std::vector<uint8> GetSpawnRouteLevels(WanderNode const& node, uint32 spawnFaction, uint32 movementFaction)
+{
+    auto const [min, max] = node.GetLevels();
+    auto const range = SpawnLevels(min, max, 1);
+    if (!range || node.HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT) ||
+        !bot_ai::IsWanderNodeAvailableForBotFaction(&node, spawnFaction, false, true))
+        return {};
+
+    std::array<bool, DEFAULT_MAX_LEVEL + 1> reachable{};
+    for (auto const& link : node.GetLinks())
+    {
+        if (!InScope(link.wp->GetMapId(), link.wp->GetZoneId(), node.GetMapId(), node.GetZoneId()) ||
+            !bot_ai::IsWanderNodeAvailableForBotFaction(link.wp, movementFaction, false))
+            continue;
+
+        auto const [nextMin, nextMax] = link.wp->GetLevels();
+        if (auto const overlap = TravelLevelOverlap(*range, nextMin, nextMax))
+            std::fill(reachable.begin() + overlap->min, reachable.begin() + overlap->max + 1, true);
+    }
+
+    std::vector<uint8> levels;
+    for (unsigned level = range->min; level <= range->max; ++level)
+        if (reachable[level])
+            levels.push_back(uint8(level));
+    return levels;
+}
+
 DynamicZoneMgr* DynamicZoneMgr::Instance()
 {
     static DynamicZoneMgr instance;
@@ -141,6 +168,7 @@ void DynamicZoneMgr::Update(uint32 diff)
         WanderNode const* node;
         float playerDistance;
         std::array<bool, 2> teamAllowed;
+        LevelRange levels;
         unsigned nearbyBots = 0;
     };
     struct ZoneNodes
@@ -155,9 +183,7 @@ void DynamicZoneMgr::Update(uint32 diff)
         ZoneNodes entry{key, {}};
         std::vector<SpawnCandidate> fallback;
         WanderNode::DoForAllZoneWPs(zone, [&](WanderNode const* wp) {
-            auto const [min, max] = wp->GetLevels();
-            auto const levels = SpawnLevels(min, max, 1);
-            if (wp->GetMapId() != map || !levels || wp->HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT))
+            if (wp->GetMapId() != map || wp->HasFlag(BotWPFlags::BOTWP_FLAG_NOT_A_START_POINT))
                 return;
 
             float distance = std::numeric_limits<float>::max();
@@ -166,21 +192,18 @@ void DynamicZoneMgr::Update(uint32 diff)
             if (proximityRadius > 0.f && distance > despawnRadius)
                 return;
 
-            auto canSpawn = [&](uint32 faction) {
-                if (sWorld->IsFFAPvPRealm())
-                    faction = FACTION_TEMPLATE_NEUTRAL_HOSTILE;
-                return bot_ai::IsWanderNodeAvailableForBotFaction(wp, faction, false, true) &&
-                    std::ranges::any_of(wp->GetLinks(), [&](auto const& link) {
-                        auto const [nextMin, nextMax] = link.wp->GetLevels();
-                        return InScope(link.wp->GetMapId(), link.wp->GetZoneId(), map, zone) &&
-                            OverlappingTravelLevels(*levels, nextMin, nextMax) &&
-                            bot_ai::IsWanderNodeAvailableForBotFaction(link.wp, faction, false);
-                    });
+            auto routeLevels = [&](uint32 faction) {
+                uint32 const spawnFaction = sWorld->IsFFAPvPRealm() ? uint32(FACTION_TEMPLATE_NEUTRAL_HOSTILE) : faction;
+                return GetSpawnRouteLevels(*wp, spawnFaction, faction);
             };
-            SpawnCandidate candidate{wp, distance,
-                {canSpawn(FACTION_TEMPLATE_ALLIANCE_DEFAULT), canSpawn(FACTION_TEMPLATE_HORDE_DEFAULT)}};
-            if (!candidate.teamAllowed[0] && !candidate.teamAllowed[1])
+            auto const alliance = routeLevels(FACTION_TEMPLATE_ALLIANCE_DEFAULT);
+            auto const horde = routeLevels(FACTION_TEMPLATE_HORDE_DEFAULT);
+            if (alliance.empty() && horde.empty())
                 return;
+            LevelRange const levels{
+                std::min(alliance.empty() ? uint8(DEFAULT_MAX_LEVEL) : alliance.front(), horde.empty() ? uint8(DEFAULT_MAX_LEVEL) : horde.front()),
+                std::max(alliance.empty() ? uint8(0) : alliance.back(), horde.empty() ? uint8(0) : horde.back())};
+            SpawnCandidate candidate{wp, distance, {!alliance.empty(), !horde.empty()}, levels};
             if (proximityRadius == 0.f || distance <= proximityRadius)
                 entry.nodes.push_back(candidate);
             else
@@ -199,10 +222,8 @@ void DynamicZoneMgr::Update(uint32 diff)
         pop.maxLevel = 1;
         for (auto const& candidate : entry.nodes)
         {
-            auto const [min, max] = candidate.node->GetLevels();
-            auto const range = *SpawnLevels(min, max, 1);
-            pop.minLevel = std::min(pop.minLevel, range.min);
-            pop.maxLevel = std::max(pop.maxLevel, range.max);
+            pop.minLevel = std::min(pop.minLevel, candidate.levels.min);
+            pop.maxLevel = std::max(pop.maxLevel, candidate.levels.max);
         }
         if (pop.zoneName.empty())
         {

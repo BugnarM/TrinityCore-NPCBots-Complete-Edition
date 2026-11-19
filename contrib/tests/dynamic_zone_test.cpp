@@ -43,6 +43,18 @@ int main()
         Require(!SpawnLevels(1, 10, 55), "Death knight cannot appear in starter zone");
         auto const dk = SpawnLevels(50, 60, 55);
         Require(dk && dk->min == 55 && dk->max == 60, "Class minimum intersects node range");
+        auto const exit = TravelLevelOverlap({50, 60}, 44, 50);
+        Require(exit && exit->min == 50 && exit->max == 50, "A route can support fewer levels than its source node");
+        std::vector<std::uint8_t> const singleExit{50};
+        auto const [dkFirst, dkLast] = EligibleSpawnLevels(singleExit, *dk);
+        Require(dkFirst == dkLast, "Exclude a death knight whose class minimum has no valid exit before choosing a template");
+        auto const [ordinaryFirst, ordinaryLast] = EligibleSpawnLevels(singleExit, {50, 60}, 50);
+        Require(ordinaryLast - ordinaryFirst == 1 && *ordinaryFirst == 50, "Still allow an ordinary class on the same route");
+        std::vector<std::uint8_t> const gappedExits{39, 40, 44, 45};
+        auto const [gapFirst, gapLast] = EligibleSpawnLevels(gappedExits, {39, 45}, 42);
+        Require(gapFirst == gapLast, "Requested spawn level must have an exit, even inside the reported bounds");
+        auto const [outsideFirst, outsideLast] = EligibleSpawnLevels(gappedExits, {40, 44}, 45);
+        Require(outsideFirst == outsideLast, "A route must also fit the class and node range");
         Require(!SpawnLevels(40, 20, 1), "Reject inverted range");
         Require(!SpawnLevels(81, 90, 1), "Reject range above expansion cap");
         Require(!SpawnLevels(1, 0, 1), "Reject empty range");

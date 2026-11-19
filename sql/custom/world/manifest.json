@@ -213,5 +213,12 @@
     "after": [
       "npcbot_2026_11_18_04_missing_zones_wander_network.sql"
     ]
+  },
+  {
+    "file": "npcbot_2026_11_19_01_wanderer_spawn_routes.sql",
+    "sha256": "5b4e9a94fc1a3e775d73dbb58e11ea89407390af7413597033dc4abc6ebb573c",
+    "after": [
+      "npcbot_2026_11_18_05_wanderer_route_refinement.sql"
+    ]
   }
 ]

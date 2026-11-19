@@ -993,81 +993,72 @@ public:
     uint32 GenerateDynamicZoneBot(uint8 target_level, WanderNode const* spawnLoc, int32 preferredTeam = -1,
         uint8 requiredClass = 0, uint8 requiredSpec = 0, uint32 battlefieldFaction = 0, Position const* overridePos = nullptr)
     {
-        std::vector<std::pair<uint8, uint32>> eligible;
-        auto const [nodeMin, nodeMax] = spawnLoc->GetLevels();
-        for (auto const& [bot_class, spare_bots] : _spareBotIdsPerClassMap)
+        using NPCBots::DynamicZone::EligibleSpawnLevels;
+        using NPCBots::DynamicZone::GetSpawnRouteLevels;
+        using NPCBots::DynamicZone::SpawnLevels;
+
+        struct Candidate
         {
-            auto const range = NPCBots::DynamicZone::SpawnLevels(nodeMin, nodeMax, BotDataMgr::GetMinLevelForBotClass(bot_class));
-            if ((requiredClass && requiredClass != bot_class) || !BotCfg::IsWanderingClassEnabled(bot_class) || !range ||
+            uint8 botClass;
+            uint32 entry;
+            TeamId team;
+        };
+        std::vector<Candidate> eligible;
+        std::array<std::optional<std::vector<uint8>>, TEAM_NEUTRAL + 1> routesByTeam;
+        bool const freeForAll = sWorld->IsFFAPvPRealm();
+        auto const [nodeMin, nodeMax] = spawnLoc->GetLevels();
+        for (auto const& [botClass, spareBots] : _spareBotIdsPerClassMap)
+        {
+            auto const range = SpawnLevels(nodeMin, nodeMax, BotDataMgr::GetMinLevelForBotClass(botClass));
+            if ((requiredClass && requiredClass != botClass) || !BotCfg::IsWanderingClassEnabled(botClass) || !range ||
                 (target_level && (target_level < range->min || target_level > range->max)))
                 continue;
 
-            for (uint32 spareBotId : spare_bots)
+            for (uint32 entry : spareBots)
             {
-                NpcBotExtras const* orig_extras = BotDataMgr::SelectNpcBotExtras(spareBotId);
-                if (!orig_extras)
+                NpcBotExtras const* extras = BotDataMgr::SelectNpcBotExtras(entry);
+                if (!extras)
                     continue;
-                uint32 bot_faction = sWorld->IsFFAPvPRealm() ? uint32(FACTION_TEMPLATE_NEUTRAL_HOSTILE) :
-                    BotDataMgr::GetDefaultFactionForBotRaceClass(bot_class, orig_extras->race);
-                if (bot_ai::IsWanderNodeAvailableForBotFaction(spawnLoc, bot_faction, false, true))
-                    eligible.emplace_back(bot_class, spareBotId);
+                uint32 const faction = BotDataMgr::GetDefaultFactionForBotRaceClass(botClass, extras->race);
+                if (preferredTeam != -1 && int32(BotDataMgr::GetTeamForFaction(faction)) != preferredTeam)
+                    continue;
+
+                TeamId const team = BotDataMgr::GetTeamIdForFaction(faction);
+                uint32 const spawnFaction = freeForAll ? uint32(FACTION_TEMPLATE_NEUTRAL_HOSTILE) : faction;
+                if (overridePos)
+                {
+                    if (!bot_ai::IsWanderNodeAvailableForBotFaction(spawnLoc, spawnFaction, false, true))
+                        continue;
+                }
+                else
+                {
+                    auto& routeLevels = routesByTeam[team];
+                    if (!routeLevels)
+                        routeLevels = GetSpawnRouteLevels(*spawnLoc, spawnFaction, faction);
+                    auto const [first, last] = EligibleSpawnLevels(*routeLevels, *range, target_level);
+                    if (first == last)
+                        continue;
+                }
+                eligible.push_back({botClass, entry, team});
             }
         }
 
         if (eligible.empty())
             return 0;
 
-        if (preferredTeam != -1)
+        auto const [bot_class, orig_entry, team] = Bcore::Containers::SelectRandomContainerElement(eligible);
+        if (!target_level)
         {
-            std::vector<std::pair<uint8, uint32>> teamEligible;
-            for (auto const& item : eligible)
+            auto const range = *SpawnLevels(nodeMin, nodeMax, BotDataMgr::GetMinLevelForBotClass(bot_class));
+            if (overridePos)
+                target_level = urand(range.min, range.max);
+            else
             {
-                NpcBotExtras const* orig_extras = BotDataMgr::SelectNpcBotExtras(item.second);
-                if (orig_extras)
-                {
-                    uint32 bot_faction = BotDataMgr::GetDefaultFactionForBotRaceClass(item.first, orig_extras->race);
-                    if (int32(BotDataMgr::GetTeamForFaction(bot_faction)) == preferredTeam)
-                        teamEligible.push_back(item);
-                }
+                auto const [first, last] = EligibleSpawnLevels(*routesByTeam[team], range);
+                target_level = first[urand(0, uint32(last - first - 1))];
             }
-            if (teamEligible.empty())
-                return 0; // If a specific team was requested, never spawn the opposing faction.
-            eligible = std::move(teamEligible);
         }
 
-        auto const [bot_class, orig_entry] = Bcore::Containers::SelectRandomContainerElement(eligible);
-        auto const range = *NPCBots::DynamicZone::SpawnLevels(nodeMin, nodeMax, BotDataMgr::GetMinLevelForBotClass(bot_class));
-        if (!overridePos)
-        {
-            auto const* extras = BotDataMgr::SelectNpcBotExtras(orig_entry);
-            uint32 const faction = sWorld->IsFFAPvPRealm() ? uint32(FACTION_TEMPLATE_NEUTRAL_HOSTILE) :
-                BotDataMgr::GetDefaultFactionForBotRaceClass(bot_class, extras->race);
-            std::array<bool, DEFAULT_MAX_LEVEL + 1> reachable{};
-            for (auto const& link : spawnLoc->GetLinks())
-            {
-                auto const [min, max] = link.wp->GetLevels();
-                if (!NPCBots::DynamicZone::InScope(link.wp->GetMapId(), link.wp->GetZoneId(), spawnLoc->GetMapId(), spawnLoc->GetZoneId()) ||
-                    !bot_ai::IsWanderNodeAvailableForBotFaction(link.wp, faction, false))
-                    continue;
-
-                for (unsigned level = range.min; level <= range.max; ++level)
-                    reachable[level] |= NPCBots::DynamicZone::CanTravelAtLevel(level, min, max);
-            }
-            if (!target_level)
-            {
-                std::vector<uint8> levels;
-                for (unsigned level = range.min; level <= range.max; ++level)
-                    if (reachable[level])
-                        levels.push_back(uint8(level));
-                if (levels.empty())
-                    return 0;
-                target_level = Bcore::Containers::SelectRandomContainerElement(levels);
-            }
-            else if (!reachable[target_level])
-                return 0;
-        }
-        else if (!target_level)
-            target_level = urand(range.min, range.max);
         CreatureTemplateContainer const& all_templates = sObjectMgr->GetCreatureTemplates();
         while (all_templates.contains(++next_bot_id) || _botsExtraCreatureTemplates.contains(next_bot_id));
         CreatureTemplate const* orig_template = ASSERT_NOTNULL(sObjectMgr->GetCreatureTemplate(orig_entry));
