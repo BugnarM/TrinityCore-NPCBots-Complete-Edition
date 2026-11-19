@@ -1,15 +1,17 @@
 # Personal companions and Finder group limits
 
-`NpcBot.MaxBots.NonGM` controls how many personal companions a non-GM account can recruit and control. A value of `4` limits the character to four active personal companions (allowing a full 5-player party with 1 Tank, 1 Healer, and 2 DPS). The check applies during recruitment, through the recruiter menu, when taking control, and when reattaching an owned or shared bot. GM security is evaluated for the account independently of `.gm on/off`. The normal recruitment path retains the GM level-based setting in `NpcBot.MaxBots`. The Companion Hearthstone has its own GM exception. Normal hire costs and eligibility rules still apply.
+`NpcBot.MaxBots.NonGM` controls how many personal companions a non-GM account can recruit and control. A value of `4` limits the character to four active personal companions (allowing a full 5-player party with 1 Tank, 1 Healer, and 2 DPS). The check applies during recruitment, through the recruiter menu, when taking control, and when reattaching an owned or shared bot. GM security is evaluated for the account independently of `.gm on/off`. The normal recruitment path retains the GM level-based setting in `NpcBot.MaxBots`. GM accounts bypass the Hearthstone cooldown. The Hearthstone roster has four slots. Normal hire costs and eligibility rules still apply.
 
 A character with more previously owned companions than the current limit can reattach only up to that limit at the same time. Existing ownership and equipment are retained. Use the NPCBot recruiter or the Companion Hearthstone to obtain a companion.
+
+Hearthstone recruitment fills missing roles in order. The first eligible slot uses Heal and DPS, the second uses Tank and DPS, and the final two use DPS. Explicit class requests must be compatible with the next role. The configured cooldown begins when the fourth slot is filled or the roster is dismissed together. It persists through relog and applies to both the item and the `.companion` command. You can use `.companion dismiss` during cooldown and select a Hearthstone companion to dismiss only that bot.
 
 Temporary Dungeon Finder bots are outside the personal cap. A normal or heroic party has five slots, with one tank, one healer, and three DPS. A solo player can receive four bots, or three more when queuing with a personal companion and compatible roles. Additional human participants reduce the number of bot slots. Generated bots stay in the instance when the player teleports out and follow the normal Finder cleanup on completion or group exit. [Dungeon Finder](dungeon_finder_bots.md)
 
 ## Example configuration
 
 ```ini
-NpcBot.MaxBots.NonGM = 1
+NpcBot.MaxBots.NonGM = 4
 NpcBot.DungeonBots.Enable = 1
 NpcBot.DungeonBots.Queue.WaitTime = 1
 NpcBot.DungeonBots.Queue.RandomOnly = 0

@@ -133,7 +133,7 @@ The defaults below come from [worldserver.conf.dist](src/server/worldserver/worl
 | `AutoLearnSpells.Enable` | `1` | Learns eligible class trainer spells and ranks on level-up. |
 | `Rate.Ghost.MoveSpeed` | `3.0` | Ghost movement multiplier. |
 | `Companion.Heirlooms.Enable` | `1` | Delivers class-specific heirlooms and starter supplies, including bags, at login. |
-| `Companion.Stone.CooldownSeconds` | `18000` | Five-hour cooldown. First successful use and GM bypass are handled separately. |
+| `Companion.Stone.CooldownSeconds` | `18000` | Five-hour cooldown starts after filling all four Hearthstone slots or dismissing the roster. GM accounts bypass the cooldown. |
 | `NpcBot.DungeonBots.Enable` | `0` | Enable to fill standard Dungeon Finder groups with bots after the configured wait. |
 | `Wintergrasp.BotWar.Enable` | `0` | Enables Wintergrasp siege bots. The target per faction counts players and bots. |
 | `NpcBot.DarkKnight.Enable` | `0` | Enables the optional Dark Knight world-boss roamers. |
