@@ -8,7 +8,7 @@ Run a solo, co-op, or community **Wrath of the Lich King** realm with NPC compan
 
 Take a companion into the field, meet roaming adventurers while questing, or put together a bot-supported group for a dungeon. The public test realm runs this project, and the portal shows its current status. **[Open the realm portal and create an account](https://wow.remaris.ro/)**
 
-1. Click **Instant Create & Log In**. You can choose your own credentials or leave the fields blank to generate them.
+1. Click **Instant Create & Log In**. You can choose your own credentials or leave the fields blank to generate them. The portal allows one PTR account per IP address.
 2. Save your username and password in a password manager before leaving the dashboard. Under **Account recovery**, you can also generate a private, one-time code that restores dashboard access on its own.
 3. If the realm shows **OFFLINE**, click **Start Server** after signing in and wait for **ONLINE**. The PTR starts on demand and goes offline after being idle.
 4. In your **Wrath of the Lich King 3.3.5a client (build 12340)**, set the following in `Data/<locale>/realmlist.wtf`, for example `Data/enUS/realmlist.wtf`. Launch `WoW.exe` and log in with your PTR username and password.
@@ -18,7 +18,7 @@ Take a companion into the field, meet roaming adventurers while questing, or put
    ```
 
 > [!IMPORTANT]
-> **You must save your credentials.** We do not send usernames or passwords by email. If you lose your saved credentials, your dashboard session, and your recovery code, you may lose access to your account and characters.
+> **You must save your credentials.** We do not send usernames or passwords by email. If you lose both your password and recovery code, request a reset and keep your credentials out of the public issue. [Request an account reset on GitHub](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/issues/new?template=ptr-account-reset.md)
 
 Build a party with up to four companions, watch wanderers fight and assist nearby players, or join a bot-supported Wintergrasp battle. The PTR allows up to **150 wanderers per zone** and **400 worldwide**. Wanderers have a **3-minute** revive timer. Ordinary open-world combat spawns covered by the respawn update return in **2 minutes**. [Report a bug or share feedback](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/issues/new)
 
