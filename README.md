@@ -9,7 +9,7 @@ Run a solo, co-op, or community **Wrath of the Lich King** realm with NPC compan
 Take a companion into the field, meet roaming adventurers while questing, or put together a bot-supported group for a dungeon. The public test realm runs this project, and the portal shows its current status. **[Open the realm portal and create an account](https://wow.remaris.ro/)**
 
 1. Click **Instant Create & Log In**. You can choose your own credentials or leave the fields blank to generate them.
-2. Save your username and password in a password manager before leaving the dashboard. You can also generate a one-time recovery code under **Account recovery**.
+2. Save your username and password in a password manager before leaving the dashboard. Under **Account recovery**, you can also generate a private, one-time code that restores dashboard access on its own.
 3. If the realm shows **OFFLINE**, click **Start Server** after signing in and wait for **ONLINE**. The PTR starts on demand and goes offline after being idle.
 4. In your **Wrath of the Lich King 3.3.5a client (build 12340)**, set the following in `Data/<locale>/realmlist.wtf`, for example `Data/enUS/realmlist.wtf`. Launch `WoW.exe` and log in with your PTR username and password.
 
