@@ -8,6 +8,7 @@ while n:n+=(s[b]=='{')-(s[b]=='}');b+=1
 method=s[a:b]
 code=r'''
 #include "src/server/game/AI/NpcBots/botcityraid.h"
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cstdint>

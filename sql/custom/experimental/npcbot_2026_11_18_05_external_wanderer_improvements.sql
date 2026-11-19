@@ -1,3 +1,5 @@
+-- Experimental waypoint data. On the installed ground mmaps, the links
+-- 4743–62423, 62423–62424, and 3664–62420 fail the bidirectional path check.
 -- NPCBot Wanderer External Improvements & Tactical Navigation Optimization
 -- Adds high-level patrols, mountain ramps, and dungeon/raid exterior hubs (Ulduar, Black Temple, Karazhan, Manaforge, Frenzyheart, Wintergarde).
 DELETE FROM `creature_template_npcbot_wander_nodes` WHERE `id` BETWEEN 62400 AND 62424;
