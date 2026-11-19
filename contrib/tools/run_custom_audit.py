@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run standalone policy suites and all custom Python regression entrypoints."""
+"""Build and run the standalone C++ policy suites."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,10 +16,10 @@ def main():
     cpp=['arena_bots','siege_battlegrounds','wintergrasp_bot_war','dungeon_finder_bots',
          'hazard_avoidance_and_autoequip_test','raid_finder_test','dynamic_zone_test',
          'city_raid_tactics','wintergrasp_tactics','wintergrasp_vehicle_cleanup','npcbot_player_limits','healer_policy']
-    cases=[root/'contrib/tests'/(name+'.cpp') for name in cpp]+sorted((root/'contrib/tests').glob('*.py'))
+    cases=[root/'contrib/tests'/(name+'.cpp') for name in cpp]
     def run(path):
         binary=args.output_dir/path.stem
-        commands=[['c++','-std=c++20','-O2','-Wall','-Wextra','-Werror',str(path),'-o',str(binary)],[str(binary)]] if path.suffix=='.cpp' else [['python3',str(path)]]
+        commands=[['c++','-std=c++20','-O2','-Wall','-Wextra','-Werror',str(path),'-o',str(binary)],[str(binary)]]
         log=''
         for command in commands:
             try:

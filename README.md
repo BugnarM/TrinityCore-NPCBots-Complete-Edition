@@ -192,7 +192,7 @@ In game, commands start with a period. In the server console, omit it for comman
 | Capital city assaults | [City raid tactics and lifecycle](doc/city_raids_tactics.md) |
 | Database snapshots and migrations | [Fresh database archives](sql/database_dumps/README.md) · [Custom SQL installer](sql/custom/apply_custom_sql.py) |
 
-Run the custom regression harnesses from the repository root.
+Run the standalone C++ policy tests from the repository root.
 
 ```bash
 python3 contrib/tools/run_custom_audit.py --jobs 2 --output-dir /tmp/trinity-custom-audit-tests

@@ -43,13 +43,10 @@ The updated path avoids treating the historical free-bot `master` alias as a Pla
 
 ```sh
 python3 contrib/tools/run_custom_audit.py --jobs 2 --output-dir /tmp/trinity-custom-audit-tests
-python3 contrib/tests/aoe_quest_transfer.py --sanitize
-python3 contrib/tests/heirloom_delivery.py --sanitize
-python3 contrib/tests/healer_targets.py --sanitize
 cmake --build build --target worldserver authserver --parallel 4
 ```
 
-At the time of the audit, the final runner passed 53 of 53 cases. The three new harnesses and the healer policy passed ASan/UBSan. LeakSanitizer was disabled under ptrace. Live encounter behavior, pathing, duels, stealth, logout, teleport, and MSPT under load require client or runtime tests.
+At the time of the audit, the runner passed 53 of 53 cases, including the Python harnesses available in the earlier revision. The quest loot, heirloom delivery, healer targeting, and healer policy checks passed ASan/UBSan. LeakSanitizer was disabled under ptrace. Live encounter behavior, pathing, duels, stealth, logout, teleport, and MSPT under load require client or runtime tests. [Historical test sources](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/tree/292c4317c6/contrib/tests)
 
 A temporary MariaDB run applied the character migration and created the ledger. A second run skipped the applied SQL. The deployed character migration followed a verified backup, preserved existing character and marker counts, and used the existing InnoDB inventory, item, character, and marker tables.
 

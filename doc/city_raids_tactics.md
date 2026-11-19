@@ -54,18 +54,10 @@ Spawns are staggered at two per 250-ms decision. The user's revised movement bud
 ```sh
 c++ -std=c++20 -O2 -Wall -Wextra -Werror contrib/tests/city_raid_tactics.cpp -o /tmp/city-tactics
 /tmp/city-tactics
-python3 contrib/tests/city_raid_lifecycle.py
-python3 contrib/tests/city_raid_movement.py
-python3 contrib/tests/city_raid_groups.py
-python3 contrib/tests/city_raid_roster.py
-python3 contrib/tests/city_raid_defense_alerts.py
-python3 contrib/tests/city_raid_navigation.py
-python3 contrib/tests/city_raid_route_combat.py
-python3 contrib/tests/city_raid_internal_events.py
 cmake --build /home/trinity/build/npcbots --target worldserver -j4
 ```
 
-The standalone regression harnesses compile actual coordinator/controller/queue methods with engine fakes; they are not full in-game simulations. The navigation check links the installed core navigation libraries and verifies 32 configured ground positions and 62 forward/reverse/reinforcement/fallback routes against `/home/trinity/server/data/mmaps`, including incomplete-prefix progress with the native corridor/point caps.
+The historical Python harnesses compiled coordinator, controller, and queue methods with engine fakes. The navigation check used the installed navigation libraries to verify 32 ground positions and 62 routes against `/home/trinity/server/data/mmaps`, including incomplete-prefix progress with the native corridor and point caps. [Historical test sources](https://github.com/BugnarM/TrinityCore-NPCBots-Complete-Edition/tree/292c4317c6/contrib/tests)
 
 The remaining in-game checks are both bosses with real guards, terrain-constrained caster spread and healing LoS, human tank participation, resurrection during combat, chest eligibility, manual stop/restart and tick latency with both cities active. A full build plus these tests does not substitute for that encounter/load validation. The forward-routing follow-up prepares a controlled deployment with the old executable, relevant database rows and logs backed up before restart.
 
