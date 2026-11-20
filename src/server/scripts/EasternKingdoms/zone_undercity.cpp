@@ -388,12 +388,25 @@ enum UndercityBattleData
     NPC_UC_BROLL                        = 32376,
     NPC_UC_LEGION_INVADER               = 32269,
     NPC_UC_FAILED_EXPERIMENT            = 32519,
+    NPC_UC_HORDE_DEMOLISHER             = 31652,
+    NPC_UC_BLIGHT_WAGON                 = 31566,
+    NPC_UC_ALLIANCE_SIEGE               = 31638,
+    NPC_UC_KORKRON_INFANTRY             = 31832,
+    NPC_UC_KORKRON_LEADER               = 31833,
+    NPC_UC_ALLIANCE_INFANTRY            = 27160,
 
     // Spells
+    SPELL_WARCHIEFS_BLESSING            = 59641,
+    SPELL_STRENGTH_OF_WRYNN             = 60509,
     SPELL_SHADOW_BOLT_VOLLEY            = 28599,
     SPELL_CARRION_SWARM                 = 31306,
     SPELL_RAIN_OF_FIRE                  = 11990,
     SPELL_BLIGHT_BARREL                 = 59460,
+
+    // Sounds
+    SOUND_HORDE_WAR_HORN                = 8457,
+    SOUND_ALLIANCE_BUGLE                = 8456,
+    SOUND_WAR_DRUMS                     = 8233,
 
     // Thrall Spells
     SPELL_THRALL_CHAIN_LIGHTNING        = 16033,
@@ -461,6 +474,7 @@ SiegePlacement const UndercitySiegeBattery[] =
     { { 1930.0f, 223.0f, 48.35f }, { 1863.0f, 234.0f, 62.50f } },
     { { 1927.0f, 245.0f, 48.43f }, { 1865.0f, 241.0f, 63.20f } },
     { { 1916.0f, 224.0f, 51.86f }, { 1854.0f, 231.0f, 62.50f } },
+    { { 1912.0f, 250.0f, 52.10f }, { 1852.0f, 243.0f, 62.50f } },
 };
 
 SiegePlacement const UndercityAllianceSiegeBattery[] =
@@ -703,6 +717,69 @@ private:
             me->IsWithinDist3d(&me->GetHomePosition(), INTERACTION_DISTANCE) && !me->IsInCombat();
     }
 
+    void ApplyWarBuffs(Player* player)
+    {
+        uint32 const spellId = _team == TEAM_HORDE ? SPELL_WARCHIEFS_BLESSING : SPELL_STRENGTH_OF_WRYNN;
+        uint32 const soundId = _team == TEAM_HORDE ? SOUND_HORDE_WAR_HORN : SOUND_ALLIANCE_BUGLE;
+
+        me->PlayDirectSound(soundId, player);
+        me->PlayDirectSound(SOUND_WAR_DRUMS, player);
+        me->CastSpell(player, spellId, true);
+
+        if (player->GetGroup())
+        {
+            std::list<Player*> nearby;
+            me->GetPlayerListInGrid(nearby, 40.0f);
+            for (Player* member : nearby)
+            {
+                if (member != player && member->IsInSameGroupWith(player))
+                {
+                    me->PlayDirectSound(soundId, member);
+                    me->PlayDirectSound(SOUND_WAR_DRUMS, member);
+                    me->CastSpell(member, spellId, true);
+                }
+            }
+        }
+    }
+
+    void SpawnEscortGuardBattalion()
+    {
+        ClearEscortGuards();
+        uint32 const guardEntry = _team == TEAM_HORDE ? NPC_UC_KORKRON_INFANTRY : NPC_UC_ALLIANCE_INFANTRY;
+        for (uint8 i = 0; i < 3; ++i)
+        {
+            float const angle = (i == 0 ? 3.14f : (i == 1 ? 2.5f : 3.8f));
+            float const dist = 3.0f + (i * 0.8f);
+            Position pos = me->GetNearPosition(dist, angle);
+            if (TempSummon* guard = me->SummonCreature(guardEntry, pos, TEMPSUMMON_TIMED_DESPAWN, 10min))
+            {
+                guard->SetPhaseMask(UndercityBattlePhase, true);
+                guard->SetFaction(me->GetFaction());
+                guard->GetMotionMaster()->MoveFollow(me, dist, angle);
+                _escortGuards.push_back(guard->GetGUID());
+            }
+        }
+        if (_team == TEAM_HORDE)
+        {
+            Position pos = me->GetNearPosition(3.5f, 3.14f);
+            if (TempSummon* leader = me->SummonCreature(NPC_UC_KORKRON_LEADER, pos, TEMPSUMMON_TIMED_DESPAWN, 10min))
+            {
+                leader->SetPhaseMask(UndercityBattlePhase, true);
+                leader->SetFaction(me->GetFaction());
+                leader->GetMotionMaster()->MoveFollow(me, 3.5f, 3.14f);
+                _escortGuards.push_back(leader->GetGUID());
+            }
+        }
+    }
+
+    void ClearEscortGuards()
+    {
+        for (ObjectGuid const& guid : _escortGuards)
+            if (Creature* guard = ObjectAccessor::GetCreature(*me, guid))
+                guard->DespawnOrUnsummon();
+        _escortGuards.clear();
+    }
+
     void BeginAssault(Player* player)
     {
         if (player->IsInCombat())
@@ -719,7 +796,14 @@ private:
         me->setActive(true);
         me->SetWalk(true);
         StartSiegeBattery();
+        SpawnEscortGuardBattalion();
+        ApplyWarBuffs(player);
         MoveEscort(0);
+
+        if (_team == TEAM_HORDE)
+            me->Yell("The battle for the Undercity begins now! Sound the horns of war! Champions of the Horde, be empowered by the might of your Warchief!", LANG_UNIVERSAL);
+        else
+            me->Yell("For Bolvar and the Alliance! Sound the charge! Champions of the Alliance, receive the strength of your King!", LANG_UNIVERSAL);
 
         SayUndercityBattleText(me, _assaultText, _assaultFallback);
     }
@@ -769,8 +853,10 @@ private:
             return;
 
         _siegeVolley = 0ms;
-        for (SiegePlacement const& placement : GetSiegePlacements())
+        auto const placements = GetSiegePlacements();
+        for (std::size_t i = 0; i < placements.size(); ++i)
         {
+            SiegePlacement const& placement = placements[i];
             Position position = placement.Engine;
             float const ground = me->GetMap()->GetHeight(UndercityBattlePhase, position.GetPositionX(),
                 position.GetPositionY(), position.GetPositionZ() + 3.0f, true, 8.0f);
@@ -779,7 +865,13 @@ private:
             position.Relocate(position.GetPositionX(), position.GetPositionY(), ground + 0.1f,
                 position.GetAbsoluteAngle(&placement.Impact));
 
-            if (TempSummon* engine = me->SummonCreature(UndercityCatapult, position, TEMPSUMMON_TIMED_DESPAWN, 2min))
+            uint32 engineEntry = UndercityCatapult;
+            if (_team == TEAM_HORDE)
+                engineEntry = (i % 2 == 0) ? NPC_UC_HORDE_DEMOLISHER : NPC_UC_BLIGHT_WAGON;
+            else
+                engineEntry = NPC_UC_ALLIANCE_SIEGE;
+
+            if (TempSummon* engine = me->SummonCreature(engineEntry, position, TEMPSUMMON_TIMED_DESPAWN, 3min))
             {
                 engine->SetPhaseMask(UndercityBattlePhase, true);
                 engine->SetFaction(me->GetFaction());
@@ -817,14 +909,24 @@ private:
             _siegeVolley -= Milliseconds(diff);
             return;
         }
-        _siegeVolley = 6s;
+        _siegeVolley = 3500ms;
         std::erase_if(_siegeBattery, [this](auto const& shot)
         {
             return !ObjectAccessor::GetCreature(*me, shot.first);
         });
         for (auto const& [guid, impact] : _siegeBattery)
+        {
             if (Creature* engine = ObjectAccessor::GetCreature(*me, guid))
-                engine->CastSpell(impact, UndercitySiegeProjectile, true);
+            {
+                uint32 spell = UndercitySiegeProjectile;
+                if (engine->GetEntry() == NPC_UC_BLIGHT_WAGON)
+                    spell = SPELL_BLIGHT_BARREL;
+                else if (engine->GetEntry() == NPC_UC_HORDE_DEMOLISHER)
+                    spell = (urand(0, 1) == 0 ? UndercityBoulder : UndercitySiegeProjectile);
+
+                engine->CastSpell(impact, spell, true);
+            }
+        }
     }
 
     void ClearSiegeBattery()
@@ -1026,6 +1128,10 @@ private:
     {
         if (!player->HasAura(SPELL_BATTLE_FOR_UNDERCITY_PHASE))
             player->CastSpell(player, SPELL_BATTLE_FOR_UNDERCITY_PHASE, true);
+
+        uint32 const spellId = _team == TEAM_HORDE ? SPELL_WARCHIEFS_BLESSING : SPELL_STRENGTH_OF_WRYNN;
+        player->CastSpell(player, spellId, true);
+
         return player->TeleportTo(me->GetMapId(), landing.GetPositionX(), landing.GetPositionY(), landing.GetPositionZ(),
             landing.GetOrientation());
     }
@@ -1083,7 +1189,9 @@ private:
         _remaining = 2min;
         _poll = 2s;
         ClearSiegeBattery();
+        ClearEscortGuards();
         me->NearTeleportTo(landing);
+        SpawnEscortGuardBattalion();
         me->Say("Stay close. I'll lead you through the lower corridors.", LANG_UNIVERSAL);
     }
 
@@ -1112,6 +1220,7 @@ private:
         _stage = Stage::Idle;
         ClearGas();
         ClearSiegeBattery();
+        ClearEscortGuards();
         _catapults.clear();
         for (ObjectGuid const& guid : _guards)
             if (Creature* guard = ObjectAccessor::GetCreature(*me, guid))
@@ -1141,6 +1250,7 @@ private:
     Milliseconds _siegeVolley = 0ms;
     std::vector<ObjectGuid> _gasPockets;
     std::vector<std::pair<ObjectGuid, Position>> _siegeBattery;
+    std::vector<ObjectGuid> _escortGuards;
     std::set<ObjectGuid> _guards;
     std::set<ObjectGuid> _catapults;
     std::size_t _routeIndex = 0;
@@ -1237,9 +1347,15 @@ public:
                         player->CastSpell(player, SPELL_BATTLE_FOR_UNDERCITY_PHASE, true);
                     player->SetPhaseMask(64, true);
                     if (player->GetTeamId() == TEAM_HORDE)
+                    {
+                        player->CastSpell(player, SPELL_WARCHIEFS_BLESSING, true);
                         player->TeleportTo(0, UndercityHordeLanding.GetPositionX(), UndercityHordeLanding.GetPositionY(), UndercityHordeLanding.GetPositionZ(), UndercityHordeLanding.GetOrientation());
+                    }
                     else
+                    {
+                        player->CastSpell(player, SPELL_STRENGTH_OF_WRYNN, true);
                         player->TeleportTo(0, UndercityAllianceLanding.GetPositionX(), UndercityAllianceLanding.GetPositionY(), UndercityAllianceLanding.GetPositionZ(), UndercityAllianceLanding.GetOrientation());
+                    }
                     ChatHandler(player->GetSession()).SendSysMessage("You have rejoined the assault inside the Undercity.");
                     CloseGossipMenuFor(player);
                     break;
