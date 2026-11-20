@@ -272,5 +272,10 @@
     "file": "2026_11_20_08_undercity_war_atmosphere.sql",
     "sha256": "b9345886e7c614c6ab777aabe400787e3f39d7b77ad8c174c402c2ce9de78679",
     "after": ["2026_11_20_07_undercity_encounter_completion.sql"]
+  },
+  {
+    "file": "2026_11_20_09_junk_scrapper_item.sql",
+    "sha256": "30a2f326fe5b28ad479837438ae7250ddb8a1146c42ed74382521cd01ef1c722",
+    "after": ["2026_11_20_08_undercity_war_atmosphere.sql"]
   }
 ]

@@ -17,6 +17,7 @@
 
 #include "WorldSession.h"
 #include "Bag.h"
+#include "Chat.h"
 #include "Common.h"
 #include "Creature.h"
 #include "DatabaseEnv.h"
@@ -572,6 +573,70 @@ void WorldSession::SendListInventory(ObjectGuid vendorGuid)
     // remove fake death
     if (GetPlayer()->HasUnitState(UNIT_STATE_DIED))
         GetPlayer()->RemoveAurasByType(SPELL_AURA_FEIGN_DEATH);
+
+    // Auto-Sell Poor Quality (Grey) items on vendor interaction
+    if ((vendor->GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_SELL_VENDOR) == 0)
+    {
+        uint32 totalCopper = 0;
+        uint32 itemsSold = 0;
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        {
+            Item* pItem = _player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            if (!pItem)
+                continue;
+            ItemTemplate const* pProto = pItem->GetTemplate();
+            if (pProto && pProto->Quality == ITEM_QUALITY_POOR && pProto->SellPrice > 0 && !pItem->IsRefundable())
+            {
+                uint32 const count = pItem->GetCount();
+                uint32 const price = pItem->GetSellPrice(true) * count;
+                totalCopper += price;
+                itemsSold += count;
+
+                _player->RemoveItem(INVENTORY_SLOT_BAG_0, slot, true);
+                _player->ItemRemovedQuestCheck(pItem->GetEntry(), count);
+                RemoveItemFromUpdateQueueOf(pItem, _player);
+                _player->AddItemToBuyBackSlot(pItem);
+            }
+        }
+        for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+        {
+            Bag* bag = _player->GetBagByPos(bagSlot);
+            if (!bag)
+                continue;
+
+            for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
+            {
+                Item* pItem = bag->GetItemByPos(slot);
+                if (!pItem)
+                    continue;
+                ItemTemplate const* pProto = pItem->GetTemplate();
+                if (pProto && pProto->Quality == ITEM_QUALITY_POOR && pProto->SellPrice > 0 && !pItem->IsRefundable())
+                {
+                    uint32 const count = pItem->GetCount();
+                    uint32 const price = pItem->GetSellPrice(true) * count;
+                    totalCopper += price;
+                    itemsSold += count;
+
+                    _player->RemoveItem(bagSlot, slot, true);
+                    _player->ItemRemovedQuestCheck(pItem->GetEntry(), count);
+                    RemoveItemFromUpdateQueueOf(pItem, _player);
+                    _player->AddItemToBuyBackSlot(pItem);
+                }
+            }
+        }
+        if (itemsSold > 0)
+        {
+            _player->ModifyMoney(totalCopper);
+            _player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_MONEY_FROM_VENDORS, totalCopper);
+            _player->PlayDirectSound(120, _player);
+            uint32 const gold = totalCopper / 10000;
+            uint32 const silver = (totalCopper % 10000) / 100;
+            uint32 const copper = totalCopper % 100;
+            ChatHandler(_player->GetSession()).SendSysMessage(
+                Trinity::StringFormat("|cff00ff00[Auto-Sell]|r Sold %u grey item(s) for %ug %us %uc.",
+                    itemsSold, gold, silver, copper));
+        }
+    }
 
     // Stop the npc if moving
     if (uint32 pause = vendor->GetMovementTemplate().GetInteractionPauseTimer())
