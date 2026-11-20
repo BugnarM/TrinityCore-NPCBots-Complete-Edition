@@ -423,12 +423,27 @@ void SayUndercityBattleText(Creature* speaker, UndercityBattleText group, char c
 
 constexpr uint32 UndercityBattlePhase = 64;
 constexpr uint32 UndercityEscortGuard = 10405; // Plague Ghoul
-constexpr uint32 UndercityEscortGas = 16363; // Grobbulus Cloud
+constexpr uint32 UndercityGasTrigger = 22515;
+constexpr uint32 UndercityGroundGas = 23861; // Persistent poison-cloud visual and damage
 constexpr uint32 UndercityHostileFaction = 14;
 constexpr uint32 UndercityCatapult = 26495;
 constexpr uint32 UndercityBoulder = 38498;
+constexpr uint32 UndercitySiegeProjectile = 47005; // Cosmetic boulder against the walls
 Position const UndercityHordeLanding(1585.0f, 240.0f, -52.15f, 1.10f);
 Position const UndercityThroneApproach(1334.0f, 313.0f, -63.68f);
+
+struct SiegePlacement
+{
+    Position Engine;
+    Position Impact;
+};
+
+SiegePlacement const UndercitySiegeBattery[] =
+{
+    { { 1930.0f, 223.0f, 48.35f }, { 1863.0f, 234.0f, 62.50f } },
+    { { 1927.0f, 245.0f, 48.43f }, { 1865.0f, 241.0f, 63.20f } },
+    { { 1916.0f, 224.0f, 51.86f }, { 1854.0f, 231.0f, 62.50f } },
+};
 
 enum class AssaultStop { Walk, Gas, Artillery, Lift, Corridor, Throne };
 
@@ -594,7 +609,11 @@ protected:
     bool UpdateAssault(uint32 diff)
     {
         if (_stage == Stage::Idle)
+        {
+            if (_team == TEAM_HORDE && me->GetHomePosition().GetPositionZ() > 0.0f)
+                UpdateSiegeApproach(diff);
             return false;
+        }
 
         if (_remaining <= Milliseconds(diff))
         {
@@ -606,10 +625,17 @@ protected:
         else
         {
             _remaining -= Milliseconds(diff);
+            if (!_siegeBattery.empty())
+                UpdateSiegeBattery(diff);
             if (_stage == Stage::Rallying)
                 UpdateRally(diff);
-            else if (_stage == Stage::BarrierClosed && !_catapults.empty())
-                UpdateArtillery(diff);
+            else if (_stage == Stage::BarrierClosed)
+            {
+                if (!_catapults.empty())
+                    UpdateArtillery(diff);
+                else if (!_gasPockets.empty())
+                    UpdateGas(diff);
+            }
         }
 
         return true;
@@ -656,6 +682,7 @@ private:
         if (_team == TEAM_HORDE)
         {
             me->SetWalk(true);
+            StartSiegeBattery();
             MoveHordeEscort(0);
         }
         else if (!MoveToCheckpoint(FirstCheckpoint))
@@ -682,6 +709,78 @@ private:
         _stage = Stage::Moving;
         _remaining = 65s;
         me->GetMotionMaster()->MovePoint(HordeRoutePoint, position);
+    }
+
+    void StartSiegeBattery()
+    {
+        if (!_siegeBattery.empty())
+            return;
+
+        _siegeVolley = 0ms;
+        for (SiegePlacement const& placement : UndercitySiegeBattery)
+        {
+            Position position = placement.Engine;
+            float const ground = me->GetMap()->GetHeight(UndercityBattlePhase, position.GetPositionX(),
+                position.GetPositionY(), position.GetPositionZ() + 3.0f, true, 8.0f);
+            if (std::abs(ground - position.GetPositionZ()) > 3.0f)
+                continue;
+            position.Relocate(position.GetPositionX(), position.GetPositionY(), ground + 0.1f,
+                position.GetAbsoluteAngle(&placement.Impact));
+
+            if (TempSummon* engine = me->SummonCreature(UndercityCatapult, position, TEMPSUMMON_TIMED_DESPAWN, 2min))
+            {
+                engine->SetPhaseMask(UndercityBattlePhase, true);
+                engine->SetFaction(me->GetFaction());
+                engine->SetReactState(REACT_PASSIVE);
+                engine->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_UNINTERACTIBLE);
+                _siegeBattery.emplace_back(engine->GetGUID(), placement.Impact);
+            }
+        }
+    }
+
+    void UpdateSiegeApproach(uint32 diff)
+    {
+        if (_siegeBattery.empty())
+        {
+            if (_poll > Milliseconds(diff))
+            {
+                _poll -= Milliseconds(diff);
+                return;
+            }
+
+            _poll = 2s;
+            if (!FindEscortPlayer())
+                return;
+
+            StartSiegeBattery();
+        }
+
+        UpdateSiegeBattery(diff);
+    }
+
+    void UpdateSiegeBattery(uint32 diff)
+    {
+        if (_siegeVolley > Milliseconds(diff))
+        {
+            _siegeVolley -= Milliseconds(diff);
+            return;
+        }
+        _siegeVolley = 6s;
+        std::erase_if(_siegeBattery, [this](auto const& shot)
+        {
+            return !ObjectAccessor::GetCreature(*me, shot.first);
+        });
+        for (auto const& [guid, impact] : _siegeBattery)
+            if (Creature* engine = ObjectAccessor::GetCreature(*me, guid))
+                engine->CastSpell(impact, UndercitySiegeProjectile, true);
+    }
+
+    void ClearSiegeBattery()
+    {
+        for (auto const& [guid, impact] : _siegeBattery)
+            if (Creature* engine = ObjectAccessor::GetCreature(*me, guid))
+                engine->DespawnOrUnsummon();
+        _siegeBattery.clear();
     }
 
     Player* FindEscortPlayer() const
@@ -765,6 +864,22 @@ private:
                     catapult->CastSpell(player->GetPosition(), UndercityBoulder, true);
     }
 
+    void UpdateGas(uint32 diff)
+    {
+        if (_poll > Milliseconds(diff))
+        {
+            _poll -= Milliseconds(diff);
+            return;
+        }
+        _poll = 8s;
+        for (ObjectGuid const& guid : _gasPockets)
+            if (Creature* trigger = ObjectAccessor::GetCreature(*me, guid))
+            {
+                trigger->RemoveAllDynObjects();
+                trigger->CastSpell(trigger->GetPosition(), UndercityGroundGas, true);
+            }
+    }
+
     bool MoveToCheckpoint(uint32 pointId)
     {
         for (float angle : { 0.0f, 0.8f, -0.8f, 1.6f, -1.6f, 3.14f })
@@ -816,17 +931,19 @@ private:
         }
         else
         {
-            Position position = me->GetPosition();
-            me->MovePositionToFirstCollision(position, 3.0f, 0.0f);
-            TempSummon* gas = me->SummonCreature(UndercityEscortGas, position, TEMPSUMMON_TIMED_DESPAWN, _remaining);
-            if (!gas)
+            for (float angle : { -0.55f, 0.55f })
             {
-                AbortAssault();
-                return;
+                Position position = me->GetPosition();
+                me->MovePositionToFirstCollision(position, 5.0f, angle);
+                if (TempSummon* gas = me->SummonCreature(UndercityGasTrigger, position, TEMPSUMMON_TIMED_DESPAWN, _remaining))
+                {
+                    gas->SetPhaseMask(UndercityBattlePhase, true);
+                    gas->SetFaction(UndercityHostileFaction);
+                    _gasPockets.push_back(gas->GetGUID());
+                }
             }
-            gas->SetPhaseMask(UndercityBattlePhase, true);
-            gas->SetFaction(UndercityHostileFaction);
-            _gas = gas->GetGUID();
+            _poll = 0ms;
+            UpdateGas(0);
         }
 
         for (float angle : { -1.2f, 1.2f })
@@ -920,16 +1037,20 @@ private:
         _stage = Stage::Rallying;
         _remaining = 2min;
         _poll = 2s;
+        ClearSiegeBattery();
         me->NearTeleportTo(landing);
         me->Say("Stay close. I'll lead you through the lower corridors.", LANG_UNIVERSAL);
     }
 
     void ClearGas()
     {
-        ObjectGuid const gas = _gas;
-        _gas.Clear();
-        if (Creature* cloud = ObjectAccessor::GetCreature(*me, gas))
-            cloud->DespawnOrUnsummon();
+        for (ObjectGuid const& guid : _gasPockets)
+            if (Creature* trigger = ObjectAccessor::GetCreature(*me, guid))
+            {
+                trigger->RemoveAllDynObjects();
+                trigger->DespawnOrUnsummon();
+            }
+        _gasPockets.clear();
     }
 
     void AbortAssault()
@@ -945,6 +1066,7 @@ private:
 
         _stage = Stage::Idle;
         ClearGas();
+        ClearSiegeBattery();
         _catapults.clear();
         for (ObjectGuid const& guid : _guards)
             if (Creature* guard = ObjectAccessor::GetCreature(*me, guid))
@@ -952,6 +1074,7 @@ private:
         _guards.clear();
         _belowGround = false;
         _awaitingArrival = false;
+        _poll = 0ms;
         me->SetReactState(_originalReactState);
         me->setActive(_originalActive);
         me->SetWalk(_originalWalk);
@@ -975,7 +1098,9 @@ private:
     Stage _stage = Stage::Idle;
     Milliseconds _remaining = 0ms;
     Milliseconds _poll = 0ms;
-    ObjectGuid _gas;
+    Milliseconds _siegeVolley = 0ms;
+    std::vector<ObjectGuid> _gasPockets;
+    std::vector<std::pair<ObjectGuid, Position>> _siegeBattery;
     std::set<ObjectGuid> _guards;
     std::set<ObjectGuid> _catapults;
     std::size_t _routeIndex = 0;
