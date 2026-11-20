@@ -34,6 +34,12 @@ Build a party with up to four companions, watch wanderers fight and assist nearb
 | **Capital city raids** | Stormwind and Orgrimmar events use 40 attackers, configurable defense rosters, graveyard reinforcement waves, throne-room leashes, and rewards for eligible participants. |
 | **Loot and leveling** | Eligible creature quest drops go into bags on kill. Opening a corpse can gather eligible nearby loot into one window. The realm can also grant starter heirlooms and bags, auto-learn trainer spells, and run ghosts at 3× movement speed. |
 
+### Battle for the Undercity (in development)
+
+The fork includes a custom Undercity assault for Horde (`13267`) and Alliance (`13377`). Thrall or Varian leads players to a gas-filled checkpoint. Defeating its guards clears the passage, and each player confirms the descent through dialogue. The server checks the landing point before transferring the player. Zidormi can return players to the normal city phase, and event dialogue is configurable through `creature_text`.
+
+The feature requires the custom world migrations. The scripts compile, and the migrations were checked with data from the bundled world snapshot. Both faction routes still need end-to-end in-game testing, especially escort movement, the descent, and quest completion. [Encounter code](src/server/scripts/EasternKingdoms/zone_undercity.cpp) · [World migrations](sql/custom/world/manifest.json)
+
 ## Install on Linux
 
 ### 1. Build the core and extraction tools

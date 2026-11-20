@@ -227,5 +227,20 @@
     "after": [
       "npcbot_2026_11_19_01_wanderer_spawn_routes.sql"
     ]
+  },
+  {
+    "file": "2026_11_20_00_undercity_battle_text.sql",
+    "sha256": "7a5ae5a4eab6bf388ba76dfa2254b3d509a3f0e2729b0e69b7ea880c6d81c086",
+    "after": []
+  },
+  {
+    "file": "2026_11_20_01_undercity_escort_starts.sql",
+    "sha256": "df2313611d8d013ea8d220e49fc92ca340d2b382a18dfbd20b24f487855d0d88",
+    "after": []
+  },
+  {
+    "file": "2026_11_20_02_undercity_battle_setup.sql",
+    "sha256": "2197e11711137ce8174d0a3512b665b3f39ae6fa6aeb81e3bd387bfb2b4a3829",
+    "after": ["2026_11_20_01_undercity_escort_starts.sql"]
   }
 ]
