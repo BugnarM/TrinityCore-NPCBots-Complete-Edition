@@ -36,14 +36,6 @@ Build a party with up to four companions, watch wanderers fight and assist nearb
 | **Capital city raids** | Stormwind and Orgrimmar events use 40 attackers, configurable defense rosters, graveyard reinforcement waves, throne-room leashes, and rewards for eligible participants. |
 | **Loot and leveling** | Eligible creature quest drops go into bags on kill. Opening a corpse can gather eligible nearby loot into one window. The realm can also grant starter heirlooms and bags, auto-learn trainer spells, and run ghosts at 3× movement speed. |
 
-### Battle for the Undercity (in development)
-
-**Horde (`13267`).** Follow Thrall from the courtyard through a gas blockade and a defended catapult position. Rally at the lift, descend together, and clear the lower corridors with Thrall. The Royal Quarter guards must fall before Varimathras appears.
-
-**Alliance (`13377`).** Follow Varian to the gas checkpoint, defeat its guards, and confirm the transfer to the Apothecarium. Zidormi offers a way back to the normal city phase for both factions, and encounter dialogue is configurable in `creature_text`.
-
-Apply the custom world migrations to enable the event. All 28 legs of the Horde escort were checked against the server's navigation data. Full in-game testing is still in progress, including party transfers and quest turn-in. [Encounter code](src/server/scripts/EasternKingdoms/zone_undercity.cpp) · [World migrations](sql/custom/world/manifest.json)
-
 ## Install on Linux
 
 ### 1. Build the core and extraction tools

@@ -794,7 +794,7 @@ private:
         _stage = Stage::Moving;
         me->SetReactState(REACT_PASSIVE);
         me->setActive(true);
-        me->SetWalk(true);
+        me->SetWalk(false);
         StartSiegeBattery();
         SpawnEscortGuardBattalion();
         ApplyWarBuffs(player);
@@ -844,6 +844,7 @@ private:
         me->GetMap()->LoadGrid(position.GetPositionX(), position.GetPositionY());
         _stage = Stage::Moving;
         _remaining = 65s;
+        me->SetWalk(false);
         me->GetMotionMaster()->MovePoint(EscortRoutePoint, position);
     }
 
@@ -950,18 +951,24 @@ private:
     bool HasCorridorGuards() const
     {
         std::list<Creature*> enemies;
-        // Check Horde corridor enemies
-        me->GetCreatureListWithEntryInGrid(enemies, 31278, 16.0f);
-        me->GetCreatureListWithEntryInGrid(enemies, 32772, 16.0f);
-        // Check Alliance corridor enemies
-        me->GetCreatureListWithEntryInGrid(enemies, 32394, 16.0f);
-        me->GetCreatureListWithEntryInGrid(enemies, 32395, 16.0f);
-        me->GetCreatureListWithEntryInGrid(enemies, 32396, 16.0f);
-        me->GetCreatureListWithEntryInGrid(enemies, 32397, 16.0f);
+        // Check Horde corridor enemies and mini-boss
+        me->GetCreatureListWithEntryInGrid(enemies, 31278, 18.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32772, 18.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32269, 18.0f); // Legion Invader
+        me->GetCreatureListWithEntryInGrid(enemies, 32270, 18.0f); // Legion Dreadwhisperer
+        me->GetCreatureListWithEntryInGrid(enemies, 31692, 18.0f); // Reanimated Abomination
+        me->GetCreatureListWithEntryInGrid(enemies, 32271, 18.0f); // Legion Overlord (Mini-Boss)
+        // Check Alliance corridor enemies and mini-boss
+        me->GetCreatureListWithEntryInGrid(enemies, 32394, 18.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32395, 18.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32396, 18.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32397, 18.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 31482, 18.0f); // Apothecary Chemist
+        me->GetCreatureListWithEntryInGrid(enemies, 31844, 18.0f); // Blight Aberration
+        me->GetCreatureListWithEntryInGrid(enemies, 32735, 18.0f); // Alchemist Burroughs (Mini-Boss)
         return std::any_of(enemies.begin(), enemies.end(), [this](Creature const* enemy)
         {
-            CreatureData const* spawn = enemy->GetCreatureData();
-            return enemy->IsAlive() && me->InSamePhase(enemy) && spawn && spawn->StringId.starts_with("undercity_assault_");
+            return enemy->IsAlive() && me->InSamePhase(enemy);
         });
     }
 
@@ -972,7 +979,7 @@ private:
             _poll -= Milliseconds(diff);
             return;
         }
-        _poll = 1s;
+        _poll = 800ms;
         if (!FindEscortPlayer())
             return;
 
@@ -1186,13 +1193,14 @@ private:
         _belowGround = true;
         _awaitingArrival = true;
         _stage = Stage::Rallying;
-        _remaining = 2min;
-        _poll = 2s;
+        _remaining = 30s;
+        _poll = 800ms;
         ClearSiegeBattery();
         ClearEscortGuards();
         me->NearTeleportTo(landing);
+        me->SetWalk(false);
         SpawnEscortGuardBattalion();
-        me->Say("Stay close. I'll lead you through the lower corridors.", LANG_UNIVERSAL);
+        me->Say("Stay close! Charge through the lower corridors!", LANG_UNIVERSAL);
     }
 
     void ClearGas()
