@@ -242,5 +242,25 @@
     "file": "2026_11_20_02_undercity_battle_setup.sql",
     "sha256": "2197e11711137ce8174d0a3512b665b3f39ae6fa6aeb81e3bd387bfb2b4a3829",
     "after": ["2026_11_20_01_undercity_escort_starts.sql"]
+  },
+  {
+    "file": "2026_11_20_03_undercity_quest_english.sql",
+    "sha256": "b592aab9811813cc71188ada8f4c794b16b1e3cce4986224817c9db20fde73f1",
+    "after": ["2026_11_20_00_undercity_battle_text.sql"]
+  },
+  {
+    "file": "2026_11_20_04_undercity_horde_corridor_spawns.sql",
+    "sha256": "137bf89efc97022a642851b09df97643df411b1cda7ee70e08fe0bd35742134d",
+    "after": ["2026_11_20_02_undercity_battle_setup.sql"]
+  },
+  {
+    "file": "2026_11_20_05_undercity_active_quest_phase.sql",
+    "sha256": "d5c5304795c657e4495b699f1971712c9d9b34944b2ab4e523f0efc5b6b3825b",
+    "after": ["2026_11_20_02_undercity_battle_setup.sql"]
+  },
+  {
+    "file": "2026_11_20_06_undercity_lift_visibility.sql",
+    "sha256": "b8101c361f712785488d29507c4e5a68b7bbc2ccb7f35788901c8f2028775b0b",
+    "after": ["2026_11_20_02_undercity_battle_setup.sql"]
   }
 ]

@@ -2,6 +2,8 @@
 
 Run a solo, co-op, or community **Wrath of the Lich King** realm with NPC companions, roaming adventurers, and bot-supported PvE and PvP. This fork builds on TrinityCore and Trickerer's NPCBots and uses the **3.3.5a client, build 12340**.
 
+**Azeroth is already in the fight. Bring up to four companions and join in.** Take your party across zones where AI adventurers are out fighting and helping each other. A wandering healer might patch you up on the road, or you might round a corner and find a battle already underway. Pick a direction and see where your party ends up. **[Jump into the public test realm](#play-on-the-public-ptr).**
+
 [Play on the public PTR](#play-on-the-public-ptr) · [Install on Linux](#install-on-linux) · [Configure the realm](#configuration) · [Player and GM commands](#player-and-gm-commands) · [Troubleshooting](#troubleshooting) · [Technical documentation](#technical-documentation)
 
 ## Play on the public PTR
@@ -36,9 +38,11 @@ Build a party with up to four companions, watch wanderers fight and assist nearb
 
 ### Battle for the Undercity (in development)
 
-The fork includes a custom Undercity assault for Horde (`13267`) and Alliance (`13377`). Thrall or Varian leads players to a gas-filled checkpoint. Defeating its guards clears the passage, and each player confirms the descent through dialogue. The server checks the landing point before transferring the player. Zidormi can return players to the normal city phase, and event dialogue is configurable through `creature_text`.
+**Horde (`13267`).** Follow Thrall from the courtyard through a gas blockade and a defended catapult position. Rally at the lift, descend together, and clear the lower corridors with Thrall. The Royal Quarter guards must fall before Varimathras appears.
 
-The feature requires the custom world migrations. The scripts compile, and the migrations were checked with data from the bundled world snapshot. Both faction routes still need end-to-end in-game testing, especially escort movement, the descent, and quest completion. [Encounter code](src/server/scripts/EasternKingdoms/zone_undercity.cpp) · [World migrations](sql/custom/world/manifest.json)
+**Alliance (`13377`).** Follow Varian to the gas checkpoint, defeat its guards, and confirm the transfer to the Apothecarium. Zidormi offers a way back to the normal city phase for both factions, and encounter dialogue is configurable in `creature_text`.
+
+Apply the custom world migrations to enable the event. All 28 legs of the Horde escort were checked against the server's navigation data. Full in-game testing is still in progress, including party transfers and quest turn-in. [Encounter code](src/server/scripts/EasternKingdoms/zone_undercity.cpp) · [World migrations](sql/custom/world/manifest.json)
 
 ## Install on Linux
 
