@@ -262,5 +262,10 @@
     "file": "2026_11_20_06_undercity_lift_visibility.sql",
     "sha256": "b8101c361f712785488d29507c4e5a68b7bbc2ccb7f35788901c8f2028775b0b",
     "after": ["2026_11_20_02_undercity_battle_setup.sql"]
+  },
+  {
+    "file": "2026_11_20_07_undercity_encounter_completion.sql",
+    "sha256": "848cf1cd66d9d3847cfc9b1ef6cd09457edc11b9048c675bf526f32666f84878",
+    "after": ["2026_11_20_06_undercity_lift_visibility.sql"]
   }
 ]

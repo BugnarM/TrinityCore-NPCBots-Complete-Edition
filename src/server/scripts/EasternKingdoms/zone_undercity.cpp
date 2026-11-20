@@ -363,6 +363,10 @@ class spell_undercity_bending_shinbone : public SpellScript
 
 /*######
 ## Battle for the Undercity & Zidormi
+## References & Attribution:
+##   - AzerothCore WotLK PR #1479 (commit 5379ed193b6008d40168fe6ce807b268f2d2d525 by Killyana, closing Issue #204)
+##   - Dalaran-WoW zone_undercity.cpp encounter scripts
+##   - TrinityCore 3.3.5a NPCBots Complete Edition
 ######*/
 
 enum UndercityBattleData
@@ -381,11 +385,15 @@ enum UndercityBattleData
     NPC_UC_VARIAN_THRONE                = 32401,
     NPC_UC_JAINA_THRONE                 = 31418,
     NPC_ZIDORMI                         = 31848,
+    NPC_UC_BROLL                        = 32376,
+    NPC_UC_LEGION_INVADER               = 32269,
+    NPC_UC_FAILED_EXPERIMENT            = 32519,
 
-    // Varimathras Spells
+    // Spells
     SPELL_SHADOW_BOLT_VOLLEY            = 28599,
     SPELL_CARRION_SWARM                 = 31306,
     SPELL_RAIN_OF_FIRE                  = 11990,
+    SPELL_BLIGHT_BARREL                 = 59460,
 
     // Thrall Spells
     SPELL_THRALL_CHAIN_LIGHTNING        = 16033,
@@ -393,7 +401,11 @@ enum UndercityBattleData
 
     // Sylvanas Spells
     SPELL_SYLVANAS_BLACK_ARROW          = 59712,
-    SPELL_SYLVANAS_MULTI_SHOT           = 59713
+    SPELL_SYLVANAS_MULTI_SHOT           = 59713,
+
+    // Varian Spells
+    SPELL_VARIAN_HEROIC_STRIKE          = 11978,
+    SPELL_VARIAN_BATTLE_SHOUT           = 52635
 };
 
 namespace
@@ -408,6 +420,8 @@ enum UndercityBattleText : uint8
     SAY_UC_VARIMATHRAS_AGGRO       = 240,
     SAY_UC_VARIMATHRAS_DEATH       = 241,
     SAY_UC_VARIAN_ASSAULT          = 240,
+    SAY_UC_VARIAN_VICTORY          = 241,
+    SAY_UC_VARIAN_APOTH_GATE       = 242,
     SAY_UC_PUTRESS_AGGRO           = 240,
     SAY_UC_PUTRESS_DEATH           = 241,
 };
@@ -429,8 +443,12 @@ constexpr uint32 UndercityHostileFaction = 14;
 constexpr uint32 UndercityCatapult = 26495;
 constexpr uint32 UndercityBoulder = 38498;
 constexpr uint32 UndercitySiegeProjectile = 47005; // Cosmetic boulder against the walls
+
 Position const UndercityHordeLanding(1585.0f, 240.0f, -52.15f, 1.10f);
-Position const UndercityThroneApproach(1334.0f, 313.0f, -63.68f);
+Position const UndercityThroneApproach(1334.0f, 313.0f, -63.68f, 3.14f);
+
+Position const UndercityAllianceLanding(1780.0f, 420.0f, -57.14f, 3.94f);
+Position const UndercityApothecariumApproach(1560.0f, 360.0f, -62.08f, 3.98f);
 
 struct SiegePlacement
 {
@@ -445,6 +463,12 @@ SiegePlacement const UndercitySiegeBattery[] =
     { { 1916.0f, 224.0f, 51.86f }, { 1854.0f, 231.0f, 62.50f } },
 };
 
+SiegePlacement const UndercityAllianceSiegeBattery[] =
+{
+    { { 1802.0f, 460.0f, 15.5f }, { 1822.0f, 436.0f, 13.2f } },
+    { { 1805.0f, 465.0f, 15.5f }, { 1825.0f, 432.0f, 12.5f } },
+};
+
 enum class AssaultStop { Walk, Gas, Artillery, Lift, Corridor, Throne };
 
 struct AssaultCheckpoint
@@ -453,7 +477,7 @@ struct AssaultCheckpoint
     AssaultStop Stop = AssaultStop::Walk;
 };
 
-// Short legs keep the core's navigation query within its search budget.
+// Horde Courtyard (short legs keep nav query in budget)
 AssaultCheckpoint const UndercityCourtyardRoute[] =
 {
     { { 1910.0f, 237.0f, 52.59f } },
@@ -471,6 +495,7 @@ AssaultCheckpoint const UndercityCourtyardRoute[] =
     { { 1596.0f, 276.0f, 55.24f }, AssaultStop::Lift },
 };
 
+// Horde Interior
 AssaultCheckpoint const UndercityInteriorRoute[] =
 {
     { { 1594.0f, 244.0f, -52.14f }, AssaultStop::Corridor },
@@ -490,6 +515,28 @@ AssaultCheckpoint const UndercityInteriorRoute[] =
     { UndercityThroneApproach, AssaultStop::Throne },
 };
 
+// Alliance Exterior Sewer Approach
+AssaultCheckpoint const UndercityAllianceExteriorRoute[] =
+{
+    { { 1812.0f, 452.0f, 14.8f } },
+    { { 1818.0f, 445.0f, 14.0f }, AssaultStop::Gas },
+    { { 1822.0f, 436.0f, 13.2f }, AssaultStop::Artillery },
+    { { 1826.0f, 428.0f, 12.0f }, AssaultStop::Lift }, // Sewer threshold passage
+};
+
+// Alliance Interior Canal & Apothecarium Route
+AssaultCheckpoint const UndercityAllianceInteriorRoute[] =
+{
+    { { 1775.0f, 418.0f, -57.14f }, AssaultStop::Corridor },
+    { { 1756.0f, 410.0f, -57.13f }, AssaultStop::Corridor },
+    { { 1725.0f, 418.0f, -60.00f } },
+    { { 1693.0f, 422.0f, -62.21f }, AssaultStop::Corridor },
+    { { 1655.0f, 405.0f, -62.15f } },
+    { { 1630.0f, 380.0f, -62.08f } },
+    { { 1585.0f, 365.0f, -62.08f }, AssaultStop::Corridor },
+    { UndercityApothecariumApproach, AssaultStop::Throne },
+};
+
 class UndercityAssaultAI : public ScriptedAI
 {
 public:
@@ -507,7 +554,8 @@ public:
         if (CanParticipate(player))
         {
             if (_stage == Stage::Idle && CanStart())
-                AddGossipItemFor(player, GOSSIP_ICON_CHAT, "I am ready to join the escort.", GOSSIP_SENDER_MAIN, StartAssault);
+                AddGossipItemFor(player, GOSSIP_ICON_CHAT, _team == TEAM_HORDE ? "I am ready to join the escort." :
+                    "I am ready to lead the assault into the sewers.", GOSSIP_SENDER_MAIN, StartAssault);
             else if (_stage == Stage::PassageOpen)
                 AddGossipItemFor(player, GOSSIP_ICON_CHAT, _team == TEAM_HORDE ? "Our party is ready to descend." :
                     "Take me down through the secured passage.", GOSSIP_SENDER_MAIN, CrossPassage);
@@ -548,9 +596,16 @@ public:
         if (_stage != Stage::Moving || type != POINT_MOTION_TYPE)
             return;
 
-        if (pointId == HordeRoutePoint)
+        if (pointId == EscortRoutePoint)
         {
-            AssaultCheckpoint const& point = GetRoute()[_routeIndex];
+            auto const route = GetRoute();
+            if (_routeIndex >= route.size())
+            {
+                EndAssault();
+                return;
+            }
+
+            AssaultCheckpoint const& point = route[_routeIndex];
             if (me->GetExactDist(point.Location) > 4.0f)
             {
                 AbortAssault();
@@ -558,23 +613,16 @@ public:
             }
 
             if (point.Stop == AssaultStop::Walk)
-                MoveHordeEscort(++_routeIndex);
+                MoveEscort(++_routeIndex);
             else
             {
                 _stage = Stage::Rallying;
                 _remaining = 3min;
                 _poll = 0ms;
                 if (point.Stop == AssaultStop::Corridor)
-                    me->Say("Clear the squad ahead and regroup with me.", LANG_UNIVERSAL);
+                    me->Say("Clear the enemies ahead and regroup with me.", LANG_UNIVERSAL);
             }
-            return;
         }
-
-        if (pointId == FirstCheckpoint && MoveToCheckpoint(FinalCheckpoint))
-            return;
-
-        if (pointId == FirstCheckpoint || pointId == FinalCheckpoint)
-            SetUpGasBarrier();
     }
 
     void SummonedCreatureDies(Creature* summon, Unit* /*killer*/) override
@@ -587,16 +635,8 @@ public:
             return;
 
         ClearGas();
-        if (_team == TEAM_HORDE)
-        {
-            me->Say("The way is open. Stay with me.", LANG_UNIVERSAL);
-            MoveHordeEscort(++_routeIndex);
-            return;
-        }
-
-        _stage = Stage::PassageOpen;
-        _remaining = 75s;
-        me->Say("The gas is clearing. Speak to me when you are ready to descend.", LANG_UNIVERSAL);
+        me->Say("The way is open. Stay with me.", LANG_UNIVERSAL);
+        MoveEscort(++_routeIndex);
     }
 
     void SummonedCreatureDespawn(Creature* summon) override
@@ -610,7 +650,7 @@ protected:
     {
         if (_stage == Stage::Idle)
         {
-            if (_team == TEAM_HORDE && me->GetHomePosition().GetPositionZ() > 0.0f)
+            if (me->GetHomePosition().GetPositionZ() > 0.0f)
                 UpdateSiegeApproach(diff);
             return false;
         }
@@ -647,9 +687,7 @@ private:
     {
         StartAssault = GOSSIP_ACTION_INFO_DEF + 1,
         CrossPassage = GOSSIP_ACTION_INFO_DEF + 2,
-        FirstCheckpoint = 1,
-        FinalCheckpoint = 2,
-        HordeRoutePoint = 3
+        EscortRoutePoint = 1
     };
 
     bool CanParticipate(Player const* player) const
@@ -679,36 +717,50 @@ private:
         _stage = Stage::Moving;
         me->SetReactState(REACT_PASSIVE);
         me->setActive(true);
-        if (_team == TEAM_HORDE)
-        {
-            me->SetWalk(true);
-            StartSiegeBattery();
-            MoveHordeEscort(0);
-        }
-        else if (!MoveToCheckpoint(FirstCheckpoint))
-        {
-            AbortAssault();
-            return;
-        }
+        me->SetWalk(true);
+        StartSiegeBattery();
+        MoveEscort(0);
 
         SayUndercityBattleText(me, _assaultText, _assaultFallback);
     }
 
     std::span<AssaultCheckpoint const> GetRoute() const
     {
-        if (_belowGround)
-            return UndercityInteriorRoute;
-        return UndercityCourtyardRoute;
+        if (_team == TEAM_HORDE)
+        {
+            if (_belowGround)
+                return UndercityInteriorRoute;
+            return UndercityCourtyardRoute;
+        }
+        else
+        {
+            if (_belowGround)
+                return UndercityAllianceInteriorRoute;
+            return UndercityAllianceExteriorRoute;
+        }
     }
 
-    void MoveHordeEscort(std::size_t index)
+    std::span<SiegePlacement const> GetSiegePlacements() const
+    {
+        if (_team == TEAM_HORDE)
+            return UndercitySiegeBattery;
+        return UndercityAllianceSiegeBattery;
+    }
+
+    void MoveEscort(std::size_t index)
     {
         _routeIndex = index;
-        Position const& position = GetRoute()[index].Location;
+        auto const route = GetRoute();
+        if (index >= route.size())
+        {
+            EndAssault();
+            return;
+        }
+        Position const& position = route[index].Location;
         me->GetMap()->LoadGrid(position.GetPositionX(), position.GetPositionY());
         _stage = Stage::Moving;
         _remaining = 65s;
-        me->GetMotionMaster()->MovePoint(HordeRoutePoint, position);
+        me->GetMotionMaster()->MovePoint(EscortRoutePoint, position);
     }
 
     void StartSiegeBattery()
@@ -717,7 +769,7 @@ private:
             return;
 
         _siegeVolley = 0ms;
-        for (SiegePlacement const& placement : UndercitySiegeBattery)
+        for (SiegePlacement const& placement : GetSiegePlacements())
         {
             Position position = placement.Engine;
             float const ground = me->GetMap()->GetHeight(UndercityBattlePhase, position.GetPositionX(),
@@ -796,8 +848,14 @@ private:
     bool HasCorridorGuards() const
     {
         std::list<Creature*> enemies;
-        me->GetCreatureListWithEntryInGrid(enemies, 31278, 13.0f);
-        me->GetCreatureListWithEntryInGrid(enemies, 32772, 13.0f);
+        // Check Horde corridor enemies
+        me->GetCreatureListWithEntryInGrid(enemies, 31278, 16.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32772, 16.0f);
+        // Check Alliance corridor enemies
+        me->GetCreatureListWithEntryInGrid(enemies, 32394, 16.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32395, 16.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32396, 16.0f);
+        me->GetCreatureListWithEntryInGrid(enemies, 32397, 16.0f);
         return std::any_of(enemies.begin(), enemies.end(), [this](Creature const* enemy)
         {
             CreatureData const* spawn = enemy->GetCreatureData();
@@ -820,14 +878,21 @@ private:
         if (_awaitingArrival)
         {
             _awaitingArrival = false;
-            MoveHordeEscort(0);
+            MoveEscort(0);
             return;
         }
 
-        switch (GetRoute()[_routeIndex].Stop)
+        auto const route = GetRoute();
+        if (_routeIndex >= route.size())
+        {
+            EndAssault();
+            return;
+        }
+
+        switch (route[_routeIndex].Stop)
         {
             case AssaultStop::Gas:
-                SetUpGasBarrier();
+                SetUpGasBarrier(false);
                 break;
             case AssaultStop::Artillery:
                 SetUpGasBarrier(true);
@@ -835,14 +900,20 @@ private:
             case AssaultStop::Lift:
                 _stage = Stage::PassageOpen;
                 _remaining = 2min;
-                me->Say("Gather your party by the lift. Tell me when you are ready to descend together.", LANG_UNIVERSAL);
+                if (_team == TEAM_HORDE)
+                    me->Say("Gather your party by the lift. Tell me when you are ready to descend together.", LANG_UNIVERSAL);
+                else
+                    me->Say("Gather your party by the sewer tunnel. Tell me when you are ready to breach the lower city.", LANG_UNIVERSAL);
                 break;
             case AssaultStop::Corridor:
                 if (!HasCorridorGuards())
-                    MoveHordeEscort(++_routeIndex);
+                    MoveEscort(++_routeIndex);
                 break;
             case AssaultStop::Throne:
-                me->Say("We're at the Royal Quarter. Finish clearing the way to Varimathras.", LANG_UNIVERSAL);
+                if (_team == TEAM_HORDE)
+                    me->Say("We're at the Royal Quarter. Finish clearing the way to Varimathras.", LANG_UNIVERSAL);
+                else
+                    me->Say("We're at the Apothecarium. Finish clearing the way to Putress.", LANG_UNIVERSAL);
                 EndAssault();
                 break;
             case AssaultStop::Walk:
@@ -878,29 +949,6 @@ private:
                 trigger->RemoveAllDynObjects();
                 trigger->CastSpell(trigger->GetPosition(), UndercityGroundGas, true);
             }
-    }
-
-    bool MoveToCheckpoint(uint32 pointId)
-    {
-        for (float angle : { 0.0f, 0.8f, -0.8f, 1.6f, -1.6f, 3.14f })
-        {
-            Position checkpoint = me->GetPosition();
-            me->MovePositionToFirstCollision(checkpoint, 7.0f, angle);
-            if (me->GetExactDist2d(&checkpoint) < 4.0f ||
-                std::abs(checkpoint.GetPositionZ() - me->GetPositionZ()) > 2.0f ||
-                !me->IsWithinLOS(checkpoint.GetPositionX(), checkpoint.GetPositionY(), checkpoint.GetPositionZ()))
-                continue;
-
-            // Avoid turning back to the starting position at the second point.
-            if (pointId == FinalCheckpoint && me->GetHomePosition().GetExactDist2d(&checkpoint) < 7.0f)
-                continue;
-
-            _remaining = 18s;
-            me->GetMotionMaster()->MovePoint(pointId, checkpoint);
-            return true;
-        }
-
-        return false;
     }
 
     void SetUpGasBarrier(bool artillery = false)
@@ -1001,17 +1049,17 @@ private:
         }
 
         std::list<Player*> party;
-        if (_team == TEAM_HORDE && player->GetGroup())
+        if (player->GetGroup())
         {
             std::list<Player*> nearby;
-            me->GetPlayerListInGrid(nearby, 18.0f);
+            me->GetPlayerListInGrid(nearby, 25.0f);
             for (Player* member : nearby)
             {
                 if (member == player || !player->IsInSameGroupWith(member) || !CanParticipate(member))
                     continue;
                 if (!CanDescend(member))
                 {
-                    ChatHandler(player->GetSession()).SendSysMessage("Wait for your nearby party members to reach the lift and leave combat.");
+                    ChatHandler(player->GetSession()).SendSysMessage("Wait for your nearby party members to reach the rally point and leave combat.");
                     return;
                 }
                 party.push_back(member);
@@ -1024,9 +1072,6 @@ private:
             ChatHandler(player->GetSession()).SendSysMessage("The descent failed. Please try again.");
             return;
         }
-
-        if (_team != TEAM_HORDE)
-            return;
 
         for (Player* member : party)
             if (!Descend(member, landing))
@@ -1080,13 +1125,8 @@ private:
         me->SetWalk(_originalWalk);
         if (me->IsAlive())
         {
-            if (_team == TEAM_HORDE)
-            {
-                me->GetMotionMaster()->MoveIdle();
-                me->NearTeleportTo(me->GetHomePosition());
-            }
-            else
-                me->GetMotionMaster()->MoveTargetedHome();
+            me->GetMotionMaster()->MoveIdle();
+            me->NearTeleportTo(me->GetHomePosition());
         }
     }
 
@@ -1138,6 +1178,11 @@ public:
             if (inBattlePhase)
             {
                 AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Show me Tirisfal Glades and Undercity in peacetime.", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 1);
+
+                if (hasHordeQuest || hasAllianceQuest)
+                {
+                    AddGossipItemFor(player, GOSSIP_ICON_CHAT, "The assault is already underway. Teleport me inside to join the battle.", GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 4);
+                }
             }
             else if (hasHordeQuest || hasAllianceQuest || completedHorde || completedAlliance)
             {
@@ -1173,12 +1218,29 @@ public:
                     break;
                 case GOSSIP_ACTION_INFO_DEF + 3:
                     if (player->GetQuestStatus(QUEST_BATTLE_UNDERCITY_HORDE) == QUEST_STATUS_INCOMPLETE)
-                        player->CompleteQuest(QUEST_BATTLE_UNDERCITY_HORDE);
+                    {
+                        player->AreaExploredOrEventHappens(QUEST_BATTLE_UNDERCITY_HORDE);
+                        player->GroupEventHappens(QUEST_BATTLE_UNDERCITY_HORDE, me);
+                    }
                     if (player->GetQuestStatus(QUEST_BATTLE_UNDERCITY_ALLIANCE) == QUEST_STATUS_INCOMPLETE)
-                        player->CompleteQuest(QUEST_BATTLE_UNDERCITY_ALLIANCE);
+                    {
+                        player->AreaExploredOrEventHappens(QUEST_BATTLE_UNDERCITY_ALLIANCE);
+                        player->GroupEventHappens(QUEST_BATTLE_UNDERCITY_ALLIANCE, me);
+                    }
                     player->RemoveAurasDueToSpell(SPELL_BATTLE_FOR_UNDERCITY_PHASE);
                     player->SetPhaseMask(1, true);
                     ChatHandler(player->GetSession()).SendSysMessage("The Battle for the Undercity is complete. You have returned to the normal phase.");
+                    CloseGossipMenuFor(player);
+                    break;
+                case GOSSIP_ACTION_INFO_DEF + 4:
+                    if (!player->HasAura(SPELL_BATTLE_FOR_UNDERCITY_PHASE))
+                        player->CastSpell(player, SPELL_BATTLE_FOR_UNDERCITY_PHASE, true);
+                    player->SetPhaseMask(64, true);
+                    if (player->GetTeamId() == TEAM_HORDE)
+                        player->TeleportTo(0, UndercityHordeLanding.GetPositionX(), UndercityHordeLanding.GetPositionY(), UndercityHordeLanding.GetPositionZ(), UndercityHordeLanding.GetOrientation());
+                    else
+                        player->TeleportTo(0, UndercityAllianceLanding.GetPositionX(), UndercityAllianceLanding.GetPositionY(), UndercityAllianceLanding.GetPositionZ(), UndercityAllianceLanding.GetOrientation());
+                    ChatHandler(player->GetSession()).SendSysMessage("You have rejoined the assault inside the Undercity.");
                     CloseGossipMenuFor(player);
                     break;
             }
@@ -1267,7 +1329,6 @@ public:
                         }
                         if (Creature* varian = me->FindNearestCreature(NPC_UC_VARIAN_THRONE, 50.0f))
                             varian->DespawnOrUnsummon(1s);
-
                         break;
                 }
             }
@@ -1291,7 +1352,6 @@ public:
 
             DoMeleeAttackIfReady();
         }
-
     };
 
     CreatureAI* GetAI(Creature* creature) const override
@@ -1387,7 +1447,10 @@ public:
             for (Player* p : playerList)
             {
                 if (p->GetQuestStatus(QUEST_BATTLE_UNDERCITY_HORDE) == QUEST_STATUS_INCOMPLETE)
-                    p->CompleteQuest(QUEST_BATTLE_UNDERCITY_HORDE);
+                {
+                    p->AreaExploredOrEventHappens(QUEST_BATTLE_UNDERCITY_HORDE);
+                    p->GroupEventHappens(QUEST_BATTLE_UNDERCITY_HORDE, me);
+                }
             }
 
             if (Creature* thrall = me->FindNearestCreature(NPC_UC_THRALL, 75.0f))
@@ -1429,7 +1492,7 @@ public:
             {
                 SummonPercent -= 25;
                 for (uint8 i = 0; i < 2; ++i)
-                    me->SummonCreature(14751, me->GetPositionX() + frand(-5.0f, 5.0f), me->GetPositionY() + frand(-5.0f, 5.0f), me->GetPositionZ(), 0.0f, TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 60s);
+                    me->SummonCreature(NPC_UC_LEGION_INVADER, me->GetPositionX() + frand(-5.0f, 5.0f), me->GetPositionY() + frand(-5.0f, 5.0f), me->GetPositionZ(), 0.0f, TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 60s);
             }
 
             DoMeleeAttackIfReady();
@@ -1576,13 +1639,46 @@ public:
     struct npc_varian_battle_for_undercityAI : public UndercityAssaultAI
     {
         npc_varian_battle_for_undercityAI(Creature* creature)
-            : UndercityAssaultAI(creature, QUEST_BATTLE_UNDERCITY_ALLIANCE, TEAM_ALLIANCE, Position(1543.31f, 362.002f, -62.1596f, 0.0f),
-                SAY_UC_VARIAN_ASSAULT, "For Bolvar and the Alliance! Sweep through the sewers and take down the traitors!") { }
+            : UndercityAssaultAI(creature, QUEST_BATTLE_UNDERCITY_ALLIANCE, TEAM_ALLIANCE, UndercityAllianceLanding,
+                SAY_UC_VARIAN_ASSAULT, "For Bolvar and the Alliance! Sweep through the sewers and take down the traitors!")
+        {
+            StrikeTimer = 4000;
+            ShoutTimer = 10000;
+        }
+
+        uint32 StrikeTimer;
+        uint32 ShoutTimer;
+
+        void Reset() override
+        {
+            UndercityAssaultAI::Reset();
+            StrikeTimer = 4000;
+            ShoutTimer = 10000;
+        }
 
         void UpdateAI(uint32 diff) override
         {
-            if (!UpdateAssault(diff) && UpdateVictim())
-                DoMeleeAttackIfReady();
+            if (UpdateAssault(diff))
+                return;
+
+            if (!UpdateVictim())
+                return;
+
+            if (StrikeTimer <= diff)
+            {
+                DoCastVictim(SPELL_VARIAN_HEROIC_STRIKE);
+                StrikeTimer = 6000;
+            }
+            else StrikeTimer -= diff;
+
+            if (ShoutTimer <= diff)
+            {
+                DoCast(me, SPELL_VARIAN_BATTLE_SHOUT);
+                ShoutTimer = 30000;
+            }
+            else ShoutTimer -= diff;
+
+            DoMeleeAttackIfReady();
         }
     };
 
@@ -1605,17 +1701,56 @@ public:
     {
         boss_putress_battle_for_undercityAI(Creature* creature) : ScriptedAI(creature)
         {
-            PotionTimer = 4000;
+            Initialize();
+        }
+
+        void Initialize()
+        {
+            ShadowBoltTimer = 4000;
+            BlightBarrelTimer = 9000;
             SummonPercent = 75;
         }
 
-        uint32 PotionTimer;
+        uint32 ShadowBoltTimer;
+        uint32 BlightBarrelTimer;
         uint32 SummonPercent;
 
         void Reset() override
         {
-            PotionTimer = 4000;
-            SummonPercent = 75;
+            Initialize();
+            _stage = Stage::Waiting;
+            _stageTimer = 2s;
+            for (ObjectGuid const& guid : _guards)
+                if (Creature* guard = ObjectAccessor::GetCreature(*me, guid))
+                    guard->DespawnOrUnsummon();
+            _guards.clear();
+            if (_activeForGuards)
+            {
+                me->setActive(false);
+                _activeForGuards = false;
+            }
+            me->SetReactState(REACT_PASSIVE);
+            me->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_UNINTERACTIBLE);
+            me->SetVisible(false);
+        }
+
+        void SummonedCreatureDies(Creature* summon, Unit* /*killer*/) override
+        {
+            if (_stage != Stage::Guards || !_guards.erase(summon->GetGUID()) || !_guards.empty())
+                return;
+
+            _stage = Stage::Boss;
+            _stageTimer = 2min;
+            me->RemoveUnitFlag(UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_UNINTERACTIBLE);
+            me->SetReactState(REACT_AGGRESSIVE);
+            me->SetVisible(true);
+            SayUndercityBattleText(me, SAY_UC_PUTRESS_AGGRO, "You thought we were helpless? Our plague will scour this world!");
+        }
+
+        void SummonedCreatureDespawn(Creature* summon) override
+        {
+            if (_stage == Stage::Guards && _guards.contains(summon->GetGUID()))
+                Reset();
         }
 
         void JustEngagedWith(Unit* /*who*/) override
@@ -1625,6 +1760,11 @@ public:
 
         void JustDied(Unit* /*killer*/) override
         {
+            if (_activeForGuards)
+            {
+                me->setActive(false);
+                _activeForGuards = false;
+            }
             SayUndercityBattleText(me, SAY_UC_PUTRESS_DEATH, "My work... will outlive me...");
 
             std::list<Player*> playerList;
@@ -1632,31 +1772,119 @@ public:
             for (Player* p : playerList)
             {
                 if (p->GetQuestStatus(QUEST_BATTLE_UNDERCITY_ALLIANCE) == QUEST_STATUS_INCOMPLETE)
-                    p->CompleteQuest(QUEST_BATTLE_UNDERCITY_ALLIANCE);
+                {
+                    p->AreaExploredOrEventHappens(QUEST_BATTLE_UNDERCITY_ALLIANCE);
+                    p->GroupEventHappens(QUEST_BATTLE_UNDERCITY_ALLIANCE, me);
+                }
+            }
+
+            // Spawn King Varian on the platform for convenient turn-in
+            if (TempSummon* varian = me->SummonCreature(NPC_UC_VARIAN, 1548.0f, 362.0f, -62.16f, 3.14f, TEMPSUMMON_TIMED_DESPAWN, 10min))
+            {
+                varian->SetNpcFlag(UNIT_NPC_FLAG_QUESTGIVER | UNIT_NPC_FLAG_GOSSIP);
+                varian->SetPhaseMask(UndercityBattlePhase, true);
+                varian->Yell("Justice has been served for the fallen at the Wrathgate! The Alliance has triumphed!", LANG_UNIVERSAL);
             }
         }
 
         void UpdateAI(uint32 diff) override
         {
-            if (!UpdateVictim())
+            if (_stage != Stage::Boss || !UpdateVictim())
+            {
+                UpdatePrelude(diff);
                 return;
+            }
 
-            if (PotionTimer <= diff)
+            if (ShadowBoltTimer <= diff)
             {
                 DoCastVictim(SPELL_SHADOW_BOLT_VOLLEY);
-                PotionTimer = 8000;
+                ShadowBoltTimer = 8000;
             }
-            else PotionTimer -= diff;
+            else ShadowBoltTimer -= diff;
+
+            if (BlightBarrelTimer <= diff)
+            {
+                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0, 40.0f, true))
+                    DoCast(target, SPELL_BLIGHT_BARREL);
+                BlightBarrelTimer = 12000;
+            }
+            else BlightBarrelTimer -= diff;
 
             if (HealthBelowPct(SummonPercent))
             {
                 SummonPercent -= 25;
                 for (uint8 i = 0; i < 2; ++i)
-                    me->SummonCreature(14751, me->GetPositionX() + frand(-5.0f, 5.0f), me->GetPositionY() + frand(-5.0f, 5.0f), me->GetPositionZ(), 0.0f, TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 60s);
+                    me->SummonCreature(NPC_UC_FAILED_EXPERIMENT, me->GetPositionX() + frand(-4.0f, 4.0f), me->GetPositionY() + frand(-4.0f, 4.0f), me->GetPositionZ(), 0.0f, TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 60s);
             }
 
             DoMeleeAttackIfReady();
         }
+
+    private:
+        enum class Stage { Waiting, Guards, Boss };
+
+        void UpdatePrelude(uint32 diff)
+        {
+            if (_stageTimer > Milliseconds(diff))
+            {
+                _stageTimer -= Milliseconds(diff);
+                return;
+            }
+
+            if (_stage != Stage::Waiting)
+            {
+                Reset();
+                return;
+            }
+
+            _stageTimer = 2s;
+            std::list<Player*> players;
+            me->GetPlayerListInGrid(players, 75.0f);
+            for (Player* player : players)
+                if (player->GetTeamId() == TEAM_ALLIANCE && player->InSamePhase(UndercityBattlePhase) &&
+                    player->GetQuestStatus(QUEST_BATTLE_UNDERCITY_ALLIANCE) == QUEST_STATUS_INCOMPLETE &&
+                    player->GetExactDist(UndercityApothecariumApproach) < 18.0f)
+                {
+                    SummonApothecariumGuards(player);
+                    return;
+                }
+        }
+
+        void SummonApothecariumGuards(Player* player)
+        {
+            _stage = Stage::Guards;
+            _stageTimer = 90s;
+            if (!me->isActiveObject())
+            {
+                me->setActive(true);
+                _activeForGuards = true;
+            }
+
+            for (Position const& position : { Position(1552.0f, 360.0f, -62.12f, 3.98f),
+                Position(1552.0f, 364.0f, -62.12f, 3.98f) })
+            {
+                TempSummon* guard = me->SummonCreature(NPC_UC_FAILED_EXPERIMENT, position, TEMPSUMMON_TIMED_DESPAWN, _stageTimer);
+                if (!guard)
+                {
+                    Reset();
+                    return;
+                }
+
+                _guards.insert(guard->GetGUID());
+                guard->SetFaction(UndercityHostileFaction);
+                guard->SetMaxHealth(8500);
+                guard->SetFullHealth();
+                guard->AI()->AttackStart(player);
+            }
+
+            if (Creature* varian = me->FindNearestCreature(NPC_UC_VARIAN, 75.0f))
+                varian->Say("Hold here and destroy the apothecary guards before advancing on Putress!", LANG_UNIVERSAL);
+        }
+
+        Stage _stage = Stage::Waiting;
+        Milliseconds _stageTimer = 2s;
+        std::set<ObjectGuid> _guards;
+        bool _activeForGuards = false;
     };
 
     CreatureAI* GetAI(Creature* creature) const override
