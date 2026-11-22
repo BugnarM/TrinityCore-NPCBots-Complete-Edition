@@ -633,7 +633,7 @@ void WorldSession::SendListInventory(ObjectGuid vendorGuid)
             uint32 const silver = (totalCopper % 10000) / 100;
             uint32 const copper = totalCopper % 100;
             ChatHandler(_player->GetSession()).SendSysMessage(
-                Trinity::StringFormat("|cff00ff00[Auto-Sell]|r Sold %u grey item(s) for %ug %us %uc.",
+                Trinity::StringFormat("|cff00ff00[Auto-Sell]|r Sold {} grey item(s) for {}g {}s {}c.",
                     itemsSold, gold, silver, copper));
         }
     }

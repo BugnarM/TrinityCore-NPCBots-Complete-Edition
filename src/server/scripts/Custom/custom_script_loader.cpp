@@ -905,7 +905,7 @@ public:
             uint32 const copper = totalCopper % 100;
 
             ChatHandler(player->GetSession()).SendSysMessage(
-                Trinity::StringFormat("|cff00ff00[Junk Scrapper]|r Sold %u grey item(s) for %ug %us %uc.",
+                Trinity::StringFormat("|cff00ff00[Junk Scrapper]|r Sold {} grey item(s) for {}g {}s {}c.",
                     itemsSold, gold, silver, copper));
         }
         else
