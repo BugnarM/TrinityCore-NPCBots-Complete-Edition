@@ -1,8 +1,15 @@
 # TrinityCore 3.3.5a — NPCBots Complete Edition
 
+> [!TIP]
+> **Play on Azeroth Reborn, the public test realm**
+>
+> **[Open the PTR portal to create an account or check realm status](https://wow.remaris.ro/)** · [How to connect](#play-on-the-public-ptr)
+>
+> **Client** WotLK 3.3.5a (build 12340) · **Realmlist** `set realmlist logon.remaris.ro`
+
 Run a solo, co-op, or community **Wrath of the Lich King** realm with NPC companions, roaming adventurers, and bot-supported PvE and PvP. This fork builds on TrinityCore and Trickerer's NPCBots and uses the **3.3.5a client, build 12340**.
 
-**Azeroth is already in the fight. Bring up to four companions and join in.** Take your party across zones where AI adventurers are out fighting and helping each other. A wandering healer might patch you up on the road, or you might round a corner and find a battle already underway. Pick a direction and see where your party ends up. **[Jump into the public test realm](#play-on-the-public-ptr).**
+**Azeroth is already in the fight. Bring up to four companions and join in.** Take your party across zones where AI adventurers are out fighting and helping each other. A wandering healer might patch you up on the road, or you might round a corner and find a battle already underway. Pick a direction and see where your party ends up.
 
 [Play on the public PTR](#play-on-the-public-ptr) · [Install on Linux](#install-on-linux) · [Configure the realm](#configuration) · [Player and GM commands](#player-and-gm-commands) · [Troubleshooting](#troubleshooting) · [Technical documentation](#technical-documentation)
 
