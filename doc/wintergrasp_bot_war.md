@@ -25,6 +25,13 @@ max(0, min(TargetPerTeam, PlayerMax, 120) - enrolled human players)
 
 With a target of 40, 17 humans leave room for at most 23 bots on that side. Human arrivals take priority. Dead human players still count as participants, while bot replacements are delayed. Vehicle capacity is separate and comes from controlled workshops. Drivers and gunners count toward the faction's roster.
 
+For up to 120 participants per faction, set both options and restart worldserver.
+
+```ini
+Wintergrasp.PlayerMax = 120
+Wintergrasp.BotWar.TargetPerTeam = 120
+```
+
 At least one human must accept entry to an active battle before the bots appear. Queuing for a future battle does not start population. Bots are retired when the last human participant leaves. The first population update is delayed, and new squads are added in batches. To change the battlefield's constructed capacity, schedule a worldserver restart.
 
 For a fresh installation, review the [world migration manifest](../sql/custom/world/manifest.json). It includes the original battlefield setup, NPCBot spawn nodes, and later waypoint links. Use extracted maps, vmaps, and mmaps for Northrend. [Base setup](../sql/custom/world/2026_10_23_00_wintergrasp_bot_war.sql) · [Native spawn nodes](../sql/custom/world/npcbot_2026_11_09_01_wintergrasp_native_bots.sql) · [Waypoint links](../sql/custom/world/npcbot_2026_11_15_01_wintergrasp_wander_links.sql)
@@ -32,8 +39,8 @@ For a fresh installation, review the [world migration manifest](../sql/custom/wo
 ## Infantry, workshops, and siege
 
 - Squads keep stable orders as the roster changes. Attackers use central, western, and eastern approaches and defend the three southern towers. Defenders contest the northern workshops, cover fortress entrances, and fall back as objectives are lost.
-- Attacker flanks stage at southern camps and secure nearby workshops before using them as forward vehicle bases. Workshop captures use the native progress bar and speed limits. Infantry contributes and vehicle riders are excluded from capture.
-- Drivers and gunners use native vehicle spells. Catapults target infantry, while Demolishers and Siege Engines can damage buildings. Defenders prioritize dangerous siege vehicles. Construction depends on controlled workshops, engineers, rank, and vehicle capacity.
+- Battlefield NPCBots engage without the spawn truce used by roaming NPCBots. Attacker flanks move from the southern camps to the northern workshop flags. Infantry contributes to the native capture bar.
+- Drivers and gunners use native vehicle spells. Catapults target infantry, while Demolishers and Siege Engines can damage buildings. Builders rally on open ground near the field workshop flag. Construction needs a controlled workshop, a friendly engineer, and space in the faction's vehicle limit.
 - Vehicle routes use ground navigation and collision checks for the center and sides of a vehicle. Recovery uses shorter paths, lateral detours, and bounded retries for stalled movement.
 - Friendly players can take vehicle seats. Cleanup preserves vehicles occupied by humans, including turret gunners. Check handoff and resumption of bot orders in a client.
 - Infantry waits at intact gates and walls. Defenders fall back toward the Titan Relic when the vault gate falls. Attackers can claim the relic after native unlock, within range and line of sight and after staying out of combat.
