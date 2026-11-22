@@ -630,6 +630,15 @@ bool HasBotWarHumanPassenger(Creature* vehicle)
     return false;
 }
 
+bool IsBotWarSeatAvailable(Vehicle const* kit, int8 seat)
+{
+    if (!kit)
+        return false;
+    // A ride spell queues the actual seat change. Skip seats with a pending join as well.
+    auto next = kit->GetNextEmptySeat(seat, true);
+    return next != kit->Seats.end() && next->first == seat;
+}
+
 bool YieldBotWarSeat(Creature* vehicle)
 {
     Vehicle* kit = vehicle->GetVehicleKit();
@@ -978,18 +987,21 @@ public:
             return;
         }
         if (!_hasGoal || _goal.GetExactDist2d(&destination) > 2.f || std::fabs(_goal.GetPositionZ() - destination.GetPositionZ()) > 3.f)
-        {
-            if (vehicle->isMoving())
-                vehicle->StopMoving();
-            _path.clear();
-            _goal = destination;
-            _hasGoal = true;
-            _recentCount = _recentNext = _candidate = _stalled = 0;
-            _lastPosition = vehicle->GetPosition();
-            _retryTimer = 0;
-        }
+            ResetGoal(vehicle, destination, vehicle->IsVehicle() ? 4.f : 1.5f);
         if (!vehicle->isMoving() && !_retryTimer)
             Repath(vehicle);
+    }
+
+    bool TryMoveDirect(Creature* vehicle, Position const& destination)
+    {
+        if (vehicle->HasUnitState(UNIT_STATE_NOT_MOVE) || vehicle->IsMovementPreventedByCasting())
+            return false;
+        Movement::PointsArray path;
+        if (!Calculate(vehicle, destination, path, true))
+            return false;
+        ResetGoal(vehicle, destination, 1.5f);
+        Launch(vehicle, path);
+        return true;
     }
 
     void Cancel(Creature* vehicle)
@@ -1021,7 +1033,7 @@ public:
             return;
         uint32 elapsed = _checkTimer;
         _checkTimer = 0;
-        if (vehicle->GetExactDist2d(&_goal) <= (vehicle->IsVehicle() ? 4.f : 1.5f))
+        if (vehicle->GetExactDist2d(&_goal) <= _arrivalRange)
         {
             Cancel(vehicle);
             return;
@@ -1081,7 +1093,20 @@ public:
     }
 
 private:
-    bool Calculate(Creature* vehicle, Position const& destination, Movement::PointsArray& result)
+    void ResetGoal(Creature* vehicle, Position const& destination, float arrivalRange)
+    {
+        if (vehicle->isMoving())
+            vehicle->StopMoving();
+        _path.clear();
+        _goal = destination;
+        _arrivalRange = arrivalRange;
+        _hasGoal = true;
+        _recentCount = _recentNext = _candidate = _stalled = 0;
+        _lastPosition = vehicle->GetPosition();
+        _retryTimer = 0;
+    }
+
+    bool Calculate(Creature* vehicle, Position const& destination, Movement::PointsArray& result, bool direct = false)
     {
         static_assert(PATHFIND_NORMAL == 1 && PATHFIND_INCOMPLETE == 4);
         PathGenerator path(vehicle);
@@ -1097,6 +1122,18 @@ private:
         auto const& end = path.GetPath().back();
         if (std::hypot(end.x - vehicle->GetPositionX(), end.y - vehicle->GetPositionY()) < 1.5f)
             return false;
+        if (direct)
+        {
+            if (destination.GetExactDistSq(end.x, end.y, end.z) > 2.25f)
+                return false;
+            float length = 0.f;
+            for (std::size_t i = 1; i < path.GetPath().size(); ++i)
+                length += (path.GetPath()[i] - path.GetPath()[i - 1]).length();
+            if (length > vehicle->GetExactDist(&destination) * 1.6f + 6.f)
+                return false;
+            result = path.GetPath();
+            return true;
+        }
         for (uint32 i = 0; i < _recentCount; ++i)
             if (std::hypot(end.x - _recent[i].GetPositionX(), end.y - _recent[i].GetPositionY()) < 8.f)
                 return false;
@@ -1164,6 +1201,7 @@ private:
     }
 
     Position _goal, _lastPosition;
+    float _arrivalRange = 1.5f;
     std::array<Position, 3> _recent;
     Movement::PointsArray _path;
     std::size_t _nextPoint = 1;
@@ -1184,14 +1222,15 @@ struct BotRouteMovement
     bool Arrived = false;
     BotWarVehicleNavigation VehicleNavigation;
 
-    void Assign(Creature* bot, Lane lane, uint32 slot)
+    void Assign(Creature* bot, Lane lane, uint32 slot, uint32 point = 0)
     {
         Route = lane;
         Slot = slot;
-        Point = 0;
+        Point = point;
         Assigned = true;
         Arrived = false;
-        Move(bot);
+        if (!bot->IsVehicle() || (bot->GetVehicleKit() && bot->GetVehicleKit()->GetPassenger(0)))
+            Move(bot);
     }
 
     void RedirectAssault(Creature* bot, BattlefieldWG* wg, Lane lane)
@@ -1496,18 +1535,51 @@ struct npc_wg_bot_vehicle : public ScriptedAI
 
     void SetRoute(WintergraspBotWar::Lane lane, uint32 slot)
     {
-        _route.Assign(me, lane, slot);
-        if (!me->GetVehicleKit() || !me->GetVehicleKit()->GetPassenger(0))
-            _route.VehicleNavigation.Cancel(me); // wait for a driver to actually board
+        uint32 first = 0;
+        if (BattlefieldWG* wg = GetBotWarBattlefield())
+            first = FindRouteEntry(wg, lane);
+        _approachTarget.Clear();
+        _approachTimer = 0;
+        _route.Assign(me, lane, slot, first);
+    }
+
+    bool CanReserveDriver(Creature const* soldier) const
+    {
+        return !_takeoverTimer && IsBotWarSeatAvailable(me->GetVehicleKit(), 0)
+            && (!_reservationTimer || OwnsDriverReservation(soldier));
+    }
+
+    bool OwnsDriverReservation(Creature const* soldier) const
+    {
+        return _reservationTimer && _reservedDriver == soldier->GetGUID();
+    }
+
+    bool ReserveDriver(Creature const* soldier)
+    {
+        if (!CanReserveDriver(soldier) || HasBotWarHumanPassenger(me))
+            return false;
+        _reservedDriver = soldier->GetGUID();
+        _reservationTimer = 12000;
+        return true;
+    }
+
+    void ReleaseDriver(Creature const* soldier)
+    {
+        if (OwnsDriverReservation(soldier))
+        {
+            _reservedDriver.Clear();
+            _reservationTimer = 0;
+        }
     }
 
     void MovementInform(uint32 type, uint32 id) override { _route.MovementInform(type, id); }
 
-    void SetAssaultLane(BattlefieldWG* wg, Lane lane)
+    void SetAssaultLane(Lane lane)
     {
         Unit* driver=me->GetVehicleKit()?me->GetVehicleKit()->GetPassenger(0):nullptr;
-        if (IsBotWarSoldier(driver) && !HasBotWarHumanPassenger(me))
-            _route.RedirectAssault(me, wg, lane);
+        if (IsAssault(_route.Route) && IsAssault(lane) && _route.Route != lane
+            && IsBotWarSoldier(driver) && !HasBotWarHumanPassenger(me))
+            SetRoute(lane, _route.Slot);
     }
 
     GameObject* SiegeTarget()
@@ -1544,7 +1616,12 @@ struct npc_wg_bot_vehicle : public ScriptedAI
 
     void PassengerBoarded(Unit* passenger, int8 seat, bool apply) override
     {
-        if (seat == 0 && passenger->ToCreature() && apply)
+        if (seat == 0 && apply)
+        {
+            _reservedDriver.Clear();
+            _reservationTimer = 0;
+        }
+        if (seat == 0 && apply && IsBotWarSoldier(passenger))
         {
             if (_waitingDriver && BotBattleStats.Active)
                 ++BotBattleStats.Teams[me->GetFaction() == WGFactionTable[TEAM_ALLIANCE] ? 0 : 1].RecoveredVehicles;
@@ -1561,15 +1638,19 @@ struct npc_wg_bot_vehicle : public ScriptedAI
                         float bestDist = 99999.f;
                         for (WintergraspBotWar::Lane l : { WintergraspBotWar::Center, WintergraspBotWar::West, WintergraspBotWar::East })
                         {
-                            float d = me->GetExactDist2d(&BotRoutes[l][0].Pos);
+                            uint32 point = FindRouteEntry(wg, l);
+                            float d = me->GetExactDist(&BotRoutes[l][point].Pos);
                             if (d < bestDist) { bestDist = d; bestLane = l; }
                         }
                     }
-                    _route.Assign(me, bestLane, 0);
+                    SetRoute(bestLane, 0);
                 }
             }
-            if (_route.Assigned)
-                _route.Move(me);
+            else
+                SetRoute(_route.Route, _route.Slot);
+
+            TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=vehicle_boarded entry={} lane={} point={}",
+                me->GetEntry(), uint32(_route.Route), _route.Point);
         }
         if (seat == 0 && !apply && IsBotWarSoldier(passenger))
             _waitingDriver = _everDriven;
@@ -1585,6 +1666,7 @@ struct npc_wg_bot_vehicle : public ScriptedAI
 
     void UpdateAI(uint32 diff) override
     {
+        _reservationTimer = _reservationTimer > diff ? _reservationTimer - diff : 0;
         BattlefieldWG* wg = GetBotWarBattlefield();
         // Player-built vehicles share this template. Only coordinator vehicles have orders.
         if (!wg || !_route.Assigned)
@@ -1617,57 +1699,48 @@ struct npc_wg_bot_vehicle : public ScriptedAI
         uint32 elapsed = 500;
         _thinkTimer = 500;
         _weaponTimer = _weaponTimer > elapsed ? _weaponTimer - elapsed : 0;
+        _approachTimer = _approachTimer > elapsed ? _approachTimer - elapsed : 0;
 
+        bool holdingSupportPosition = false;
         if (_route.Blocked(wg))
         {
             if (GameObject* building = wg->GetBotWarBuilding(_route.BarrierEntry()))
             {
                 bool defender = me->GetFaction() == WGFactionTable[wg->GetDefenderTeam()];
-                if (defender == IsCounterAttack(_route.Route) && me->GetEntry() != NPC_WINTERGRASP_CATAPULT)
+                if ((!defender && IsAssault(_route.Route)) || (defender && IsCounterAttack(_route.Route)))
                 {
                     bool demolisher = me->GetEntry() == NPC_WINTERGRASP_DEMOLISHER;
-                    // Ram's building effect has a 5m radius from vehicle front (SpellRadius.dbc).
-                    // Gates/walls have 5.7-5.9m thickness; vehicle center is ~8.5m on contact.
-                    // Catapults provide infantry support; they cannot breach walls.
-                    float range = demolisher ? 42.f : 11.f;
+                    bool catapult = me->GetEntry() == NPC_WINTERGRASP_CATAPULT;
+                    float minRange = catapult ? 24.f : demolisher ? 12.f : 0.f;
+                    float maxRange = catapult ? 48.f : demolisher ? 42.f : 11.f;
                     float dist = me->GetExactDist2d(building);
+                    bool canAttack = dist >= minRange && dist <= maxRange
+                        && std::fabs(me->GetPositionZ() - building->GetPositionZ()) <= 10.f;
 
-                    if (dist > range || (demolisher && dist < 12.f))
-                    {
-                        Position approach = building->GetPosition();
-                        float angle = building->GetAbsoluteAngle(me);
-                        approach.m_positionX += std::cos(angle) * (demolisher ? 30.f : 7.5f);
-                        approach.m_positionY += std::sin(angle) * (demolisher ? 30.f : 7.5f);
-                        me->UpdateAllowedPositionZ(approach.m_positionX, approach.m_positionY, approach.m_positionZ);
-                        if (!me->isMoving())
-                            _route.VehicleNavigation.Move(me, approach);
-
-                        // Keep the siege approach goal until in weapon range.
-                        // Tactical waypoint retries must not send us back away from the wall.
-                        return;
-                    }
-                    else
+                    if (canAttack)
                     {
                         _route.VehicleNavigation.Cancel(me);
-                        me->SetFacingToObject(building);
-                        if (!_weaponTimer && !me->HasUnitState(UNIT_STATE_CASTING))
+                        if (!catapult)
                         {
-                            SpellCastResult result;
-                            if (demolisher)
-                                result = me->CastSpell(building->GetPosition(), 50896, false);
-                            else if (me->GetEntry() == NPC_WINTERGRASP_CATAPULT)
-                                result = me->CastSpell(building->GetPosition(), 57606, false);
-                            else
-                                result = DoCastSelf(54109); // Ram; cannon belongs to the manned turret
-                            _weaponTimer = CastRetryDelay(result == SPELL_CAST_OK, 2200);
+                            me->SetFacingToObject(building);
+                            if (!_weaponTimer && !me->HasUnitState(UNIT_STATE_CASTING))
+                            {
+                                SpellCastResult result = demolisher ? me->CastSpell(building->GetPosition(), 50896, false)
+                                    : DoCastSelf(54109); // Ram; cannon belongs to the manned turret.
+                                _weaponTimer = CastRetryDelay(result == SPELL_CAST_OK, 2200);
+                            }
+                            return;
                         }
-                        return;
+                        holdingSupportPosition = true;
                     }
+                    else if (dist < 125.f && ApproachBuilding(building, catapult ? 36.f : demolisher ? 30.f : 8.f, minRange, maxRange))
+                        return;
                 }
             }
         }
 
-        _route.Update(me, wg, elapsed);
+        if (!holdingSupportPosition)
+            _route.Update(me, wg, elapsed);
         if (!_weaponTimer && !me->HasUnitState(UNIT_STATE_CASTING))
         {
             // Assault vehicles push to the fortress walls without stopping for infantry
@@ -1711,7 +1784,71 @@ struct npc_wg_bot_vehicle : public ScriptedAI
     }
 
 private:
+    uint32 FindRouteEntry(BattlefieldWG* wg, Lane lane) const
+    {
+        uint32 first = 0;
+        float bestDistance = std::numeric_limits<float>::max();
+        auto const& route = BotRoutes[lane];
+        for (uint32 point = 0; point < route.size(); ++point)
+        {
+            BotWaypoint const& waypoint = route[point];
+            float distance = me->GetExactDistSq(&waypoint.Pos);
+            if (distance < bestDistance)
+            {
+                first = point;
+                bestDistance = distance;
+            }
+            if (waypoint.Barrier)
+            {
+                GameObject* building = wg->GetBotWarBuilding(waypoint.Barrier);
+                if (!building || building->GetDestructibleState() != GO_DESTRUCTIBLE_DESTROYED)
+                    break;
+            }
+        }
+        return first;
+    }
+
+    bool ApproachBuilding(GameObject const* building, float distance, float minRange, float maxRange)
+    {
+        if (_approachTarget == building->GetGUID() && (me->isMoving() || _approachTimer))
+            return true;
+        if (_approachTimer)
+            return false;
+        _approachTarget.Clear();
+        _approachTimer = 2500;
+
+        // Approach from the lane's side of the obstacle. Check nearby offsets
+        // before falling back to the route's bridge/ramp waypoints.
+        auto const& route = BotRoutes[_route.Route];
+        uint32 point = _route.Point;
+        if (point && building->GetExactDist2d(&route[point].Pos) < 5.f)
+            --point;
+        Position const& waypoint = route[point].Pos;
+        float angle = building->GetAbsoluteAngle(waypoint.GetPositionX(), waypoint.GetPositionY());
+        for (float offset : { 0.f, 0.35f, -0.35f, 0.7f, -0.7f })
+        {
+            Position approach = building->GetPosition();
+            approach.m_positionX += std::cos(angle + offset) * distance;
+            approach.m_positionY += std::sin(angle + offset) * distance;
+            if (!ProjectBotWarGround(me->GetMap(), approach, true))
+                continue;
+            float firingDistance = approach.GetExactDist2d(building);
+            if (firingDistance < minRange + 1.5f || firingDistance > maxRange - 1.5f
+                || std::fabs(approach.GetPositionZ() - building->GetPositionZ()) > 8.f)
+                continue;
+            if (_route.VehicleNavigation.TryMoveDirect(me, approach))
+            {
+                _approachTarget = building->GetGUID();
+                return true;
+            }
+        }
+        return false;
+    }
+
     BotRouteMovement _route;
+    ObjectGuid _reservedDriver, _approachTarget;
+    uint32 _reservationTimer = 0;
+    uint32 _approachTimer = 0;
     uint32 _thinkTimer = 500;
     uint32 _weaponTimer = 1000;
     uint32 _takeoverTimer = 0;
@@ -1801,7 +1938,14 @@ struct npc_wg_bot_soldier : public ScriptedAI
         _route.Assign(me, lane, slot);
     }
 
-    void SetEscortVehicle(ObjectGuid vehicle) { _vehicle = vehicle; }
+    void SetEscortVehicle(ObjectGuid vehicle)
+    {
+        if (_vehicle == vehicle)
+            return;
+        _vehicle = vehicle;
+        _supplyMoveTimer = 0;
+        _boardProgressTimer = 0;
+    }
 
     Lane GetLane() const { return _route.Route; }
     ObjectGuid EscortVehicle() const { return _vehicle; }
@@ -1876,7 +2020,7 @@ struct npc_wg_bot_soldier : public ScriptedAI
         if (action == 1)
         {
             _boardingTimer = 20000;
-            _vehicle.Clear();
+            SetEscortVehicle(ObjectGuid::Empty);
         }
     }
 
@@ -1885,10 +2029,108 @@ struct npc_wg_bot_soldier : public ScriptedAI
     bool HasLogisticsOrder() const
     {
         if (!_buildSite.IsEmpty()) return true;
-        if (_route.Slot % SquadSize != 0 || _vehicle.IsEmpty()) return false;
-        Creature* vehicle = me->GetMap()->GetCreature(_vehicle);
-        return vehicle && vehicle->IsAlive() && vehicle->GetVehicleKit()
-            && !vehicle->GetVehicleKit()->GetPassenger(0);
+        if (_vehicle.IsEmpty()) return false;
+        if (Creature* vehicle = me->GetMap()->GetCreature(_vehicle))
+            if (auto* ai = CAST_AI(npc_wg_bot_vehicle, vehicle->AI()))
+                return vehicle->IsAlive() && ai->OwnsDriverReservation(me);
+        return false;
+    }
+
+    void FindVehicleToDrive()
+    {
+        Creature* nearest = nullptr;
+        float distance = 50.f;
+        for (uint32 entry : { uint32(NPC_WINTERGRASP_DEMOLISHER), uint32(NPC_WINTERGRASP_SIEGE_ENGINE_ALLIANCE),
+            uint32(NPC_WINTERGRASP_SIEGE_ENGINE_HORDE), uint32(NPC_WINTERGRASP_CATAPULT) })
+        {
+            std::list<Creature*> vehicles;
+            me->GetCreatureListWithEntryInGrid(vehicles, entry, distance);
+            for (Creature* vehicle : vehicles)
+            {
+                float candidate = me->GetExactDist(vehicle);
+                if (candidate >= distance || !vehicle->IsAlive() || !vehicle->IsFriendlyTo(me) || HasBotWarHumanPassenger(vehicle))
+                    continue;
+                if (auto* ai = CAST_AI(npc_wg_bot_vehicle, vehicle->AI()); ai && ai->CanReserveDriver(me))
+                {
+                    nearest = vehicle;
+                    distance = candidate;
+                }
+            }
+        }
+        if (nearest && CAST_AI(npc_wg_bot_vehicle, nearest->AI())->ReserveDriver(me))
+            SetEscortVehicle(nearest->GetGUID());
+        else
+            _boardingTimer = 2000;
+    }
+
+    bool BoardOrApproachVehicle(Creature* vehicle, uint32 diff)
+    {
+        Vehicle* kit = vehicle->GetVehicleKit();
+        auto* ai = CAST_AI(npc_wg_bot_vehicle, vehicle->AI());
+        if (!ai || !kit || !vehicle->IsAlive() || HasBotWarHumanPassenger(vehicle))
+            return false;
+
+        if (ai->ReserveDriver(me))
+        {
+            float distance = me->GetExactDist(vehicle);
+            if (!_boardProgressTimer)
+                _route.VehicleNavigation.Cancel(me);
+            if (!_boardProgressTimer || distance <= _boardProgressDistance - 3.f)
+            {
+                _boardProgressTimer = 15000;
+                _boardProgressDistance = distance;
+            }
+            else if (_boardProgressTimer <= diff)
+            {
+                ai->ReleaseDriver(me);
+                SetEscortVehicle(ObjectGuid::Empty);
+                _boardingTimer = 5000;
+                _supplyNavigation.Cancel(me);
+                return true;
+            }
+            else
+                _boardProgressTimer -= diff;
+
+            if (me->IsWithinDistInMap(vehicle, 8.f) && me->IsWithinLOSInMap(vehicle))
+            {
+                if (!_boardingTimer)
+                    BoardVehicleSeat(vehicle);
+            }
+            else
+            {
+                if (!_supplyMoveTimer)
+                {
+                    _supplyMoveTimer = 2000;
+                    _supplyNavigation.Move(me, vehicle->GetPosition());
+                }
+                _supplyNavigation.Update(me, diff);
+            }
+            return true;
+        }
+
+        _boardProgressTimer = 0;
+
+        if (!_boardingTimer && IsBotWarSoldier(kit->GetPassenger(0)))
+            for (auto const& [seat, info] : kit->Seats)
+                if (Unit* accessory = kit->GetPassenger(seat))
+                    if ((accessory->GetEntry() == 28319 || accessory->GetEntry() == 32629)
+                        && IsBotWarSeatAvailable(accessory->GetVehicleKit(), 0)
+                        && me->IsWithinDistInMap(accessory, 8.f) && me->IsWithinLOSInMap(accessory))
+                    {
+                        BoardVehicleSeat(accessory);
+                        return true;
+                    }
+        return false;
+    }
+
+    void BoardVehicleSeat(Unit* vehicle)
+    {
+        _boardingTimer = 2000;
+        _route.VehicleNavigation.Cancel(me);
+        _supplyNavigation.Cancel(me);
+        me->Dismount();
+        SetBotWarMovementSpeed(me, false);
+        me->EnterVehicle(vehicle, 0);
     }
 
     bool CanAIAttack(Unit const* target) const override
@@ -2092,7 +2334,7 @@ struct npc_wg_bot_soldier : public ScriptedAI
             _buffTimer = urand(20000, 35000);
             ApplyPrecombatBuffs();
         }
-        if (_requestedLane != LaneCount && !me->IsInCombat() && _buildSite.IsEmpty())
+        if (_requestedLane != LaneCount && !me->IsInCombat() && !HasLogisticsOrder())
         {
             if (_route.Route != _requestedLane)
             {
@@ -2111,7 +2353,7 @@ struct npc_wg_bot_soldier : public ScriptedAI
             return;
 
         // Healers support injured allies even when they have no hostile victim.
-        if (!me->IsNPCBot() && IsHealer(_profile) && !_primaryTimer && !_healScanTimer)
+        if (!me->IsNPCBot() && IsHealer(_profile) && !_primaryTimer && !_healScanTimer && !HasLogisticsOrder())
         {
             _healScanTimer = 500;
             if (Unit* ally = DoSelectLowestHpFriendly(35.f))
@@ -2196,88 +2438,14 @@ struct npc_wg_bot_soldier : public ScriptedAI
                 if (!assigned || !assigned->IsAlive())
                     _vehicle.Clear();
             }
-            // Check for unpiloted friendly vehicles nearby
-            bool canCrew = true; // Any bot can take a vacant seat or driver position
             if (_vehicle.IsEmpty() && !_boardingTimer && !me->GetVehicle() && !IsTowerDefense(_route.Route))
-            {
-                std::list<Creature*> vehList;
-                for (uint32 vEntry : { uint32(NPC_WINTERGRASP_DEMOLISHER), uint32(NPC_WINTERGRASP_SIEGE_ENGINE_ALLIANCE), uint32(NPC_WINTERGRASP_SIEGE_ENGINE_HORDE), uint32(NPC_WINTERGRASP_CATAPULT) })
-                {
-                    me->GetCreatureListWithEntryInGrid(vehList, vEntry, 50.f);
-                    for (Creature* v : vehList)
-                    {
-                        if (v->IsAlive() && v->IsFriendlyTo(me) && v->GetVehicleKit())
-                        {
-                            if (v->GetVehicleKit()->HasEmptySeat(0))
-                            {
-                                _vehicle = v->GetGUID();
-                                break;
-                            }
-                            for (auto const& seat : v->GetVehicleKit()->Seats)
-                            {
-                                if (seat.first > 0 && v->GetVehicleKit()->HasEmptySeat(seat.first))
-                                {
-                                    _vehicle = v->GetGUID();
-                                    break;
-                                }
-                            }
-                            if (!_vehicle.IsEmpty())
-                                break;
-                        }
-                    }
-                    if (!_vehicle.IsEmpty())
-                        break;
-                }
-            }
+                FindVehicleToDrive();
 
             // Board or escort vehicle
             if (Creature* vehicle = me->GetMap()->GetCreature(_vehicle))
             {
-                if (!_boardingTimer && vehicle->IsAlive() && me->IsWithinDistInMap(vehicle, 40.f))
-                {
-                    _boardingTimer = 2000;
-                    if (Vehicle* kit = vehicle->GetVehicleKit())
-                    {
-                        if (kit->HasEmptySeat(0))
-                        {
-                            me->Dismount();
-                            SetBotWarMovementSpeed(me, false);
-                            me->EnterVehicle(vehicle, 0);
-                            return;
-                        }
-                        for (auto const& seat : kit->Seats)
-                        {
-                            if (seat.first > 0 && kit->HasEmptySeat(seat.first))
-                            {
-                                me->Dismount();
-                                SetBotWarMovementSpeed(me, false);
-                                me->EnterVehicle(vehicle, seat.first);
-                                return;
-                            }
-                            if (Unit* accessory = kit->GetPassenger(seat.first))
-                                if ((accessory->GetEntry() == 28319 || accessory->GetEntry() == 32629)
-                                    && accessory->GetVehicleKit() && accessory->GetVehicleKit()->HasEmptySeat(0))
-                                {
-                                    me->Dismount();
-                                    SetBotWarMovementSpeed(me, false);
-                                    me->EnterVehicle(accessory, 0);
-                                    return;
-                                }
-                        }
-                    }
-                }
-                if (!_boardingTimer && vehicle->IsAlive() && vehicle->GetVehicleKit()
-                    && vehicle->GetVehicleKit()->HasEmptySeat(0) && !HasBotWarHumanPassenger(vehicle)
-                    && (me->GetExactDist2d(vehicle) <= 80.f || _route.Slot % SquadSize == 0))
-                {
-                    if (!_supplyMoveTimer)
-                    {
-                        _supplyMoveTimer = 2000;
-                        _supplyNavigation.Move(me, vehicle->GetPosition());
-                    }
-                    _supplyNavigation.Update(me, diff);
+                if (BoardOrApproachVehicle(vehicle, diff))
                     return;
-                }
                 // ESCORT: Stay in close formation with our siege vehicle to protect it!
                 if (vehicle->IsAlive() && !me->IsInCombat())
                 {
@@ -2503,7 +2671,8 @@ private:
     uint32 _thinkTimer = 1000;
     uint32 _healScanTimer = 500;
     uint32 _captureTimer = 0;
-    uint32 _boardingTimer = 0;
+    uint32 _boardingTimer = 0, _boardProgressTimer = 0;
+    float _boardProgressDistance = 0.f;
     uint32 _buffTimer = 1000;
     uint32 _lostSightTimer = 0;
 };
@@ -2943,32 +3112,24 @@ private:
                 it = _claimedVehicles.erase(it);
                 continue;
             }
-            if (vehicle->GetFaction() == WGFactionTable[team] && !HasBotWarHumanPassenger(vehicle)
-                && vehicle->GetVehicleKit() && vehicle->GetVehicleKit()->HasEmptySeat(0))
+            auto* vehicleAI = CAST_AI(npc_wg_bot_vehicle, vehicle->AI());
+            if (vehicleAI && vehicle->GetFaction() == WGFactionTable[team] && !HasBotWarHumanPassenger(vehicle)
+                && IsBotWarSeatAvailable(vehicle->GetVehicleKit(), 0))
             {
                 Creature* nearest = nullptr;
                 float distance = 250.f;
                 for (uint32 i = 0; i < budget; ++i)
-                    if (i % SquadSize < SquadSize)
-                        if (Creature* bot = map->GetCreature(_roster[team][i].Soldier))
-                            if (bot->IsAlive() && !bot->IsInCombat() && !bot->GetVehicle())
-                                if (auto* ai = GetBotWarSoldierAI(bot))
-                                    if (!IsTowerDefense(ai->GetLane()) && !ai->HasBuildSite() && ai->EscortVehicle().IsEmpty()
-                                        && bot->GetExactDist2d(vehicle) < distance)
-                                    {
-                                        nearest = bot;
-                                        distance = bot->GetExactDist2d(vehicle);
-                                    }
-                if (nearest)
-                {
+                    if (Creature* bot = map->GetCreature(_roster[team][i].Soldier))
+                        if (bot->IsAlive() && !bot->IsInCombat() && !bot->GetVehicle() && vehicleAI->CanReserveDriver(bot))
+                            if (auto* ai = GetBotWarSoldierAI(bot))
+                                if (!IsTowerDefense(ai->GetLane()) && !ai->HasBuildSite() && ai->EscortVehicle().IsEmpty()
+                                    && bot->GetExactDist(vehicle) < distance)
+                                {
+                                    nearest = bot;
+                                    distance = bot->GetExactDist(vehicle);
+                                }
+                if (nearest && vehicleAI->ReserveDriver(nearest))
                     GetBotWarSoldierAI(nearest)->SetEscortVehicle(vehicle->GetGUID());
-                    if (nearest->GetExactDist2d(vehicle) <= 25.f)
-                    {
-                        nearest->Dismount();
-                        SetBotWarMovementSpeed(nearest, false);
-                        nearest->EnterVehicle(vehicle, 0);
-                    }
-                }
             }
             ++it;
         }
@@ -3187,6 +3348,7 @@ private:
         bool pinned = soldier->IsInCombat() && (!soldier->getAttackers().empty()
             || soldier->HealthBelowPct(35) || soldier->HasUnitState(UNIT_STATE_CONTROLLED));
         if (!eligibleLane || !HasVehicleBuildRank(slot.KillCredits, team == wg->GetAttackerTeam()) || pinned || soldier->GetVehicle()
+            || !ai->EscortVehicle().IsEmpty()
             || current >= maximum - humanReserve)
         {
             cancelBuild();
@@ -3211,12 +3373,7 @@ private:
                         ++dispatched; // A waiting driver still occupies a dispatch slot.
             }
             if (dispatched >= MaxConcurrentBuilders)
-            {
-                if (Creature* nearbyEng = FindBuildEngineer(map, wg, team, lane, soldier, slot.FactoryId))
-                    if (soldier->GetExactDist2d(nearbyEng) <= 50.f && !soldier->IsInCombat())
-                        ai->SetBuildSite(nearbyEng->GetGUID());
                 return;
-            }
             if (slot.VehicleRespawnAt > _elapsed)
                 return;
             slot.VehicleRespawnAt = _elapsed + 10000;
@@ -3236,7 +3393,7 @@ private:
             soldier->GetThreatManager().ClearAllThreat();
         }
         ai->SetBuildSite(slot.Engineer);
-        if (soldier->GetExactDist2d(engineer) > 50.f || soldier->HasUnitState(UNIT_STATE_CONTROLLED | UNIT_STATE_CASTING))
+        if (!soldier->IsWithinDistInMap(engineer, 12.f) || soldier->HasUnitState(UNIT_STATE_CONTROLLED | UNIT_STATE_CASTING))
         {
             slot.BuildStartedAt = 0;
             return;
@@ -3255,10 +3412,19 @@ private:
         pos.m_positionX += std::cos(pos.GetOrientation()) * 4.f;
         pos.m_positionY += std::sin(pos.GetOrientation()) * 4.f;
         soldier->UpdateAllowedPositionZ(pos.m_positionX, pos.m_positionY, pos.m_positionZ);
-        // Bots do not need rank to build siege vehicles; assign Demolishers and Siege Engines so they can breach walls
-        uint32 entry = (index / SquadSize) % 3 == 0
-            ? (team == TEAM_ALLIANCE ? NPC_WINTERGRASP_SIEGE_ENGINE_ALLIANCE : NPC_WINTERGRASP_SIEGE_ENGINE_HORDE)
-            : NPC_WINTERGRASP_DEMOLISHER;
+        uint32 catapults = 0, demolishers = 0, siegeEngines = 0;
+        for (ObjectGuid guid : wg->GetVehicleGuids(team))
+            if (Creature* vehicle = map->GetCreature(guid); vehicle && vehicle->IsAlive())
+            {
+                uint32 vehicleEntry = vehicle->GetEntry();
+                catapults += vehicleEntry == NPC_WINTERGRASP_CATAPULT;
+                demolishers += vehicleEntry == NPC_WINTERGRASP_DEMOLISHER;
+                siegeEngines += vehicleEntry == NPC_WINTERGRASP_SIEGE_ENGINE_ALLIANCE || vehicleEntry == NPC_WINTERGRASP_SIEGE_ENGINE_HORDE;
+            }
+        VehicleRole role = NextVehicle(team == wg->GetAttackerTeam(), catapults, demolishers, siegeEngines);
+        uint32 entry = role == VehicleRole::Catapult ? NPC_WINTERGRASP_CATAPULT : NPC_WINTERGRASP_DEMOLISHER;
+        if (role == VehicleRole::SiegeEngine)
+            entry = team == TEAM_ALLIANCE ? NPC_WINTERGRASP_SIEGE_ENGINE_ALLIANCE : NPC_WINTERGRASP_SIEGE_ENGINE_HORDE;
 
         Lane vehLane = lane;
         if (slot.FactoryId == BATTLEFIELD_WG_WORKSHOP_SW || slot.FactoryId == BATTLEFIELD_WG_WORKSHOP_NW)
@@ -3276,6 +3442,7 @@ private:
             {
                 vehicle->setActive(true);
                 vehicleAI->SetRoute(vehLane, index);
+                vehicleAI->ReserveDriver(soldier);
                 slot.Vehicle = vehicle->GetGUID();
                 ai->SetTacticalLane(vehLane);
                 TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=vehicle_assigned team={} name={} entry={} credits={} lane={}",
@@ -3459,7 +3626,7 @@ private:
             if (!ai || !IsAssault(ai->GetLane()) || ai->HasWorkshopOrder()) continue;
             if (auto* siege=CAST_AI(npc_wg_bot_vehicle,vehicle->AI()))
             {
-                siege->SetAssaultLane(wg,_siegeLane);
+                siege->SetAssaultLane(_siegeLane);
                 ++convoys;
                 for (uint32 j=i;j<i+SquadSize;++j)
                     if (Creature* escort=map->GetCreature(_roster[team][j].Soldier))

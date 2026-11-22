@@ -37,6 +37,12 @@ int main()
     assert(BreachScore(true,100,120)<BreachScore(false,1,0));
     assert(BreachScore(false,20,0)<BreachScore(false,80,0));
     assert(BreachScore(false,20,20)>BreachScore(false,80,0));
+    assert(NextVehicle(true, 0, 0, 0) == VehicleRole::Demolisher);
+    assert(NextVehicle(true, 0, 1, 0) == VehicleRole::SiegeEngine);
+    assert(NextVehicle(true, 0, 1, 1) == VehicleRole::Catapult);
+    assert(NextVehicle(true, 1, 1, 1) == VehicleRole::Demolisher);
+    assert(NextVehicle(false, 0, 0, 0) == VehicleRole::Catapult);
+    assert(NextVehicle(false, 1, 0, 0) == VehicleRole::Demolisher);
     BattleTelemetry t;
     t.Start(1,0);t.Finish(0);assert(t.Battles[0]==0); // unattended battle excluded
     t.Start(2,0);t.Participated=true;t.Finish(1);assert(t.Battles[0]==1&&t.AttackerWins[0]==0);

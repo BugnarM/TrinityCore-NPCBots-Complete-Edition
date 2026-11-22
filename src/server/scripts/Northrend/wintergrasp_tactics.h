@@ -61,6 +61,16 @@ constexpr uint32_t BreachScore(bool destroyed, uint32_t healthPct, uint32_t defe
 {
     return destroyed ? 0 : 100 + std::min(healthPct,100u) + std::min(defenders,120u) * 8;
 }
+
+enum class VehicleRole { Catapult, Demolisher, SiegeEngine };
+
+constexpr VehicleRole NextVehicle(bool attacking, uint32_t catapults, uint32_t demolishers, uint32_t siegeEngines)
+{
+    uint32_t wallBreakers = demolishers + siegeEngines;
+    if (wallBreakers >= (attacking ? 2 * (catapults + 1) : catapults))
+        return VehicleRole::Catapult;
+    return demolishers <= siegeEngines ? VehicleRole::Demolisher : VehicleRole::SiegeEngine;
+}
 struct BattleCounters
 {
     uint32_t Kills=0, BotDeaths=0, Built=0, Lost=0, RecoveredVehicles=0;
