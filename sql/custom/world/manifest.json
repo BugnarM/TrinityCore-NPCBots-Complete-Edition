@@ -282,5 +282,10 @@
     "file": "2026_11_22_00_capital_enchanter.sql",
     "sha256": "e83883b96a07900d23b9ee2f95d7a5ccbd1f7a0e202a9be9697bb830dad9ed1a",
     "after": []
+  },
+  {
+    "file": "2026_11_22_01_capital_enchanter_horde_positions.sql",
+    "sha256": "9d2d52c3a3ccf689973a60a61073fe139833335c8cdd7c9017f70b903a65e42c",
+    "after": ["2026_11_22_00_capital_enchanter.sql"]
   }
 ]
