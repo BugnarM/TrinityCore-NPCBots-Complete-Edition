@@ -851,6 +851,8 @@ std::vector<BotWaypoint> const BotRoutes[LaneCount] =
     { { {4398.08f, 2356.50f, 376.19f, 0.f} } }  // WorkshopSouthEast
 };
 
+constexpr uint8 NoBuildWorkshop = 255;
+
 struct BotWorkshopSite
 {
     uint8 Id;
@@ -1943,14 +1945,14 @@ struct npc_wg_bot_soldier : public ScriptedAI
 
     Lane GetLane() const { return _route.Route; }
     ObjectGuid EscortVehicle() const { return _vehicle; }
-    bool HasBuildSite() const { return !_buildSite.IsEmpty(); }
+    bool HasBuildSite() const { return _hasBuildSite; }
     void SetTacticalLane(Lane lane) { _requestedLane = lane; }
     bool HasWorkshopOrder() const { return IsWorkshop(_requestedLane) || IsWorkshop(_route.Route); }
-    void SetBuildSite(ObjectGuid site, Position const& position = {})
+    void SetBuildSite(bool assigned, Position const& position = {})
     {
-        if (_buildSite == site)
+        if (_hasBuildSite == assigned)
             return;
-        _buildSite = site;
+        _hasBuildSite = assigned;
         _buildPosition = position;
         if (!me->IsInCombat() && !me->GetVehicle())
         {
@@ -1958,7 +1960,7 @@ struct npc_wg_bot_soldier : public ScriptedAI
             _route.VehicleNavigation.Cancel(me);
         }
         _supplyMoveTimer = 0;
-        if (site.IsEmpty() && !me->IsInCombat() && !me->GetVehicle())
+        if (!assigned && !me->IsInCombat() && !me->GetVehicle())
         {
             _route.Arrived = false;
             _route.Move(me);
@@ -2023,7 +2025,7 @@ struct npc_wg_bot_soldier : public ScriptedAI
 
     bool HasLogisticsOrder() const
     {
-        if (!_buildSite.IsEmpty()) return true;
+        if (HasBuildSite()) return true;
         if (_vehicle.IsEmpty()) return false;
         if (Creature* vehicle = me->GetMap()->GetCreature(_vehicle))
             if (auto* ai = CAST_AI(npc_wg_bot_vehicle, vehicle->AI()))
@@ -2396,26 +2398,22 @@ struct npc_wg_bot_soldier : public ScriptedAI
 
         if (!(me->IsNPCBot() ? me->GetVictim() != nullptr : UpdateVictim()))
         {
-            if (!_buildSite.IsEmpty())
+            if (HasBuildSite())
             {
-                if (Creature* engineer = me->GetMap()->GetCreature(_buildSite); engineer && engineer->IsAlive())
+                if (me->GetExactDist(&_buildPosition) <= 8.f)
                 {
-                    if (me->GetExactDist(&_buildPosition) <= 8.f)
-                    {
-                        me->Dismount();
-                        SetBotWarMovementSpeed(me, false);
-                        me->StopMoving();
-                        return; // coordinator builds only while still nearby and eligible
-                    }
-                    if (!_supplyMoveTimer)
-                    {
-                        _supplyMoveTimer = 3000;
-                        _supplyNavigation.Move(me, _buildPosition);
-                    }
-                    _supplyNavigation.Update(me, diff);
-                    return;
+                    me->Dismount();
+                    SetBotWarMovementSpeed(me, false);
+                    me->StopMoving();
+                    return; // The battlefield coordinator verifies that this workshop can still build.
                 }
-                SetBuildSite(ObjectGuid::Empty);
+                if (!_supplyMoveTimer)
+                {
+                    _supplyMoveTimer = 3000;
+                    _supplyNavigation.Move(me, _buildPosition);
+                }
+                _supplyNavigation.Update(me, diff);
+                return;
             }
             if (!_vehicle.IsEmpty())
             {
@@ -2644,7 +2642,8 @@ private:
     BotRouteMovement _route;
     Position _combatOrigin;
     bool _combatOriginSet=false;
-    ObjectGuid _vehicle, _buildSite;
+    ObjectGuid _vehicle;
+    bool _hasBuildSite = false;
     BotWarVehicleNavigation _supplyNavigation;
     Position _buildPosition;
     Lane _requestedLane = LaneCount;
@@ -2992,8 +2991,7 @@ private:
         uint32 VehicleRespawnAt = 0;
         uint32 KillCredits = 0;
         uint32 BuildStartedAt = 0;
-        ObjectGuid Engineer;
-        uint8 FactoryId = 255;
+        uint8 FactoryId = NoBuildWorkshop;
         Position BuildPoint;
     };
 
@@ -3015,7 +3013,7 @@ private:
             slot.KillCredits = soldier->AI()->GetData(RankCreditData);
             RetireBotWarSoldier(soldier);
         }
-        slot.Engineer.Clear();
+        slot.FactoryId = NoBuildWorkshop;
         slot.BuildStartedAt = 0;
         slot.Soldier.Clear();
         slot.Vehicle.Clear();
@@ -3032,7 +3030,7 @@ private:
         // TEMPSUMMON_MANUAL_DESPAWN vehicles remain registered and available
         // to surviving squad members or to the leader after their resurrection.
         slot.Soldier.Clear();
-        slot.Engineer.Clear();
+        slot.FactoryId = NoBuildWorkshop;
         slot.BuildStartedAt = 0;
         slot.RespawnAt = _elapsed + 300000;
     }
@@ -3270,43 +3268,59 @@ private:
         ai->SetOrders(lane, index, escortVehicle, firstPoint);
     }
 
-    Creature* FindBuildEngineer(Map* map, BattlefieldWG* wg, TeamId team, Lane lane,
-        Creature* soldier, uint8& factoryId)
+    BotWorkshopSite const* FindBuildWorkshop(Map* map, BattlefieldWG* wg, TeamId team, Lane lane,
+        Creature const* soldier, Position& buildPoint)
     {
-        Creature* best = nullptr;
+        BotWorkshopSite const* best = nullptr;
         float distance = 220.f;
+        bool const fieldForce = IsAssault(lane) || IsCounterAttack(lane) || soldier->GetPositionX() < 5150.f;
         for (BotWorkshopSite const& site : BotWorkshopSites)
         {
-            if (wg->GetBotWarWorkshopControl(site.Id) != team)
+            if (wg->GetBotWarWorkshopControl(site.Id) != team || bool(site.Area) != fieldForce)
                 continue;
-            // Do not send field troops through closed keep walls to construct.
-            if (!site.Area && (IsAssault(lane) || IsCounterAttack(lane) || soldier->GetPositionX() < 5150.f))
+
+            Position point = site.Fallback;
+            if (soldier->GetExactDist(&point) >= distance)
                 continue;
-            if (site.Area && !IsAssault(lane) && !IsCounterAttack(lane) && soldier->GetPositionX() >= 5150.f)
+            map->LoadGrid(point.GetPositionX(), point.GetPositionY());
+            if (site.Area)
+                if (GameObject* flag = wg->GetBotWarWorkshopFlagForArea(site.Area))
+                    point = flag->GetPosition();
+
+            if (!ProjectBotWarGround(map, point, true))
                 continue;
-            Position pos = site.Fallback;
-            map->LoadGrid(pos.GetPositionX(), pos.GetPositionY());
-            GameObject* flag = site.Area ? wg->GetBotWarWorkshopFlagForArea(site.Area) : nullptr;
-            if (site.Area && !flag)
-                continue;
-            if (flag)
-                pos = flag->GetPosition();
-            uint32 entry = team == TEAM_ALLIANCE ? NPC_GNOMISH_ENGINEER : NPC_GOBLIN_MECHANIC;
-            std::list<Creature*> engineers;
-            if (flag)
-                GetBotWarEngineers(engineers, flag, entry, 100.f, team, false);
-            else
-                GetBotWarEngineers(engineers, soldier, entry, 250.f, team, true);
-            for (Creature* engineer : engineers)
-                if (engineer->IsAlive() && engineer->IsFriendlyTo(soldier)
-                    && engineer->GetExactDist2d(&pos) <= 100.f && soldier->GetExactDist(&pos) < distance)
-                {
-                    best = engineer;
-                    distance = soldier->GetExactDist(&pos);
-                    factoryId = site.Id;
-                }
+            float const candidateDistance = soldier->GetExactDist(&point);
+            if (candidateDistance < distance)
+            {
+                best = &site;
+                distance = candidateDistance;
+                buildPoint = point;
+            }
         }
         return best;
+    }
+
+    void AnimateBuildWorkshop(BattlefieldWG* wg, TeamId team, uint8 factoryId, Creature* soldier)
+    {
+        auto site = std::ranges::find(BotWorkshopSites, factoryId, &BotWorkshopSite::Id);
+        if (site == BotWorkshopSites.end())
+            return;
+
+        WorldObject* center = soldier;
+        if (site->Area)
+            if (GameObject* flag = wg->GetBotWarWorkshopFlagForArea(site->Area))
+                center = flag;
+
+        std::list<Creature*> engineers;
+        uint32 const entry = team == TEAM_ALLIANCE ? NPC_GNOMISH_ENGINEER : NPC_GOBLIN_MECHANIC;
+        GetBotWarEngineers(engineers, center, entry, 80.f, team, !site->Area);
+        for (Creature* engineer : engineers)
+            if (engineer->IsAlive() && engineer->GetExactDist2d(&site->Fallback) <= 100.f)
+                if (Creature* arms = engineer->FindNearestCreature(NPC_WINTERGRASP_CONTROL_ARMS, 30.f))
+                {
+                    engineer->CastSpell(arms, SPELL_ACTIVATE_CONTROL_ARMS, true);
+                    return;
+                }
     }
 
     void EnsureVehicle(Map* map, BattlefieldWG* wg, TeamId team, uint32 index, RosterSlot& slot, Creature* soldier)
@@ -3324,15 +3338,14 @@ private:
             slot.Vehicle.Clear();
             slot.VehicleRespawnAt = _elapsed + 10000;
         }
-        Lane lane = ResolveSquadLane(wg, team == wg->GetAttackerTeam(), index);
-        lane = ai->GetLane(); // live tactical orders take precedence over the initial roster
+        Lane const lane = ai->GetLane();
         uint32 current = wg->GetData(team == TEAM_ALLIANCE ? BATTLEFIELD_WG_DATA_VEHICLE_A : BATTLEFIELD_WG_DATA_VEHICLE_H);
         uint32 maximum = wg->GetData(team == TEAM_ALLIANCE ? BATTLEFIELD_WG_DATA_MAX_VEHICLE_A : BATTLEFIELD_WG_DATA_MAX_VEHICLE_H);
         uint32 humanReserve = wg->GetWarPlayerCount(team) && maximum ? 1 : 0;
         auto cancelBuild = [&] {
-            slot.Engineer.Clear();
+            slot.FactoryId = NoBuildWorkshop;
             slot.BuildStartedAt = 0;
-            ai->SetBuildSite(ObjectGuid::Empty);
+            ai->SetBuildSite(false);
         };
         bool eligibleLane = IsAssault(lane) || IsCounterAttack(lane) || IsWorkshop(lane)
             || lane == KeepCenter || lane == KeepWest || lane == KeepEast;
@@ -3345,25 +3358,20 @@ private:
             cancelBuild();
             return;
         }
-        Creature* engineer = map->GetCreature(slot.Engineer);
-        if (!slot.Engineer.IsEmpty() && (!engineer || wg->GetBotWarWorkshopControl(slot.FactoryId) != team
-            || !engineer->IsAlive() || !engineer->IsFriendlyTo(soldier)))
-        {
+        if (slot.FactoryId != NoBuildWorkshop && wg->GetBotWarWorkshopControl(slot.FactoryId) != team)
             cancelBuild();
-            engineer = nullptr;
-        }
-        if (engineer && !slot.BuildStartedAt && _elapsed > slot.VehicleRespawnAt + 30000)
+        if (slot.FactoryId != NoBuildWorkshop && !slot.BuildStartedAt && _elapsed > slot.VehicleRespawnAt + 30000)
         {
             cancelBuild();
             slot.VehicleRespawnAt = _elapsed + 45000;
             return;
         }
-        if (!engineer)
+        if (slot.FactoryId == NoBuildWorkshop)
         {
             uint32 dispatched = 0;
             for (RosterSlot const& other : _roster[team])
             {
-                if (!other.Engineer.IsEmpty()) ++dispatched;
+                if (other.FactoryId != NoBuildWorkshop) ++dispatched;
                 else if (Creature* pending = map->GetCreature(other.Vehicle))
                     if (pending->IsAlive() && pending->GetVehicleKit() && !pending->GetVehicleKit()->GetPassenger(0))
                         ++dispatched; // A waiting driver still occupies a dispatch slot.
@@ -3373,37 +3381,19 @@ private:
             if (slot.VehicleRespawnAt > _elapsed)
                 return;
             slot.VehicleRespawnAt = _elapsed + 10000;
-            engineer = FindBuildEngineer(map, wg, team, lane, soldier, slot.FactoryId);
-            if (!engineer)
-            {
-                cancelBuild();
+            BotWorkshopSite const* site = FindBuildWorkshop(map, wg, team, lane, soldier, slot.BuildPoint);
+            if (!site)
                 return;
-            }
-            slot.Engineer = engineer->GetGUID();
-            slot.BuildPoint = engineer->GetPosition();
-            // Field engineers are often on a workshop platform. Rally the builder on open ground by its flag.
-            for (BotWorkshopSite const& site : BotWorkshopSites)
-                if (site.Id == slot.FactoryId && site.Area)
-                {
-                    if (GameObject* flag = wg->GetBotWarWorkshopFlagForArea(site.Area))
-                    {
-                        Position ground = flag->GetPosition();
-                        float angle = engineer->GetAbsoluteAngle(flag);
-                        ground.m_positionX += std::cos(angle) * 8.f;
-                        ground.m_positionY += std::sin(angle) * 8.f;
-                        slot.BuildPoint = ProjectBotWarGround(map, ground, true) ? ground : flag->GetPosition();
-                    }
-                    break;
-                }
-            TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=builder_dispatch team={} name={} credits={} active_builders={}",
-                uint32(team), soldier->GetName(), slot.KillCredits, dispatched + 1);
+            slot.FactoryId = site->Id;
+            TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=builder_dispatch team={} workshop={} name={} credits={} active_builders={}",
+                uint32(team), uint32(slot.FactoryId), soldier->GetName(), slot.KillCredits, dispatched + 1);
         }
         if (soldier->IsInCombat())
         {
             soldier->CombatStop(true);
             soldier->GetThreatManager().ClearAllThreat();
         }
-        ai->SetBuildSite(slot.Engineer, slot.BuildPoint);
+        ai->SetBuildSite(true, slot.BuildPoint);
         if (soldier->GetExactDist(&slot.BuildPoint) > 12.f || soldier->HasUnitState(UNIT_STATE_CONTROLLED | UNIT_STATE_CASTING))
         {
             slot.BuildStartedAt = 0;
@@ -3413,8 +3403,7 @@ private:
         {
             slot.BuildStartedAt = _elapsed;
             TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=construction_start team={} workshop={}", uint32(team), uint32(slot.FactoryId));
-            if (Creature* arms = engineer->FindNearestCreature(NPC_WINTERGRASP_CONTROL_ARMS, 30.f))
-                engineer->CastSpell(arms, SPELL_ACTIVATE_CONTROL_ARMS, true);
+            AnimateBuildWorkshop(wg, team, slot.FactoryId, soldier);
             return;
         }
         if (_elapsed - slot.BuildStartedAt < 5000)
