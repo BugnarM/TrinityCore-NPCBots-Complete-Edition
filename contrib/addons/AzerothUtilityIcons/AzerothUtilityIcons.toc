@@ -1,0 +1,6 @@
+## Interface: 30300
+## Title: Azeroth Utility Icons
+## Notes: Replaces the placeholder icons for Junk Scrapper and Companion Hearthstone.
+## Version: 1.0.0
+
+AzerothUtilityIcons.lua
