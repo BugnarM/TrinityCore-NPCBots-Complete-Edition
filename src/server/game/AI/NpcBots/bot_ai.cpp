@@ -52,6 +52,7 @@
 #include "MapManager.h"
 #include "MotionMaster.h"
 #include "ObjectMgr.h"
+#include "TrainerSpellLevels.h"
 #include "PathGenerator.h"
 #include "PointMovementGenerator.h"
 #include "ScriptedGossip.h"
@@ -2211,8 +2212,10 @@ void bot_ai::SetStats(bool force)
         {
             uint8 mapmaxlevel = BotDataMgr::GetMaxLevelForMapId(me->GetMap()->GetEntry()->ID);
             mapmaxlevel += BotDataMgr::GetLevelBonusForBotRank(me->GetCreatureTemplate()->rank);
-            //TODO: experience system for levelups
-            mylevel = std::max<uint8>(mylevel, std::min<uint8>(_baseLevel + uint8(uint32(float(_killsCount) * BotCfg::GetBotWandererXPGainMod()) / (mylevel * 20)), mapmaxlevel));
+            // Cap earned levels before converting to the creature's level type.
+            float earnedLevels = float(_killsCount) * BotCfg::GetBotWandererXPGainMod() / (std::max(1, int(mylevel)) * 20);
+            uint32 targetLevel = _baseLevel + uint32(std::min(earnedLevels, float(mapmaxlevel)));
+            mylevel = std::max<uint32>(mylevel, std::min<uint32>(targetLevel, mapmaxlevel));
         }
     }
     else
@@ -7242,6 +7245,18 @@ void bot_ai::GetNearbyFriendlyTargetsList(std::list<Unit*> &targets, float maxdi
 //////////
 //SPELLMAP
 //////////
+namespace
+{
+    uint32 GetBotSpellTrainingLevel(Unit const* caster, SpellInfo const* info)
+    {
+        if (caster->IsNPCBot())
+            if (bot_ai const* ai = caster->ToCreature()->GetBotAI(); ai && ai->GetBotClass() < BOT_CLASS_EX_START)
+                return Trainer::GetClassSpellTrainingLevel(ai->GetBotClass(), info->Id, info->BaseLevel);
+
+        return info->BaseLevel;
+    }
+}
+
 //Using first-rank spell as source, returns spellId of max rank allowed for given caster
 //If you want bot to use this spell through doCast() go InitSpellMap(uint32) instead
 uint32 bot_ai::InitSpell(Unit const* caster, uint32 spell)
@@ -7253,19 +7268,11 @@ uint32 bot_ai::InitSpell(Unit const* caster, uint32 spell)
         return 0; //weird spell with no info, disable it
     }
 
-    uint8 lvl = caster->GetLevel();
-    if (lvl < info->BaseLevel) //only 1st rank spells check
-        return 0; //cannot use this spell
+    uint32 learnedSpell = 0;
+    for (; info && caster->GetLevel() >= GetBotSpellTrainingLevel(caster, info); info = info->GetNextRankSpell())
+        learnedSpell = info->Id;
 
-    if (SpellInfo const* spInfo = info->GetNextRankSpell())
-    {
-        if (lvl < spInfo->BaseLevel)
-            return spell; //cannot use next rank, use this one
-        else
-            return InitSpell(caster, spInfo->Id); //can use next rank, forward check
-    }
-
-    return spell; //max rank, use this
+    return learnedSpell;
 }
 //Using first-rank spell as source, puts spell of max rank allowed for given caster in spellmap
 void bot_ai::InitSpellMap(uint32 basespell, bool forceadd, bool forwardRank)
@@ -7281,7 +7288,7 @@ void bot_ai::InitSpellMap(uint32 basespell, bool forceadd, bool forwardRank)
     uint8 lvl = me->GetLevel();
     uint32 spellId = forceadd ? basespell : 0;
 
-    while (info != nullptr && forwardRank && (forceadd || lvl >= info->BaseLevel))
+    while (info && forwardRank && (forceadd || lvl >= GetBotSpellTrainingLevel(me, info)))
     {
         spellId = info->Id; //can use this spell
         info = info->GetNextRankSpell(); //check next rank

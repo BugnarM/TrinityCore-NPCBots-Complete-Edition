@@ -652,6 +652,12 @@ public:
 
             if (!(mask & BOT_TOTEM_MASK_MY_TOTEM_FIRE) && me->IsInCombat() && _totemTimers[T_FIRE] <= diff)
             {
+                // Give wandering shamans a fire totem before they learn the group buffs.
+                if (IsWanderer() && HasRole(BOT_ROLE_DPS) && IsSpellReady(SEARING_TOTEM_1, diff))
+                    if (Unit const* victim = me->GetVictim(); victim && me->IsWithinDistInMap(victim, 20.f) && me->IsWithinLOSInMap(victim))
+                        if (doCast(me, GetSpell(SEARING_TOTEM_1)))
+                            return;
+
                 //FIRElastresort : frostres (3 shamans of same level req)
                 uint32 frostRes = GetSpell(FROST_RESISTANCE_TOTEM_1);
                 if (frostRes && !IAmFree() &&
@@ -2562,7 +2568,7 @@ public:
             //totems
             InitSpellMap(EARTHBIND_TOTEM_1);
             InitSpellMap(MAGMA_TOTEM_1);
-            //InitSpellMap(SEARING_TOTEM_1);
+            InitSpellMap(SEARING_TOTEM_1);
             //InitSpellMap(STONECLAW_TOTEM_1);
             InitSpellMap(FIRE_ELEMENTAL_TOTEM_1);
             InitSpellMap(EARTH_ELEMENTAL_TOTEM_1);
@@ -2601,10 +2607,17 @@ public:
 
   /*Talent*/lvl >= 40 && isRest ? InitSpellMap(MANA_TIDE_TOTEM_1) : RemoveSpell(MANA_TIDE_TOTEM_1);
 
-            CURE_TOXINS = InitSpell(me, CLEANSE_SPIRIT_1) ? CLEANSE_SPIRIT_1 : CURE_TOXINS_1;
-            RemoveSpell(CLEANSE_SPIRIT_1);
-            RemoveSpell(CURE_TOXINS_1);
-            InitSpellMap(CURE_TOXINS);
+            if (lvl >= 40 && isRest)
+            {
+                InitSpellMap(CLEANSE_SPIRIT_1);
+                RemoveSpell(CURE_TOXINS_1);
+                CURE_TOXINS = CLEANSE_SPIRIT_1;
+            }
+            else
+            {
+                RemoveSpell(CLEANSE_SPIRIT_1);
+                CURE_TOXINS = CURE_TOXINS_1;
+            }
 
             //InitSpellMap(ROCKBITER_WEAPON_1); //lvl 1
             InitSpellMap(FLAMETONGUE_WEAPON_1); //lvl 10

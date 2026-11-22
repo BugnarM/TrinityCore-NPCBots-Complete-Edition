@@ -52,10 +52,13 @@
 #include "StringConvert.h"
 #include "TemporarySummon.h"
 #include "ThreadPool.h"
+#include "TrainerSpellLevels.h"
 #include "UpdateMask.h"
 #include "Util.h"
 #include "Vehicle.h"
 #include "World.h"
+#include <atomic>
+#include <memory>
 
 //npcbot
 #include "botdatamgr.h"
@@ -9251,12 +9254,31 @@ void ObjectMgr::LoadMailLevelRewards()
     TC_LOG_INFO("server.loading", ">> Loaded {} level dependent mail rewards in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
+namespace
+{
+    using ClassSpellTrainingLevels = std::unordered_map<uint8, std::unordered_map<uint32, uint8>>;
+    std::atomic<std::shared_ptr<ClassSpellTrainingLevels const>> ClassTrainingLevels;
+}
+
+uint32 Trainer::GetClassSpellTrainingLevel(uint8 playerClass, uint32 spellId, uint32 defaultLevel)
+{
+    auto levels = ClassTrainingLevels.load();
+    if (levels)
+        if (auto const* classLevels = Trinity::Containers::MapGetValuePtr(*levels, playerClass))
+            if (auto const* level = Trinity::Containers::MapGetValuePtr(*classLevels, spellId))
+                return *level;
+
+    return defaultLevel;
+}
+
 void ObjectMgr::LoadTrainers()
 {
     uint32 oldMSTime = getMSTime();
 
     // For reload case
+    _classTrainers.clear();
     _trainers.clear();
+    auto classTrainingLevels = std::make_shared<ClassSpellTrainingLevels>();
 
     std::unordered_map<int32, std::vector<Trainer::Spell>> spellsByTrainer;
     if (QueryResult trainerSpellsResult = WorldDatabase.Query("SELECT TrainerId, SpellId, MoneyCost, ReqSkillLine, ReqSkillRank, ReqAbility1, ReqAbility2, ReqAbility3, ReqLevel FROM trainer_spell"))
@@ -9364,9 +9386,36 @@ void ObjectMgr::LoadTrainers()
             auto [it, isNew] = _trainers.emplace(std::piecewise_construct, std::forward_as_tuple(trainerId), std::forward_as_tuple(trainerId, trainerType, requirement, std::move(greeting), std::move(spells)));
             ASSERT(isNew);
             if (trainerType == Trainer::Type::Class)
+            {
                 _classTrainers[requirement].push_back(&it->second);
+                if (requirement)
+                {
+                    auto& levels = (*classTrainingLevels)[requirement];
+                    auto recordLevel = [&levels](uint32 spellId, uint8 level)
+                    {
+                        auto [spell, added] = levels.try_emplace(spellId, level);
+                        if (!added)
+                            spell->second = std::min(spell->second, level);
+                    };
+
+                    for (Trainer::Spell const& spell : it->second.GetSpells())
+                    {
+                        if (spell.ReqSkillLine)
+                            continue;
+
+                        if (!spell.IsCastable())
+                            recordLevel(spell.SpellId, spell.ReqLevel);
+                        else
+                            for (SpellEffectInfo const& effect : sSpellMgr->AssertSpellInfo(spell.SpellId)->GetEffects())
+                                if (effect.IsEffect(SPELL_EFFECT_LEARN_SPELL) && effect.TriggerSpell)
+                                    recordLevel(effect.TriggerSpell, spell.ReqLevel);
+                    }
+                }
+            }
         } while (trainersResult->NextRow());
     }
+
+    ClassTrainingLevels.store(std::move(classTrainingLevels));
 
     for (auto const& unusedSpells : spellsByTrainer)
     {
