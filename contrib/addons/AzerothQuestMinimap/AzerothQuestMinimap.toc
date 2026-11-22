@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: Azeroth Quest Minimap
+## Notes: Shows native quest objective areas on the minimap.
+## Version: 0.1.0
+
+MapDimensions.lua
+QuestMinimap.xml
+QuestMinimap.lua

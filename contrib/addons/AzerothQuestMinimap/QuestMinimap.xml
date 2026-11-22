@@ -1,0 +1,22 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <ScrollFrame name="AzerothQuestMinimapStripTemplate" virtual="true" hidden="true">
+        <ScrollChild>
+            <Frame name="$parentCanvas">
+                <Size x="1" y="1"/>
+                <Anchors>
+                    <Anchor point="TOPLEFT"/>
+                </Anchors>
+                <Frames>
+                    <QuestPOIFrame name="$parentBlobs">
+                        <Size x="1" y="1"/>
+                        <Layers>
+                            <Layer level="ARTWORK">
+                                <Texture name="$parentTexture" setAllPoints="true"/>
+                            </Layer>
+                        </Layers>
+                    </QuestPOIFrame>
+                </Frames>
+            </Frame>
+        </ScrollChild>
+    </ScrollFrame>
+</Ui>
