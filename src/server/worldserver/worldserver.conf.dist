@@ -4841,6 +4841,19 @@ NpcBot.WanderingBots.Continents.Maps = 0,1,530,571
 
 NpcBot.WanderingBots.Continents.XPGain = 1.0
 
+# Open-world wanderer engagements
+# PlayerTargetBias is the percent chance to pick a human when both a human and
+# hired companions are eligible. The default gives companions the other 65%.
+# PrioritizeBotsOverPlayers gives an opposing wanderer in the same distance band priority.
+# SpawnTruceProtectsPlayers extends spawn grace to players and their companions.
+# Combat or taking damage ends grace. The normal rule for fighting other wanderers still applies.
+# TankInterceptRange is the detection and maximum taunt range in yards (0 disables it).
+NpcBot.WanderingBots.PlayerTargetBias = 35
+NpcBot.WanderingBots.PrioritizeBotsOverPlayers = 1
+NpcBot.WanderingBots.SpawnTruceTime = 60
+NpcBot.WanderingBots.SpawnTruceProtectsPlayers = 1
+NpcBot.WanderingBots.TankInterceptRange = 30.0
+
 #
 #    NpcBot.Wanderer.ShareKillDistance
 #        Description: Maximum distance in yards from a creature killed by a free NPCBot

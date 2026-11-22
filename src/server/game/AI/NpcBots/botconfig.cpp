@@ -1,5 +1,6 @@
 #include "botcommon.h"
 #include "botconfig.h"
+#include "botwanderercombat.h"
 #include "botarena.h"
 #include "botdungeonfinder.h"
 #include "botraidfinder.h"
@@ -165,6 +166,7 @@ static bool _untarget_wnpc_flightmaster;
 static bool _wanderingFreeLootSkinning;
 static float _wandererShareKillDistance;
 static uint32 _wandererSpawnTruceTime;
+static NPCBots::WandererCombat::Settings _wandererCombat;
 static float _botStatLimits_dodge;
 static float _botStatLimits_parry;
 static float _botStatLimits_block;
@@ -519,7 +521,13 @@ private:
         _killrewardWandererItemQuality  = sConfigMgr->GetIntDefault("NpcBot.WanderingBots.KillReward.ItemQuality", int(ITEM_QUALITY_RARE));
         _wanderingFreeLootSkinning      = sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.FreeLoot.Skinning", false);
         _wandererShareKillDistance      = sConfigMgr->GetFloatDefault("NpcBot.Wanderer.ShareKillDistance", 50.0f);
-        _wandererSpawnTruceTime         = sConfigMgr->GetIntDefault("NpcBot.WanderingBots.SpawnTruceTime", 60);
+        _wandererSpawnTruceTime = number("NpcBot.WanderingBots.SpawnTruceTime", 60, 0, 3600);
+        _wandererCombat = {
+            number("NpcBot.WanderingBots.PlayerTargetBias", 35, 0, 100),
+            sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.PrioritizeBotsOverPlayers", true),
+            sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.SpawnTruceProtectsPlayers", true),
+            NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.TankInterceptRange", 30.f), 30.f, 0.f, 30.f)
+        };
         _mult_xpgain_wanderer           = sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.Continents.XPGain", 1.0f);
         _enableWanderingBotsBG          = sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.BG.Enable", false);
         _enableWanderingBotsArena       = sConfigMgr->GetBoolDefault("NpcBot.WanderingBots.Arena.Enable", true);
@@ -810,6 +818,7 @@ private:
 };
 
 NPCBots::Healing::Settings const& BotCfg::GetHealingSettings() { return _healingSettings; }
+NPCBots::WandererCombat::Settings const& NPCBots::WandererCombat::GetSettings() { return _wandererCombat; }
 
 void BotCfg::ReloadConfig()
 {

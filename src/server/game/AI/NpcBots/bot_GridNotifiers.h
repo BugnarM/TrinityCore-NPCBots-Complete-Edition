@@ -109,8 +109,8 @@ class NearestHostileUnitCheck
 
     public:
         NearestHostileUnitCheck(NearestHostileUnitCheck const&) = delete;
-        explicit NearestHostileUnitCheck(Unit const* unit, float dist, bool magic, bot_ai const* m_ai, bool targetCCed, bool withSecondary) :
-        me(unit), m_range(dist), byspell(magic), ai(m_ai), AttackCCed(targetCCed), checkSecondary(withSecondary)
+        explicit NearestHostileUnitCheck(Unit const* unit, float dist, bool magic, bot_ai const* m_ai, bool targetCCed, bool withSecondary, bool collectAll = false) :
+        me(unit), m_range(dist), byspell(magic), ai(m_ai), AttackCCed(targetCCed), checkSecondary(withSecondary), collectAll(collectAll)
         { free = ai->IAmFree(); berserk = free && (ai->IsWanderer() || unit->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE); }
         explicit NearestHostileUnitCheck(Unit const* unit, float dist, bool magic, bot_ai const* m_ai) :
         NearestHostileUnitCheck(unit, dist, magic, m_ai, true, false)
@@ -156,7 +156,8 @@ class NearestHostileUnitCheck
                     return INVALID;
             }
 
-            m_range = me->GetDistance(u);   // use found unit range as new range limit for next check
+            if (!collectAll)
+                m_range = me->GetDistance(u);
             return res;
         }
     private:
@@ -166,6 +167,7 @@ class NearestHostileUnitCheck
         bot_ai const* ai;
         bool AttackCCed;
         bool checkSecondary;
+        bool collectAll;
         bool free;
         bool berserk;
 };

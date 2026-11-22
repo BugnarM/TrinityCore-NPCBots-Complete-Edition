@@ -66,6 +66,7 @@
 #include "World.h"
 #include "WorldSession.h"
 #include "botplayeraid.h"
+#include "botwanderercombat.h"
 
 #include "G3DPosition.hpp"
 #include <unordered_set>
@@ -1326,6 +1327,81 @@ bool IsWorldAidWanderer(Creature const& bot, bot_ai const& ai)
 {
     return ai.IsWanderer() && ai.IAmFree() && !ai.IsBattlefieldBot() && !ai.IsCityRaidBot() &&
         bot.IsInWorld() && bot.GetMap()->GetEntry()->IsContinent();
+}
+
+Player const* GetHiredCompanionOwner(Unit const& unit, bot_ai const** companionAI = nullptr)
+{
+    bot_ai const* ai = unit.IsNPCBot() ? unit.ToCreature()->GetBotAI() : nullptr;
+    if (!ai || ai->IAmFree() || ai->IsTempBot())
+        return nullptr;
+    if (companionAI)
+        *companionAI = ai;
+    return ai->GetBotOwner();
+}
+
+uint32 GetInterceptTaunt(uint8 botClass)
+{
+    switch (botClass)
+    {
+        case BOT_CLASS_WARRIOR: return 355; // Taunt
+        case BOT_CLASS_DRUID: return 6795; // Growl
+        case BOT_CLASS_PALADIN: return 62124; // Hand of Reckoning
+        case BOT_CLASS_DEATH_KNIGHT: return 56222; // Dark Command
+        default: return 0;
+    }
+}
+
+Unit* PickWandererEngagement(Creature const& attacker, std::list<Unit*> const& targets)
+{
+    using namespace NPCBots::WandererCombat;
+
+    if (targets.empty())
+        return nullptr;
+
+    std::vector<Unit*> units;
+    std::vector<Candidate> candidates;
+    units.reserve(targets.size());
+    candidates.reserve(targets.size());
+    std::unordered_set<ObjectGuid> visiblePlayers;
+    float nearest = std::numeric_limits<float>::max();
+    for (Unit const* target : targets)
+    {
+        nearest = std::min(nearest, attacker.GetDistance(target));
+        if (target->IsPlayer())
+            visiblePlayers.insert(target->GetGUID());
+    }
+
+    uint32 const attackerTeam = BotDataMgr::GetTeamForFaction(attacker.GetFaction());
+    for (Unit* target : targets)
+    {
+        Kind kind = Kind::Other;
+        float credit = 0.f;
+        if (target->IsPlayer())
+            kind = Kind::Player;
+        else if (target->IsNPCBot())
+        {
+            bot_ai const* ai = nullptr;
+            if (Player const* owner = GetHiredCompanionOwner(*target, &ai))
+            {
+                kind = ai->HasRole(BOT_ROLE_TANK) ? Kind::Tank : Kind::Companion;
+                if (visiblePlayers.contains(owner->GetGUID()) && attacker.GetDistance(owner) <= nearest + DistanceBand)
+                    credit = std::min(FormationCredit, target->GetDistance(owner));
+            }
+            else if (bot_ai const* wandererAI = target->ToCreature()->GetBotAI();
+                wandererAI && IsWorldAidWanderer(*target->ToCreature(), *wandererAI))
+            {
+                uint32 const targetTeam = BotDataMgr::GetTeamForFaction(target->GetFaction());
+                if (attackerTeam != TEAM_OTHER && targetTeam != TEAM_OTHER && attackerTeam != targetTeam)
+                    kind = Kind::OpposingWanderer;
+            }
+        }
+
+        units.push_back(target);
+        candidates.push_back({kind, attacker.GetDistance(target), credit, target->GetArmor()});
+    }
+
+    auto selection = PickTarget(candidates, GetSettings(), attacker.GetLevel(), urand(0, 99), frand(0.f, 1.f));
+    return selection ? units[*selection] : nullptr;
 }
 
 bool IsSameAidFaction(Creature const& bot, Player const& player)
@@ -3952,8 +4028,22 @@ bool bot_ai::CanBotAttack(Unit const* target, int8 byspell, bool secondary) cons
         return false;
     if (target->CanHaveThreatList() && GetEngageTimer() > lastdiff)
         return false;
-    if (!BotCfg::IsPvPEnabled() && me->IsPvP() && target->IsControlledByPlayer())
+    bool const worldWanderer = IsWorldAidWanderer(*me, *this);
+    bool const playerSide = target->IsPlayer() || target->IsControlledByPlayer() ||
+        (worldWanderer && GetHiredCompanionOwner(*target));
+    if (!BotCfg::IsPvPEnabled() && me->IsPvP() && playerSide)
         return false;
+
+    if (NPCBots::WandererCombat::GetSettings().spawnTruceProtectsPlayers && !me->IsInCombatWith(target))
+    {
+        if (worldWanderer && HasSpawnTruce() && playerSide && target->GetVictim() != me)
+            return false;
+        if (!IAmFree() && target->GetVictim() != me && target->GetVictim() != master && target->IsNPCBot())
+            if (bot_ai const* ai = target->ToCreature()->GetBotAI();
+                ai && ai->HasSpawnTruce() && IsWorldAidWanderer(*target->ToCreature(), *ai))
+                return false;
+    }
+
     if (me->GetFaction() == 35 && IAmFree() && target->IsCreature() && target->GetVictim() != me)
         return false;
     if (!(GetBG() && GetBG()->isArena()) &&
@@ -4228,8 +4318,20 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
     //check if no need to change target
     //BOT_LOG_ERROR("entities.player", "bot_ai::getTarget(): bot: {}", me->GetName());
 
-    if (mytar && me->HasAuraType(SPELL_AURA_MOD_TAUNT))
-        return { mytar, mytar };
+    bool const worldWanderer = IsWorldAidWanderer(*me, *this);
+    if (me->HasAuraType(SPELL_AURA_MOD_TAUNT))
+    {
+        if (worldWanderer)
+        {
+            auto const& taunts = me->GetAuraEffectsByType(SPELL_AURA_MOD_TAUNT);
+            for (auto it = taunts.rbegin(); it != taunts.rend(); ++it)
+                if (Unit* caster = ObjectAccessor::GetUnit(*me, (*it)->GetCasterGUID());
+                    caster && me->IsWithinDistInMap(caster, BOT_MAX_CHASE_RANGE) && CanBotAttack(caster, -1))
+                    return { caster, caster };
+        }
+        else if (mytar)
+            return { mytar, mytar };
+    }
 
     //Immediate targets
     //orders
@@ -4804,7 +4906,7 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
     float maxdist = InitAttackRange(float(followdist + 10), ranged);
     std::array<std::pair<Unit*, float>, 2u> ts{};
     std::list<Unit*> unitList;
-    NearestHostileUnitCheck check(me, maxdist, byspell, this);
+    NearestHostileUnitCheck check(me, maxdist, byspell, this, true, false, worldWanderer);
     Bcore::UnitListSearcher searcher(master->ToUnit(), unitList, check);
     Cell::VisitAllObjects(HasBotCommandState(BOT_COMMAND_STAY) ? me->ToUnit() : master->ToUnit(), searcher, maxdist);
 
@@ -4821,10 +4923,10 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
                 });
             }
 
-            std::erase_if(unitList, [this](Unit const* unit) {
+            std::erase_if(unitList, [this, worldWanderer](Unit const* unit) {
                 if (!unit->IsInCombatWith(me) && !(unit->IsNPCBot() && unit->ToCreature()->IsWandererBot()) && !IsCityRaidBot())
                 {
-                    if (unit->IsPlayer())
+                    if (unit->IsPlayer() || (worldWanderer && GetHiredCompanionOwner(*unit)))
                     {
                         if (me->GetLevel() + 12 < unit->GetLevel())
                             return true;
@@ -4843,6 +4945,14 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
                 }
                 return false;
             });
+        }
+
+        if (worldWanderer && !mytar && !me->IsInCombat() && me->getAttackers().empty())
+        {
+            Unit* target = PickWandererEngagement(*me, unitList);
+            if (target && ((opponent && opponent != target) || (disttarget && disttarget != target)))
+                reset = true;
+            return { target, nullptr };
         }
 
         for (decltype(unitList)::iterator it = unitList.begin(); it != unitList.end();)
@@ -4894,7 +5004,7 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
         reset = true;
 
     //Allow free bots to ignore temp invulnerabilities if no other target is present
-    if (IAmFree() && t1 == nullptr)
+    if (IAmFree() && !worldWanderer && t1 == nullptr)
         t1 = mytar;
 
     //if (t)
@@ -8098,11 +8208,35 @@ void bot_ai::OnSpellHit(Unit* caster, SpellInfo const* spell)
         }
     }
 
-    if (!HasBotCommandState(BOT_COMMAND_FULLSTOP | BOT_COMMAND_INACTION))
+    if (caster && (spell->HasAura(SPELL_AURA_MOD_TAUNT) || spell->HasEffect(SPELL_EFFECT_ATTACK_ME)) &&
+        !HasBotCommandState(BOT_COMMAND_FULLSTOP | BOT_COMMAND_INACTION))
     {
-        if (spell->HasAura(SPELL_AURA_MOD_TAUNT) || spell->HasEffect(SPELL_EFFECT_ATTACK_ME))
-            if (caster && me->Attack(caster, !HasRole(BOT_ROLE_RANGED)))
-            {}//me->GetMotionMaster()->MoveChase(caster);
+        if (IsWorldAidWanderer(*me, *this))
+        {
+            // SpellHit may run before the core applies the aura's effects.
+            Events.AddEventAtOffset([this, taunterGuid = caster->GetGUID(), requiresAura = spell->HasAura(SPELL_AURA_MOD_TAUNT)]()
+            {
+                if (!me->IsAlive() || !IsWorldAidWanderer(*me, *this))
+                    return;
+
+                Unit* taunter = ObjectAccessor::GetUnit(*me, taunterGuid);
+                if (!taunter || !me->IsWithinDistInMap(taunter, BOT_MAX_CHASE_RANGE) || !CanBotAttack(taunter, -1) ||
+                    (requiresAura && !me->HasAuraTypeWithCaster(SPELL_AURA_MOD_TAUNT, taunterGuid)) ||
+                    (me->GetVictim() != taunter && !me->Attack(taunter, !IsRanged())))
+                    return;
+
+                if (Player const* owner = GetHiredCompanionOwner(*taunter))
+                    for (auto const slot : { CURRENT_GENERIC_SPELL, CURRENT_CHANNELED_SPELL })
+                        if (Spell const* cast = me->GetCurrentSpell(slot);
+                            cast && !cast->GetSpellInfo()->IsPositive() && cast->m_targets.GetUnitTargetGUID() == owner->GetGUID())
+                            me->InterruptSpell(slot, false);
+
+                opponent = disttarget = taunter;
+                SetBotCommandState(BOT_COMMAND_COMBATRESET);
+            }, 1ms);
+        }
+        else
+            me->Attack(caster, !HasRole(BOT_ROLE_RANGED));
     }
 
     if (spell->GetSpellSpecific() == SPELL_SPECIFIC_DRINK)
@@ -18758,7 +18892,8 @@ bool bot_ai::GlobalUpdate(uint32 diff)
             me->GetCombatManager().EndCombatBeyondRange(me->GetMap()->GetVisibilityRange(), true);
     }
 
-    if (_updateTimerMedium <= diff)
+    bool const mediumUpdate = _updateTimerMedium <= diff;
+    if (mediumUpdate)
     {
         _updateTimerMedium = 500;
 
@@ -18828,6 +18963,59 @@ bool bot_ai::GlobalUpdate(uint32 diff)
 
     if (CheckHazardAvoidance(diff))
         return false;
+
+    float const interceptRange = NPCBots::WandererCombat::GetSettings().tankInterceptRange;
+    if (mediumUpdate && interceptRange > 0.f && !IAmFree() && !IsTempBot() && HasRole(BOT_ROLE_TANK) &&
+        master && master->IsInWorld() && master->IsAlive() && master->FindMap() == me->FindMap() &&
+        me->GetMap()->GetEntry()->IsContinent() && !master->getAttackers().empty() &&
+        !me->IsMounted() && !me->GetVehicle() && !IsCasting() && !CCed(me, true) &&
+        !HasBotCommandState(BOT_COMMAND_FULLSTOP | BOT_COMMAND_INACTION | BOT_COMMAND_ISSUED_ORDER | BOT_COMMAND_MASK_NOCAST_ANY))
+    {
+        uint32 const baseTaunt = GetInterceptTaunt(_botclass);
+        uint32 const spell = GetSpell(baseTaunt);
+        if (spell && IsSpellReady(baseTaunt, diff, false))
+        {
+            Unit* threat = nullptr;
+            float closest = interceptRange + 12.f;
+            for (Unit* attacker : master->getAttackers())
+            {
+                if (!attacker->IsNPCBot() || attacker->GetVictim() != master ||
+                    !master->IsWithinDistInMap(attacker, interceptRange))
+                    continue;
+
+                bot_ai const* ai = attacker->ToCreature()->GetBotAI();
+                float const distance = me->GetDistance(attacker);
+                if (ai && IsWorldAidWanderer(*attacker->ToCreature(), *ai) && distance < closest &&
+                    CanBotAttack(attacker, -1, true) && me->CanSeeOrDetect(attacker) && me->IsWithinLOSInMap(attacker))
+                {
+                    closest = distance;
+                    threat = attacker;
+                }
+            }
+
+            if (threat)
+            {
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(spell);
+                if (info && me->IsWithinDistInMap(threat, std::min(interceptRange, info->GetMaxRange(false, me))))
+                {
+                    if (_botclass == BOT_CLASS_DRUID && me->GetShapeshiftForm() != FORM_BEAR && me->GetShapeshiftForm() != FORM_DIREBEAR)
+                    {
+                        if (IsSpellReady(5487, diff) && doCast(me, GetSpell(5487)))
+                            return false;
+                    }
+                    else if (doCast(threat, spell))
+                        return false;
+                }
+                else if (!me->GetVictim() && !HasBotCommandState(BOT_COMMAND_MASK_UNMOVING) &&
+                    master->GetBotMgr()->GetBotFollowDist() > 0 && me->Attack(threat, true))
+                {
+                    opponent = disttarget = threat;
+                    SetBotCommandState(BOT_COMMAND_COMBATRESET);
+                    GetInPosition(true, threat);
+                }
+            }
+        }
+    }
 
     if (uint32 const rezBase = WandererResurrectionSpell(_botclass); rezBase && IsWorldAidWanderer(*me, *this))
     {
