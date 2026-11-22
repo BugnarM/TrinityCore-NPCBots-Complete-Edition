@@ -8,7 +8,7 @@
 #include "ScriptedCreature.h"
 #include "Player.h"
 #include "Item.h"
-#include "Bag.h"
+#include "JunkSale.h"
 #include "Creature.h"
 #include "TemporarySummon.h"
 #include "Map.h"
@@ -852,67 +852,7 @@ public:
 
     bool OnUse(Player* player, Item* /*item*/, SpellCastTargets const& /*targets*/) override
     {
-        uint32 totalCopper = 0;
-        uint32 itemsSold = 0;
-
-        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
-        {
-            Item* pItem = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-            if (!pItem)
-                continue;
-            ItemTemplate const* pProto = pItem->GetTemplate();
-            if (pProto && pProto->Quality == ITEM_QUALITY_POOR && pProto->SellPrice > 0 && !pItem->IsRefundable())
-            {
-                uint32 const count = pItem->GetCount();
-                uint32 const price = pItem->GetSellPrice(true) * count;
-                totalCopper += price;
-                itemsSold += count;
-
-                player->DestroyItem(INVENTORY_SLOT_BAG_0, slot, true);
-            }
-        }
-
-        for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
-        {
-            Bag* bag = player->GetBagByPos(bagSlot);
-            if (!bag)
-                continue;
-
-            for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
-            {
-                Item* pItem = bag->GetItemByPos(slot);
-                if (!pItem)
-                    continue;
-                ItemTemplate const* pProto = pItem->GetTemplate();
-                if (pProto && pProto->Quality == ITEM_QUALITY_POOR && pProto->SellPrice > 0 && !pItem->IsRefundable())
-                {
-                    uint32 const count = pItem->GetCount();
-                    uint32 const price = pItem->GetSellPrice(true) * count;
-                    totalCopper += price;
-                    itemsSold += count;
-
-                    player->DestroyItem(bagSlot, slot, true);
-                }
-            }
-        }
-
-        if (itemsSold > 0)
-        {
-            player->ModifyMoney(totalCopper);
-            player->PlayDirectSound(120, player);
-            uint32 const gold = totalCopper / 10000;
-            uint32 const silver = (totalCopper % 10000) / 100;
-            uint32 const copper = totalCopper % 100;
-
-            ChatHandler(player->GetSession()).SendSysMessage(
-                Trinity::StringFormat("|cff00ff00[Junk Scrapper]|r Sold {} grey item(s) for {}g {}s {}c.",
-                    itemsSold, gold, silver, copper));
-        }
-        else
-        {
-            ChatHandler(player->GetSession()).SendSysMessage("|cffffcc00[Junk Scrapper]|r You have no grey items to scrap in your bags.");
-        }
-
+        JunkSale::SellFromBags(*player, JunkSale::Source::Scrapper);
         return true;
     }
 };
