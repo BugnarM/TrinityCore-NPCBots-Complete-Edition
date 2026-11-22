@@ -1,5 +1,6 @@
 #include "botraidfinder.h"
 #include "botdynamiczone.h"
+#include "botplayeraid.h"
 #include "botdynamiczonepolicy.h"
 #include "botautoequip.h"
 #include "BattlegroundMgr.h"
@@ -1300,6 +1301,7 @@ void BotDataMgr::Update(uint32 diff)
     }
 
     NPCBots::DynamicZone::DynamicZoneMgr::Instance()->Update(diff);
+    NPCBots::UpdateWandererPlayerRescue(diff);
 
     if (!_botsWanderCreaturesToSpawn.empty())
     {

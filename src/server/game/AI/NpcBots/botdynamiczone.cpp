@@ -2,6 +2,7 @@
 #include "botdynamiczonepolicy.h"
 #include "botdatamgr.h"
 #include "botconfig.h"
+#include "botplayeraid.h"
 #include "botwanderful.h"
 #include "bot_ai.h"
 #include "World.h"
@@ -66,18 +67,38 @@ void DynamicZoneMgr::Update(uint32 diff)
         return;
     uint32 const elapsed = *scanElapsed;
 
-    std::map<uint64, std::vector<Player*>> active;
+    struct Observer
+    {
+        Player const* player;
+        WorldObject const* location;
+    };
+    std::map<uint64, std::vector<Observer>> active;
+    bool const trackCorpses = BotCfg::GetHealingSettings().playerAid &&
+        sConfigMgr->GetBoolDefault("NpcBot.Wanderer.PlayerAid.RescueEnable", true);
     for (auto const& [_, session] : sWorld->GetAllSessions())
     {
         Player* player = session ? session->GetPlayer() : nullptr;
         if (!player || !player->IsInWorld() || player->IsBeingTeleported() || player->IsInFlight() ||
             !player->FindMap() || !player->GetMap()->GetEntry()->IsContinent() || !player->GetZoneId())
             continue;
-        if (player->GetMapId() == 571 && player->GetZoneId() == 4197 &&
+        // A released ghost can be far from the rescuers' destination.
+        WorldObject const* location = player;
+        uint32 zone = player->GetZoneId();
+        if (trackCorpses && !player->IsResurrectRequested())
+            if (WorldObject const* body = GetWandererRescueTarget(*player); body && body->IsCorpse())
+            {
+                if (uint32 const corpseZone = body->GetMap()->GetZoneId(body->GetPhaseMask(),
+                    body->GetPositionX(), body->GetPositionY(), body->GetPositionZ()))
+                {
+                    location = body;
+                    zone = corpseZone;
+                }
+            }
+
+        if (location->GetMapId() == 571 && zone == 4197 &&
             sConfigMgr->GetBoolDefault("Wintergrasp.BotWar.Enable", false)) continue;
-        if ((player->GetZoneId() == 1519 || player->GetZoneId() == 1637) &&
-            sConfigMgr->GetBoolDefault("CityRaid.Enable", true)) continue;
-        active[ZoneKey(player->GetMapId(), player->GetZoneId())].push_back(player);
+        if ((zone == 1519 || zone == 1637) && sConfigMgr->GetBoolDefault("CityRaid.Enable", true)) continue;
+        active[ZoneKey(location->GetMapId(), zone)].push_back({player, location});
     }
 
     float const proximityRadius = NPCBots::Healing::FiniteClamp(sConfigMgr->GetFloatDefault("NpcBot.WanderingBots.DynamicZone.ProximityRadius", 400.0f), 400.f, 0.f, 5000.f);
@@ -143,9 +164,9 @@ void DynamicZoneMgr::Update(uint32 diff)
             if (despawnRadius > 0.0f && occupied && bot->IsInWorld())
             {
                 bool nearAnyPlayer = false;
-                for (Player const* pl : itActive->second)
+                for (Observer const& observer : itActive->second)
                 {
-                    if (pl->IsInDist2d(bot, despawnRadius))
+                    if (observer.location->IsInDist2d(bot, despawnRadius))
                     {
                         nearAnyPlayer = true;
                         break;
@@ -187,8 +208,8 @@ void DynamicZoneMgr::Update(uint32 diff)
                 return;
 
             float distance = std::numeric_limits<float>::max();
-            for (Player const* player : playersList)
-                distance = std::min(distance, player->GetExactDist2d(wp));
+            for (Observer const& observer : playersList)
+                distance = std::min(distance, observer.location->GetExactDist2d(wp));
             if (proximityRadius > 0.f && distance > despawnRadius)
                 return;
 
@@ -434,11 +455,8 @@ void DynamicZoneMgr::Update(uint32 diff)
                 {
                     dk->setActive(true);
                     uint8 maxPlayerLvl = 1;
-                    for (Player const* pl : playersList)
-                    {
-                        if (pl && pl->GetLevel() > maxPlayerLvl)
-                            maxPlayerLvl = pl->GetLevel();
-                    }
+                    for (Observer const& observer : playersList)
+                        maxPlayerLvl = std::max(maxPlayerLvl, observer.player->GetLevel());
                     uint8 targetLvl = std::min<uint8>(pop.maxLevel + 2, maxPlayerLvl + 3);
                     uint8 dkLevel = std::min<uint8>(80, std::max<uint8>(pop.minLevel, targetLvl));
                     dk->SetLevel(dkLevel);

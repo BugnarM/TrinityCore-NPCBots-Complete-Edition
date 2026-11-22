@@ -32,6 +32,8 @@
 #include "CharacterCache.h"
 #include "CharacterDatabase.h"
 #include "Chat.h"
+#include "Config.h"
+#include "Corpse.h"
 #include "CommonHelpers.h"
 #include "Containers.h"
 #include "DatabaseEnv.h"
@@ -62,6 +64,8 @@
 #include "TemporarySummon.h"
 #include "Transport.h"
 #include "World.h"
+#include "WorldSession.h"
+#include "botplayeraid.h"
 
 #include "G3DPosition.hpp"
 #include <unordered_set>
@@ -1284,6 +1288,242 @@ bool bot_ai::TryTopOffHeal(Unit* target, uint32 diff, std::initializer_list<uint
             }
     return selected && doCast(target, selected);
 }
+namespace
+{
+constexpr uint32 WandererRescuePoint = 0x52455A;
+constexpr float RescueCastRange = 25.f;
+constexpr auto RescueStallTimeout = Seconds(16);
+constexpr auto RescueAttemptTimeout = Seconds(75);
+constexpr auto RescueRetryDelay = Seconds(30);
+
+struct WandererRescue
+{
+    ObjectGuid responder;
+    Position lastPosition;
+    std::chrono::steady_clock::time_point assignedAt;
+    std::chrono::steady_clock::time_point lastProgress;
+    std::unordered_map<ObjectGuid, std::chrono::steady_clock::time_point> retryAfter;
+    bool offered = false;
+};
+
+// BotDataMgr updates these before the map workers start. Bot AI only reads the orders.
+std::unordered_map<ObjectGuid, WandererRescue> RescueRequests;
+std::unordered_map<ObjectGuid, ObjectGuid> RescueOrders;
+
+uint32 WandererResurrectionSpell(uint8 botClass)
+{
+    switch (botClass)
+    {
+        case BOT_CLASS_PRIEST: return 2006; // Resurrection
+        case BOT_CLASS_PALADIN: return 7328; // Redemption
+        case BOT_CLASS_SHAMAN: return 2008; // Ancestral Spirit
+        case BOT_CLASS_DRUID: return 50769; // Revive
+        default: return 0;
+    }
+}
+
+bool IsWorldAidWanderer(Creature const& bot, bot_ai const& ai)
+{
+    return ai.IsWanderer() && ai.IAmFree() && !ai.IsBattlefieldBot() && !ai.IsCityRaidBot() &&
+        bot.IsInWorld() && bot.GetMap()->GetEntry()->IsContinent();
+}
+
+bool IsSameAidFaction(Creature const& bot, Player const& player)
+{
+    return BotDataMgr::GetTeamForFaction(bot.GetFaction()) == player.GetTeam() && bot.IsFriendlyTo(&player);
+}
+
+}
+
+WorldObject* NPCBots::GetWandererRescueTarget(Player& player)
+{
+    if (player.IsAlive() || !player.IsInWorld() || player.IsBeingTeleported() || player.IsInFlight() ||
+        !player.GetMap()->GetEntry()->IsContinent() || player.HasAuraType(SPELL_AURA_PREVENT_RESURRECTION) ||
+        (player.duel && !BotCfg::GetHealingSettings().allowDuelAid))
+        return nullptr;
+
+    if (player.getDeathState() == CORPSE)
+        return player.GetTransport() ? nullptr : &player;
+
+    if (player.HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST))
+        if (Corpse* corpse = player.GetCorpse(); corpse && corpse->IsInWorld() && corpse->GetType() != CORPSE_BONES)
+            return corpse;
+
+    return nullptr;
+}
+
+namespace
+{
+PointMovementGenerator<Creature>* FindRescueMovement(Creature const& bot)
+{
+    auto* point = dynamic_cast<PointMovementGenerator<Creature>*>(bot.GetMotionMaster()->GetCurrentMovementGenerator());
+    return point && point->GetId() == WandererRescuePoint ? point : nullptr;
+}
+
+void StopRescueApproach(Creature& bot)
+{
+    if (auto* movement = FindRescueMovement(bot))
+    {
+        bot.GetMotionMaster()->Remove(movement);
+        bot.StopMoving();
+    }
+}
+
+bool CanCastResurrectionHere(Creature const& bot, WorldObject const& target, float range = RescueCastRange)
+{
+    return bot.IsWithinDistInMap(&target, range) && bot.IsWithinLOSInMap(&target);
+}
+
+bool CanKeepRescueAssignment(Creature const& bot, Player const& player, WorldObject const& target)
+{
+    bot_ai const* ai = bot.GetBotAI();
+    return ai && ai->canUpdate && IsWorldAidWanderer(bot, *ai) && bot.IsAlive() && !bot.IsInCombat() &&
+        !ai->IsDuringTeleport() && bot.FindMap() == target.FindMap() && bot.InSamePhase(&target) &&
+        !bot.GetVehicle() && !bot.GetTransport() && !bot.HasAura(BERSERK) && IsSameAidFaction(bot, player) &&
+        !ai->HasBotCommandState(BOT_COMMAND_MASK_UNMOVING | BOT_COMMAND_NO_CAST | BOT_COMMAND_INACTION) &&
+        (BotCfg::GetHealingSettings().allowStealthedAid || !(bot.HasStealthAura() || bot.HasInvisibilityAura()));
+}
+
+bool StartRescueApproach(Creature& bot, WorldObject const& target)
+{
+    if (CanCastResurrectionHere(bot, target) || FindRescueMovement(bot) ||
+        bot.HasUnitState(UNIT_STATE_CASTING | UNIT_STATE_NOT_MOVE) || bot.IsFlying())
+        return true;
+
+    Position point = target.GetPosition();
+    PathGenerator path(&bot);
+    if (!path.CalculatePath(point.GetPositionX(), point.GetPositionY(), point.GetPositionZ()) ||
+        (path.GetPathType() & PATHFIND_NOPATH))
+        return false;
+
+    auto const& end = path.GetActualEndPosition();
+    if (point.GetExactDist(end.x, end.y, end.z) > RescueCastRange - 3.f ||
+        ((path.GetPathType() & PATHFIND_NOT_USING_PATH) && !bot.IsWithinLOSInMap(&target)))
+        return false;
+
+    bot.SetWalk(false);
+    bot.GetMotionMaster()->MovePoint(WandererRescuePoint, end.x, end.y, end.z);
+    return true;
+}
+}
+
+void NPCBots::UpdateWandererPlayerRescue(uint32 diff)
+{
+    static uint32 nextScan = 0;
+    if (nextScan > diff)
+    {
+        nextScan -= diff;
+        return;
+    }
+    nextScan = 750;
+
+    RescueOrders.clear();
+    if (!BotCfg::IsNpcBotModEnabled() || !BotDataMgr::AllBotsLoaded() ||
+        !BotCfg::GetHealingSettings().playerAid ||
+        !sConfigMgr->GetBoolDefault("NpcBot.Wanderer.PlayerAid.RescueEnable", true))
+    {
+        RescueRequests.clear();
+        return;
+    }
+
+    auto const now = std::chrono::steady_clock::now();
+    float const range = NPCBots::Healing::FiniteClamp(
+        sConfigMgr->GetFloatDefault("NpcBot.Wanderer.PlayerAid.RescueRange", 240.f), 240.f, 40.f, 400.f);
+    std::unordered_set<ObjectGuid> active;
+    std::vector<std::pair<Player*, WorldObject*>> waiting;
+    for (auto const& [_, session] : sWorld->GetAllSessions())
+    {
+        Player* player = session ? session->GetPlayer() : nullptr;
+        WorldObject* target = player ? GetWandererRescueTarget(*player) : nullptr;
+        if (!target)
+            continue;
+
+        ObjectGuid const guid = player->GetGUID();
+        active.insert(guid);
+        WandererRescue& rescue = RescueRequests[guid];
+        if (player->IsResurrectRequested())
+        {
+            rescue.offered = true;
+            rescue.responder.Clear();
+        }
+
+        if (rescue.offered)
+            continue;
+
+        std::erase_if(rescue.retryAfter, [now](auto const& entry) { return entry.second <= now; });
+        if (!rescue.responder.IsEmpty())
+        {
+            Creature* bot = target->GetMap()->GetCreature(rescue.responder);
+            if (bot && CanKeepRescueAssignment(*bot, *player, *target) && bot->GetExactDist(target) <= range + 25.f)
+            {
+                if (bot->GetExactDist(rescue.lastPosition) > 1.f)
+                {
+                    rescue.lastPosition.Relocate(bot);
+                    rescue.lastProgress = now;
+                }
+                if (now - rescue.lastProgress < RescueStallTimeout && now - rescue.assignedAt < RescueAttemptTimeout &&
+                    StartRescueApproach(*bot, *target))
+                {
+                    RescueOrders.emplace(rescue.responder, guid);
+                    continue;
+                }
+            }
+
+            if (bot && bot->IsAlive())
+                StopRescueApproach(*bot);
+            rescue.retryAfter[rescue.responder] = now + RescueRetryDelay;
+            rescue.responder.Clear();
+        }
+        waiting.emplace_back(player, target);
+    }
+
+    std::erase_if(RescueRequests, [&](auto const& entry) { return !active.contains(entry.first); });
+
+    for (auto const& [player, target] : waiting)
+    {
+        auto& rescue = RescueRequests.at(player->GetGUID());
+        std::vector<std::pair<float, Creature const*>> candidates;
+        for (Creature const* bot : BotDataMgr::GetExistingNPCBots())
+        {
+            if (bot->FindMap() != target->FindMap() || RescueOrders.contains(bot->GetGUID()) ||
+                rescue.retryAfter.contains(bot->GetGUID()) || !CanKeepRescueAssignment(*bot, *player, *target) ||
+                bot->HasUnitState(UNIT_STATE_CASTING | UNIT_STATE_NOT_MOVE) || bot->IsFlying())
+                continue;
+
+            float const distance = bot->GetExactDist(target);
+            if (distance > range)
+                continue;
+            bot_ai const* ai = bot->GetBotAI();
+            uint32 const base = WandererResurrectionSpell(ai->GetBotClass());
+            if (base && ai->HasSpell(base) && ai->IsSpellReady(base, ai->GetLastDiff(), false) &&
+                bot->GetPowerPct(POWER_MANA) >= 10)
+                candidates.emplace_back(distance, bot);
+        }
+
+        std::ranges::sort(candidates, [](auto const& left, auto const& right)
+        {
+            return std::tuple(left.first, left.second->GetGUID()) < std::tuple(right.first, right.second->GetGUID());
+        });
+
+        for (auto const& [_, candidate] : candidates | std::views::take(3))
+        {
+            Creature& bot = *const_cast<Creature*>(candidate);
+            if (!StartRescueApproach(bot, *target))
+            {
+                rescue.retryAfter[bot.GetGUID()] = now + RescueRetryDelay;
+                continue;
+            }
+
+            rescue.responder = bot.GetGUID();
+            rescue.lastPosition.Relocate(&bot);
+            rescue.assignedAt = rescue.lastProgress = now;
+            RescueOrders.emplace(rescue.responder, player->GetGUID());
+            player->GetSession()->SendNotification("%s is coming to resurrect you.", bot.GetName().c_str());
+            break;
+        }
+    }
+}
+
 bool bot_ai::CanEvaluateHealTarget(Unit const* target) const
 {
     if (!target || !me->IsInWorld() || !target->IsInWorld() || target->FindMap() != me->FindMap() ||
@@ -1297,8 +1537,10 @@ bool bot_ai::CanEvaluateHealTarget(Unit const* target) const
         if ((target->IsPlayer() && !cfg.playerAid) ||
             (!cfg.allowStealthedAid && (me->HasStealthAura() || me->HasInvisibilityAura())))
             return false;
-        if (target->IsPlayer() && !me->IsWithinDistInMap(target, cfg.aidRange))
-            return false;
+        if (Player const* player = target->ToPlayer())
+            if (!me->IsWithinDistInMap(player, cfg.aidRange) ||
+                (IsWorldAidWanderer(*me, *this) && !IsSameAidFaction(*me, *player)))
+                return false;
         if (Player const* player = target->GetAffectingPlayer(); player && player->duel && !cfg.allowDuelAid)
             return false;
     }
@@ -1310,6 +1552,7 @@ bool bot_ai::TryHealCandidates(std::vector<Unit*> const& targets, uint32 diff)
     ++_healDecisions;
     std::unordered_set<ObjectGuid> seen;
     seen.reserve(targets.size());
+    bool const worldWanderer = IsWorldAidWanderer(*me, *this);
     for (Unit* target : targets)
     {
         if (!CanEvaluateHealTarget(target) || target->IsFullHealth() || GetHealthPCT(target) > GetHealHpPctThreshold())
@@ -1325,7 +1568,7 @@ bool bot_ai::TryHealCandidates(std::vector<Unit*> const& targets, uint32 diff)
         auto const [tier, score] = NPCBots::Healing::Priority(GetHealthPCT(target), !IAmFree() && target == master,
             target->IsPlayer(), IsPointedHealTarget(target), IsTank(target), target->IsPet() || target->IsNPCBotPet(),
             target->IsInCombat() && !target->getAttackers().empty());
-        _healCandidates.push_back({guid, {tier, score}});
+        _healCandidates.push_back({guid, {tier, score + (worldWanderer && target->IsPlayer() ? 10 : 0)}});
     }
     _healCandidatesSeen += _healCandidates.size();
     std::ranges::sort(_healCandidates, [](auto const& a, auto const& b) {
@@ -1337,7 +1580,7 @@ bool bot_ai::TryHealCandidates(std::vector<Unit*> const& targets, uint32 diff)
         Unit* target = ObjectAccessor::GetUnit(*me, guid);
         if (!CanEvaluateHealTarget(target))
             continue;
-        bool const urgentPlayer = !IAmFree() && HasRole(BOT_ROLE_HEAL) && target->IsPlayer() &&
+        bool const urgentPlayer = (worldWanderer || (!IAmFree() && HasRole(BOT_ROLE_HEAL))) && target->IsPlayer() &&
             GetHealthPCT(target) <= (target == master ? BotCfg::GetHealingSettings().ownerEmergencyPct : BotCfg::GetHealingSettings().groupEmergencyPct);
         if ((Feasting() || (me->IsMounted() && !IsWanderer())) && !urgentPlayer)
             continue;
@@ -1366,7 +1609,8 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
 {
     if (GC_Timer > diff || IsCasting() || HasBotCommandState(BOT_COMMAND_NO_CAST | BOT_COMMAND_INACTION))
         return;
-    if ((Feasting() || (me->IsMounted() && !IsWanderer())) && (IAmFree() || !HasRole(BOT_ROLE_HEAL)))
+    bool const worldWanderer = IsWorldAidWanderer(*me, *this);
+    if ((Feasting() || (me->IsMounted() && !IsWanderer())) && !worldWanderer && (IAmFree() || !HasRole(BOT_ROLE_HEAL)))
         return;
     if (!IAmFree() && (!master || !master->IsInWorld() || master->FindMap() != me->FindMap()))
         return;
@@ -1375,7 +1619,8 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
     if (_healScanTimer && !emergency)
         return;
     NPCBots::Healing::DecisionScope decisionScope(cfg.diagnostics ? &_healingMetrics : nullptr);
-    _healScanTimer = (me->IsInCombat() ? cfg.combatScanMs : cfg.idleScanMs) + me->GetGUID().GetCounter() % 97;
+    uint32 const idleScan = worldWanderer ? std::min(cfg.idleScanMs, 600u) : cfg.idleScanMs;
+    _healScanTimer = (me->IsInCombat() ? cfg.combatScanMs : idleScan) + me->GetGUID().GetCounter() % 97;
 
     std::vector<Unit*> heals, buffs;
     auto collect = [&](Unit* unit) {
@@ -1388,7 +1633,7 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
     };
     if (IAmFree())
     {
-        if (CanEvaluateHealTarget(me) && GetHealthPCT(me) < 70 && HealTarget(me, diff))
+        if (CanEvaluateHealTarget(me) && GetHealthPCT(me) < (worldWanderer ? 35 : 70) && HealTarget(me, diff))
             return;
         if (me->GetFaction() == FACTION_TEMPLATE_NEUTRAL_HOSTILE || me->HasAura(BERSERK) ||
             (!cfg.allowStealthedAid && (me->HasStealthAura() || me->HasInvisibilityAura())))
@@ -1453,7 +1698,8 @@ void bot_ai::BuffAndHealGroup(uint32 diff)
 // no need to check global cooldown
 void bot_ai::ResurrectGroup(uint32 spell_id)
 {
-    if (_cityRaidAI) return; // Preserve the event's 20s/30s wave cadence.
+    if (_cityRaidAI || IsWorldAidWanderer(*me, *this))
+        return; // Open-world wanderers use the dispatcher; city raids own their waves.
     if (!spell_id || (!IsWanderer() && Rand() > 10) || me->GetMap()->IsBattlegroundOrArena())
         return;
 
@@ -18582,6 +18828,59 @@ bool bot_ai::GlobalUpdate(uint32 diff)
 
     if (CheckHazardAvoidance(diff))
         return false;
+
+    if (uint32 const rezBase = WandererResurrectionSpell(_botclass); rezBase && IsWorldAidWanderer(*me, *this))
+    {
+        if (auto order = RescueOrders.find(me->GetGUID()); order != RescueOrders.end())
+        {
+            Player* player = me->GetMap()->GetPlayer(order->second);
+            WorldObject* target = player ? NPCBots::GetWandererRescueTarget(*player) : nullptr;
+            if (target && !player->IsResurrectRequested() && CanKeepRescueAssignment(*me, *player, *target))
+            {
+                if (Spell const* cast = me->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+                    cast && cast->GetSpellInfo()->GetFirstRankSpell()->Id == rezBase &&
+                    target->IsCorpse() && !cast->m_targets.GetCorpseTargetGUID())
+                    me->InterruptSpell(CURRENT_GENERIC_SPELL);
+
+                uint32 const spellId = GetSpell(rezBase);
+                SpellInfo const* spell = sSpellMgr->GetSpellInfo(spellId);
+                if (spell && !IsCasting() && GC_Timer <= diff && CanDoNonCombatActions() &&
+                    IsSpellReady(rezBase, diff, false) && !JumpingOrFalling() && !CCed(me, true) &&
+                    CanCastResurrectionHere(*me, *target, std::min(RescueCastRange, spell->GetMaxRange(true, me))))
+                {
+                    StopRescueApproach(*me);
+                    if (me->IsMounted())
+                        DismountBot();
+                    me->BotStopMovement();
+
+                    _nonCombatActionsTimer = 500;
+                    if (target->IsPlayer())
+                        doCast(player, spellId);
+                    else if (spell->CheckShapeshift(me->GetShapeshiftForm()) == SPELL_CAST_OK || removeShapeshiftForm())
+                    {
+                        me->SetStandState(UNIT_STAND_STATE_STAND);
+                        SpellCastTargets targets;
+                        targets.SetCorpseTarget(target->ToCorpse());
+                        me->CastSpell(std::move(targets), spellId);
+                    }
+                }
+                return false;
+            }
+        }
+
+        StopRescueApproach(*me);
+
+        if (Spell const* cast = me->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+            cast && cast->GetSpellInfo()->GetFirstRankSpell()->Id == rezBase)
+            me->InterruptSpell(CURRENT_GENERIC_SPELL);
+
+        if (BotCfg::GetHealingSettings().playerAid && !IsCasting() && GC_Timer <= diff && !CCed(me, true))
+        {
+            BuffAndHealGroup(diff);
+            if (IsCasting() || GC_Timer > diff)
+                return false;
+        }
+    }
 
     //if (me->HasInvisibilityAura() || me->HasStealthAura())
     //    return false;

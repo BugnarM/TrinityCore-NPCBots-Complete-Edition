@@ -5217,6 +5217,10 @@ NpcBot.Wanderer.PlayerAid.Enable = 1
 NpcBot.Wanderer.PlayerAid.Range = 40.0
 NpcBot.Wanderer.PlayerAid.AllowDuel = 0
 NpcBot.Wanderer.PlayerAid.AllowWhileStealthed = 0
+# Dispatch a same-faction wanderer to dead players in the open world.
+# RescueRange is the maximum search distance in yards from the body.
+NpcBot.Wanderer.PlayerAid.RescueEnable = 1
+NpcBot.Wanderer.PlayerAid.RescueRange = 400.0
 NpcBot.Wanderer.BonesLifetimeSeconds = 300
 NpcBot.Wanderer.ReviveDelayMs = 180000
 Companion.Stone.CooldownSeconds = 18000
