@@ -5224,3 +5224,9 @@ Companion.Heirlooms.Enable = 1
 # Event-only boundaries in yards; focus and boss targets cannot bypass them.
 CityRaid.DefenderLeashRange = 65.0
 CityRaid.BossLeashRange = 90.0
+
+# Capital enchanter. All monetary values are in copper.
+CapitalEnchanter.Enable = 1
+CapitalEnchanter.LaborAt450Copper = 50000
+CapitalEnchanter.MaterialFallbackCopper = 10000
+CapitalEnchanter.PriceRefreshSeconds = 300

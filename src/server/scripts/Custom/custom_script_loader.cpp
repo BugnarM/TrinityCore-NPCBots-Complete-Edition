@@ -1672,8 +1672,11 @@ public:
     }
 };
 
+void AddCapitalEnchanterScripts();
+
 void AddCustomScripts()
 {
+    AddCapitalEnchanterScripts();
     new boss_dark_knight_nemesis_script();
     new item_companion_stone();
     new item_junk_scrapper();

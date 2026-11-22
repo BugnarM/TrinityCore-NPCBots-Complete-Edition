@@ -277,5 +277,10 @@
     "file": "2026_11_20_09_junk_scrapper_item.sql",
     "sha256": "30a2f326fe5b28ad479837438ae7250ddb8a1146c42ed74382521cd01ef1c722",
     "after": ["2026_11_20_08_undercity_war_atmosphere.sql"]
+  },
+  {
+    "file": "2026_11_22_00_capital_enchanter.sql",
+    "sha256": "e83883b96a07900d23b9ee2f95d7a5ccbd1f7a0e202a9be9697bb830dad9ed1a",
+    "after": []
   }
 ]
