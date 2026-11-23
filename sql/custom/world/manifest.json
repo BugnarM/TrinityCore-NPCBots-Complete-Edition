@@ -241,42 +241,58 @@
   {
     "file": "2026_11_20_02_undercity_battle_setup.sql",
     "sha256": "2197e11711137ce8174d0a3512b665b3f39ae6fa6aeb81e3bd387bfb2b4a3829",
-    "after": ["2026_11_20_01_undercity_escort_starts.sql"]
+    "after": [
+      "2026_11_20_01_undercity_escort_starts.sql"
+    ]
   },
   {
     "file": "2026_11_20_03_undercity_quest_english.sql",
     "sha256": "b592aab9811813cc71188ada8f4c794b16b1e3cce4986224817c9db20fde73f1",
-    "after": ["2026_11_20_00_undercity_battle_text.sql"]
+    "after": [
+      "2026_11_20_00_undercity_battle_text.sql"
+    ]
   },
   {
     "file": "2026_11_20_04_undercity_horde_corridor_spawns.sql",
     "sha256": "137bf89efc97022a642851b09df97643df411b1cda7ee70e08fe0bd35742134d",
-    "after": ["2026_11_20_02_undercity_battle_setup.sql"]
+    "after": [
+      "2026_11_20_02_undercity_battle_setup.sql"
+    ]
   },
   {
     "file": "2026_11_20_05_undercity_active_quest_phase.sql",
     "sha256": "d5c5304795c657e4495b699f1971712c9d9b34944b2ab4e523f0efc5b6b3825b",
-    "after": ["2026_11_20_02_undercity_battle_setup.sql"]
+    "after": [
+      "2026_11_20_02_undercity_battle_setup.sql"
+    ]
   },
   {
     "file": "2026_11_20_06_undercity_lift_visibility.sql",
     "sha256": "b8101c361f712785488d29507c4e5a68b7bbc2ccb7f35788901c8f2028775b0b",
-    "after": ["2026_11_20_02_undercity_battle_setup.sql"]
+    "after": [
+      "2026_11_20_02_undercity_battle_setup.sql"
+    ]
   },
   {
     "file": "2026_11_20_07_undercity_encounter_completion.sql",
     "sha256": "848cf1cd66d9d3847cfc9b1ef6cd09457edc11b9048c675bf526f32666f84878",
-    "after": ["2026_11_20_06_undercity_lift_visibility.sql"]
+    "after": [
+      "2026_11_20_06_undercity_lift_visibility.sql"
+    ]
   },
   {
     "file": "2026_11_20_08_undercity_war_atmosphere.sql",
     "sha256": "b9345886e7c614c6ab777aabe400787e3f39d7b77ad8c174c402c2ce9de78679",
-    "after": ["2026_11_20_07_undercity_encounter_completion.sql"]
+    "after": [
+      "2026_11_20_07_undercity_encounter_completion.sql"
+    ]
   },
   {
     "file": "2026_11_20_09_junk_scrapper_item.sql",
     "sha256": "30a2f326fe5b28ad479837438ae7250ddb8a1146c42ed74382521cd01ef1c722",
-    "after": ["2026_11_20_08_undercity_war_atmosphere.sql"]
+    "after": [
+      "2026_11_20_08_undercity_war_atmosphere.sql"
+    ]
   },
   {
     "file": "2026_11_22_00_capital_enchanter.sql",
@@ -286,6 +302,15 @@
   {
     "file": "2026_11_22_01_capital_enchanter_horde_positions.sql",
     "sha256": "9d2d52c3a3ccf689973a60a61073fe139833335c8cdd7c9017f70b903a65e42c",
-    "after": ["2026_11_22_00_capital_enchanter.sql"]
+    "after": [
+      "2026_11_22_00_capital_enchanter.sql"
+    ]
+  },
+  {
+    "file": "2026_11_23_00_quest_4292_larkorwi_summon_fix.sql",
+    "sha256": "870304e50c3112ba055fa990a09f9046297c2cbb38537222da26c80d02e75b20",
+    "after": [
+      "2026_11_22_01_capital_enchanter_horde_positions.sql"
+    ]
   }
 ]
