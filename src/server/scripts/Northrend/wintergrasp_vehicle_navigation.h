@@ -10,10 +10,12 @@
 namespace WintergraspBotWar::Navigation
 {
 // PathGenerator flags: reject shortcuts, absent tiles, off-mesh endpoints and
-// forced destinations. A genuine navigable prefix may be followed and replanned.
+// forced destinations. Allow FARFROMPOLY_END (0x80) so navigable bridge/ramp
+// and gate approaches follow genuine navmesh prefixes and replan smoothly.
 constexpr bool VerifiedPath(std::uint32_t type, std::size_t points)
 {
-    return (type == 1 || type == 4) && points >= 2;
+    std::uint32_t const base = type & ~0x80u;
+    return (base == 1 || base == 4) && points >= 2;
 }
 
 // End-height hints do not invalidate a real navmesh prefix. Ground spawns
@@ -65,7 +67,9 @@ inline Detour RecoveryDetour(std::uint32_t attempt)
 {
     constexpr float angles[] = {0.f, 0.7853982f, -0.7853982f, 1.5707963f,
         -1.5707963f, 2.3561945f, -2.3561945f, 3.1415927f};
-    return {angles[attempt % 8], attempt % 16 < 8 ? 64.f : 24.f};
+    std::uint32_t const ring = attempt % 24;
+    float const distance = ring < 8 ? 64.f : (ring < 16 ? 24.f : 12.f);
+    return {angles[attempt % 8], distance};
 }
 }
 

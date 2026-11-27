@@ -1,6 +1,7 @@
 // Standalone regression test, no running realm/database required:
 // c++ -std=c++20 -O2 contrib/tests/wintergrasp_bot_war.cpp -o /tmp/wg-test && /tmp/wg-test
 #include "../../src/server/scripts/Northrend/wintergrasp_bot_war.h"
+#include "../../src/server/scripts/Northrend/wintergrasp_vehicle_navigation.h"
 #include <array>
 #include <cstdlib>
 #include <iostream>
@@ -27,6 +28,15 @@ int main()
     Check(FactoryPhaseMask(true,false)==32&&FactoryPhaseMask(false,false)==16, "field factory phases differ from flag phase 1");
     Check(FactoryPhaseMask(true,true)==128&&FactoryPhaseMask(false,true)==64, "keep factory phases");
     Check(MaxConcurrentBuilders==2, "only two bots may fetch vehicles at once");
+    Check(BotRespawnDelayMs == 30000, "Wintergrasp BotWar must keep its isolated 30s respawn timer");
+    Check(WorkshopCaptureReserveSquads == 8, "workshop contest reserve updated");
+    Check(Navigation::VerifiedPath(1, 2) && Navigation::VerifiedPath(4, 2), "valid navmesh paths accepted");
+    Check(Navigation::VerifiedPath(1 | 0x80u, 2) && Navigation::VerifiedPath(4 | 0x80u, 2),
+        "FARFROMPOLY_END navmesh prefixes accepted for vehicle ramps and bridges");
+    Check(!Navigation::VerifiedPath(2, 2) && !Navigation::VerifiedPath(1 | 0x08u, 2) && !Navigation::VerifiedPath(1, 1),
+        "shortcuts, incomplete-start paths and single points remain rejected");
+    Check(Navigation::RecoveryDetour(0).Distance == 64.f && Navigation::RecoveryDetour(8).Distance == 24.f
+        && Navigation::RecoveryDetour(16).Distance == 12.f, "recovery detour rings cover 64m, 24m and 12m");
     Check(BotBudget(120, 120, 0) == 120, "empty realm must fill to 120");
     Check(BotBudget(120, 120, 37) == 83, "humans must displace bots");
     Check(BotBudget(120, 120, 120) == 0, "full faction must have no bots");

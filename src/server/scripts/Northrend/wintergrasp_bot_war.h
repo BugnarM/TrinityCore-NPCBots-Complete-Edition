@@ -14,6 +14,10 @@ constexpr uint32_t RankCreditData = 80501;
 // five further kills to Lieutenant, matching BattlefieldWG::PromotePlayer.
 constexpr uint32_t RankForCredits(uint32_t credits) { return credits >= 10 ? 2 : credits >= 5 ? 1 : 0; }
 constexpr uint32_t MaxConcurrentBuilders = 2;
+// Wintergrasp BotWar uses its own isolated rapid respawn cadence instead of
+// the 5-minute open-world wanderer respawn timer.
+constexpr uint32_t BotRespawnDelayMs = 30000;
+constexpr uint32_t WorkshopCaptureReserveSquads = 8;
 constexpr uint32_t FactoryPhaseMask(bool alliance, bool keep)
 {
     return keep ? (alliance ? 128u : 64u) : (alliance ? 32u : 16u);

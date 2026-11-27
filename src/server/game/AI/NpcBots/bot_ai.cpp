@@ -4775,7 +4775,7 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
     }
     //Follow if...
     uint8 followdist = IAmFree() ? BotMgr::GetBotFollowDistMax() / 2 : master->GetBotMgr()->GetBotFollowDist();
-    if (IsWanderer() && me->GetMap()->GetEntry()->IsBattlegroundOrArena())
+    if (IsWanderer() && (me->GetMap()->GetEntry()->IsBattlegroundOrArena() || IsBattlefieldBot()))
         followdist += 30;
     float foldist = _getAttackDistance(float(followdist));
     if (!IAmFree() && IsRanged())
