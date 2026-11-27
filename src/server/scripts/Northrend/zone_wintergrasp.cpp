@@ -612,6 +612,40 @@ bool IsBotWarSoldier(Unit const* unit)
         || (unit->IsNPCBot() && unit->ToCreature()->GetBotAI()->IsBattlefieldBot()));
 }
 
+bool IsBotWarPvPEnemy(Unit const* unit, Creature const* seeker, Unit const* protectedVehicle = nullptr)
+{
+    if (!unit || !unit->IsAlive() || !seeker->IsValidAttackTarget(unit))
+        return false;
+    if (unit->ToPlayer() || unit->IsNPCBot() || IsBotWarSoldier(unit) || unit->IsVehicle()
+        || unit->GetCharmerOrOwnerPlayerOrPlayerItself()
+        || unit->GetEntry() == BATTLEFIELD_WG_NPC_GUARD_A || unit->GetEntry() == BATTLEFIELD_WG_NPC_GUARD_H
+        || unit->GetEntry() == NPC_WINTERGRASP_TOWER_CANNON)
+        return true;
+    // Ignore ambient Wintergrasp wildlife/elementals unless they are actively attacking this vehicle.
+    return unit->GetVictim() && (unit->GetVictim() == seeker || unit->GetVictim() == protectedVehicle);
+}
+
+Unit* SelectBotWarPvPTarget(Creature* seeker, float range, Unit const* protectedVehicle = nullptr, float minRange = 0.f)
+{
+    std::list<Unit*> units;
+    Trinity::AnyUnfriendlyUnitInObjectRangeCheck check(seeker, seeker, range);
+    Trinity::UnitListSearcher<Trinity::AnyUnfriendlyUnitInObjectRangeCheck> searcher(seeker, units, check);
+    Cell::VisitAllObjects(seeker, searcher, range);
+    Unit* best = nullptr;
+    float bestDist = range + 1.f;
+    for (Unit* u : units)
+    {
+        if (!IsBotWarPvPEnemy(u, seeker, protectedVehicle))
+            continue;
+        float dist = seeker->GetExactDist(u);
+        if (dist < minRange || dist >= bestDist || !seeker->IsWithinLOSInMap(u))
+            continue;
+        best = u;
+        bestDist = dist;
+    }
+    return best;
+}
+
 bool HasBotWarHumanPassenger(Creature* vehicle)
 {
     Vehicle* kit = vehicle->GetVehicleKit();
@@ -787,11 +821,11 @@ struct BotWaypoint
 // treated as closed: unloaded buildings must never let a bot skip the siege.
 std::vector<BotWaypoint> const BotRoutes[LaneCount] =
 {
-    { // Center
+    { // Center: pass through central bridge, outer gate, inner wall, vault gate.
         { {4452.86f, 2808.87f, 402.973f, 0.f} },
         { {4550.00f, 2840.00f, 389.182f, 0.f} },
-        { {4700.00f, 2830.00f, 383.395f, 0.f} },
-        { {4750.00f, 2840.00f, 361.242f, 0.f} },
+        { {4650.00f, 2848.00f, 391.230f, 0.f} },
+        { {4816.00f, 2875.00f, 370.184f, 0.f} },
         { {4920.00f, 2840.00f, 381.534f, 0.f} },
         { {5050.00f, 2840.00f, 393.468f, 0.f} },
         { {5135.00f, 2841.00f, 408.163f, 0.f}, 190375 },
@@ -804,9 +838,9 @@ std::vector<BotWaypoint> const BotRoutes[LaneCount] =
     },
     { // West: pass through Westpark Workshop bridge, Broken Temple, outer wall, inner wall, vault gate.
         { {4390.78f, 3304.09f, 372.482f, 0.f} },
-        { {4585.00f, 3450.00f, 360.942f, 0.f} },
-        { {4738.93f, 3501.33f, 352.215f, 0.f} },
-        { {4850.00f, 3420.00f, 356.788f, 0.f} },
+        { {4565.33f, 3306.67f, 366.081f, 0.f} },
+        { {4680.00f, 3315.00f, 374.969f, 0.f} },
+        { {4770.00f, 3304.00f, 366.620f, 0.f} },
         { {4948.524f, 3342.338f, 377.051f, 0.f}, 0, AREA_THE_BROKEN_TEMPLATE },
         { {5020.53f, 3246.13f, 365.567f, 0.f} },
         { {5100.00f, 3100.00f, 367.683f, 0.f} },
@@ -822,9 +856,10 @@ std::vector<BotWaypoint> const BotRoutes[LaneCount] =
     },
     { // East: pass through Eastpark Workshop bridge, Sunken Ring, outer wall, inner wall, vault gate.
         { {4398.08f, 2356.50f, 376.355f, 0.f} },
-        { {4550.00f, 2250.00f, 358.755f, 0.f} },
-        { {4700.00f, 2149.87f, 383.288f, 0.f} },
-        { {4848.10f, 2296.92f, 356.710f, 0.f} },
+        { {4522.67f, 2346.67f, 371.022f, 0.f} },
+        { {4630.00f, 2368.00f, 377.047f, 0.f} },
+        { {4736.00f, 2410.00f, 359.590f, 0.f} },
+        { {4880.00f, 2460.00f, 321.020f, 0.f} },
         { {4949.344f, 2432.586f, 320.256f, 0.f}, 0, AREA_THE_SUNKEN_RING },
         { {5030.00f, 2550.00f, 349.676f, 0.f} },
         { {5110.00f, 2680.00f, 373.993f, 0.f} },
@@ -839,28 +874,60 @@ std::vector<BotWaypoint> const BotRoutes[LaneCount] =
         { {5440.38f, 2840.49f, 420.589f, 0.f} }
     },
     { // Counterattacks start outside the keep, avoiding its closed gate.
-        { {5100.f, 2841.f, 390.f, 0.f} }, { {4920.f, 2840.f, 375.f, 0.f} },
-        { {4700.f, 2830.f, 385.f, 0.f} }, { {4430.f, 2822.f, 405.f, 0.f}, 190357 }
+        { {5100.f, 2841.f, 401.25f, 0.f} }, { {4920.f, 2840.f, 381.53f, 0.f} },
+        { {4816.f, 2875.f, 370.18f, 0.f} }, { {4650.f, 2848.f, 391.23f, 0.f} },
+        { {4550.f, 2840.f, 389.18f, 0.f} }, { {4430.f, 2822.f, 407.18f, 0.f}, 190357 }
     },
     {
-        { {5100.f, 3100.f, 385.f, 0.f} }, { {4948.524f, 3342.338f, 376.875f, 0.f} },
-        { {4740.f, 3500.f, 390.f, 0.f} }, { {4585.f, 3623.f, 396.f, 0.f}, 190356 }
+        { {5100.f, 3100.f, 367.683f, 0.f} }, { {4948.524f, 3342.338f, 377.051f, 0.f} },
+        { {4770.f, 3304.f, 366.620f, 0.f} }, { {4680.f, 3315.f, 374.969f, 0.f} },
+        { {4565.33f, 3306.67f, 366.081f, 0.f} }, { {4585.f, 3623.f, 397.236f, 0.f}, 190356 }
     },
     {
-        { {5110.f, 2680.f, 385.f, 0.f} }, { {4949.344f, 2432.586f, 320.177f, 0.f} },
-        { {4700.f, 2150.f, 400.f, 0.f} }, { {4490.f, 1944.f, 435.f, 0.f}, 190358 }
+        { {5110.f, 2680.f, 373.993f, 0.f} }, { {4949.344f, 2432.586f, 320.256f, 0.f} },
+        { {4880.f, 2460.f, 321.020f, 0.f} }, { {4736.f, 2410.f, 359.590f, 0.f} },
+        { {4630.f, 2368.f, 377.047f, 0.f} }, { {4522.67f, 2346.67f, 371.022f, 0.f} },
+        { {4490.f, 1944.f, 435.806f, 0.f}, 190358 }
     },
     { { {5305.00f, 2841.00f, 409.80f, 3.14f} } }, // KeepCenter (inner wall defense)
     { { {5325.00f, 2880.00f, 409.80f, 3.14f} } }, // KeepWest
     { { {5325.00f, 2800.00f, 409.80f, 3.14f} } }, // KeepEast
-    { { {4948.524f, 3342.338f, 376.875f, 0.f} } }, // WorkshopWest (relocated to actual flag below)
-    { { {4949.344f, 2432.586f, 320.177f, 0.f} } }, // WorkshopEast
+    { { {4948.524f, 3342.338f, 377.051f, 0.f} } }, // WorkshopWest (relocated to actual flag below)
+    { // WorkshopEast: skirt Sunken Ring water via dry north rim.
+        { {4880.00f, 2460.00f, 321.020f, 0.f} }, { {4949.344f, 2432.586f, 320.256f, 0.f} }
+    },
     { { {4452.860f, 2808.870f, 402.604f, 0.f} } }, // GuardSouth, native standing-guard position
     { { {4585.f, 3623.f, 396.f, 0.f} } },          // GuardSouthWest, tower approach
     { { {4494.580f, 1943.760f, 435.627f, 0.f} } }, // GuardSouthEast, native standing-guard position
-    { { {4390.78f, 3304.09f, 372.43f, 0.f} } }, // WorkshopSouthWest
-    { { {4398.08f, 2356.50f, 376.19f, 0.f} } }  // WorkshopSouthEast
+    { // WorkshopSouthWest: cross Westpark bridge instead of central lake.
+        { {5100.00f, 3100.00f, 367.683f, 0.f} }, { {4948.524f, 3342.338f, 377.051f, 0.f} },
+        { {4770.00f, 3304.00f, 366.620f, 0.f} }, { {4680.00f, 3315.00f, 374.969f, 0.f} },
+        { {4565.33f, 3306.67f, 366.081f, 0.f} }, { {4390.78f, 3304.09f, 372.482f, 0.f} }
+    },
+    { // WorkshopSouthEast: cross Eastpark bridge instead of central lake.
+        { {5110.00f, 2680.00f, 373.993f, 0.f} }, { {4949.344f, 2432.586f, 320.256f, 0.f} },
+        { {4880.00f, 2460.00f, 321.020f, 0.f} }, { {4736.00f, 2410.00f, 359.590f, 0.f} },
+        { {4630.00f, 2368.00f, 377.047f, 0.f} }, { {4522.67f, 2346.67f, 371.022f, 0.f} },
+        { {4398.08f, 2356.50f, 376.355f, 0.f} }
+    }
 };
+
+uint32 NearestRoutePoint(Position const& pos, Lane lane)
+{
+    uint32 best = 0;
+    float bestDist = std::numeric_limits<float>::max();
+    auto const& route = BotRoutes[lane];
+    for (uint32 i = 0; i < route.size(); ++i)
+    {
+        float d = pos.GetExactDistSq(&route[i].Pos);
+        if (d < bestDist)
+        {
+            bestDist = d;
+            best = i;
+        }
+    }
+    return best;
+}
 
 constexpr uint8 NoBuildWorkshop = 255;
 
@@ -872,12 +939,12 @@ struct BotWorkshopSite
     Position Fallback;
 };
 std::array<BotWorkshopSite, 6> const BotWorkshopSites = {{
-    { BATTLEFIELD_WG_WORKSHOP_NW, AREA_THE_BROKEN_TEMPLATE, WorkshopWest, {4948.524f, 3342.338f, 376.875f, 0.f} },
-    { BATTLEFIELD_WG_WORKSHOP_NE, AREA_THE_SUNKEN_RING, WorkshopEast, {4949.344f, 2432.586f, 320.177f, 0.f} },
-    { BATTLEFIELD_WG_WORKSHOP_SW, AREA_WESTPARK_WORKSHOP, WorkshopSouthWest, {4390.78f, 3304.09f, 372.43f, 0.f} },
-    { BATTLEFIELD_WG_WORKSHOP_SE, AREA_EASTPARK_WORKSHOP, WorkshopSouthEast, {4398.08f, 2356.50f, 376.19f, 0.f} },
-    { BATTLEFIELD_WG_WORKSHOP_KEEP_WEST, 0, KeepWest, {5392.91f, 2975.26f, 415.223f, 0.f} },
-    { BATTLEFIELD_WG_WORKSHOP_KEEP_EAST, 0, KeepEast, {5391.61f, 2707.72f, 415.051f, 0.f} }
+    { BATTLEFIELD_WG_WORKSHOP_NW, AREA_THE_BROKEN_TEMPLATE, WorkshopWest, {4944.00f, 3362.00f, 376.900f, 5.40f} },
+    { BATTLEFIELD_WG_WORKSHOP_NE, AREA_THE_SUNKEN_RING, WorkshopEast, {4958.00f, 2405.00f, 320.500f, 0.70f} },
+    { BATTLEFIELD_WG_WORKSHOP_SW, AREA_WESTPARK_WORKSHOP, WorkshopSouthWest, {4376.00f, 3306.00f, 372.400f, 0.20f} },
+    { BATTLEFIELD_WG_WORKSHOP_SE, AREA_EASTPARK_WORKSHOP, WorkshopSouthEast, {4378.00f, 2355.00f, 376.300f, 6.00f} },
+    { BATTLEFIELD_WG_WORKSHOP_KEEP_WEST, 0, KeepWest, {5389.50f, 2962.00f, 409.700f, 4.71f} },
+    { BATTLEFIELD_WG_WORKSHOP_KEEP_EAST, 0, KeepEast, {5388.00f, 2727.00f, 409.500f, 1.57f} }
 }};
 
 uint32 WorkshopArea(Lane lane)
@@ -1150,6 +1217,15 @@ private:
         // Check dynamic gameobjects (fortress walls/gates) while retaining valid navmesh paths.
         if (!verified || !Navigation::PathClear(path.GetPath(), BodyRadius(vehicle), vehicle->GetCollisionHeight(), CollisionCheck(vehicle)))
             return false;
+        // Reject paths that detour through deep lake water when the unit is not already submerged.
+        bool const startInDeepWater = (vehicle->GetMap()->GetLiquidStatus(vehicle->GetPhaseMask(),
+            vehicle->GetPositionX(), vehicle->GetPositionY(), vehicle->GetPositionZ(),
+            {}, nullptr, vehicle->GetCollisionHeight()) & (LIQUID_MAP_IN_WATER | LIQUID_MAP_UNDER_WATER)) != 0;
+        if (!startInDeepWater)
+            for (G3D::Vector3 const& pt : path.GetPath())
+                if (vehicle->GetMap()->GetLiquidStatus(vehicle->GetPhaseMask(), pt.x, pt.y, pt.z,
+                    {}, nullptr, vehicle->GetCollisionHeight()) & (LIQUID_MAP_IN_WATER | LIQUID_MAP_UNDER_WATER))
+                    return false;
         auto const& end = path.GetPath().back();
         if (std::hypot(end.x - vehicle->GetPositionX(), end.y - vehicle->GetPositionY()) < 1.5f)
             return false;
@@ -1268,10 +1344,17 @@ struct BotRouteMovement
 
     void RedirectAssault(Creature* bot, BattlefieldWG* wg, Lane lane)
     {
-        if (!IsAssault(Route) || !IsAssault(lane) || Route == lane || bot->GetPositionX() < 4750.f)
+        if (!IsAssault(Route) || !IsAssault(lane) || Route == lane || bot->GetPositionX() < 5035.f)
             return;
         Route = lane;
-        Point = 0;
+        Point = 0; // Never backtrack across the central lake toward rear workshops.
+        if (lane == West || lane == East)
+            for (uint32 i = 0; i + 1 < BotRoutes[Route].size(); ++i)
+                if (BotRoutes[Route][i].CaptureArea)
+                {
+                    Point = i + 1;
+                    break;
+                }
         while (Point + 1 < BotRoutes[Route].size())
         {
             if (Blocked(wg) || MustCaptureWorkshop(wg, bot)) break;
@@ -1312,13 +1395,18 @@ struct BotRouteMovement
             // Counterattack / roaming defender squads push outside the fortress (exiting via Defender Portals)
             // instead of locking all 120 defenders behind the inner keep walls.
         }
-        if (uint32 area = IsWorkshop(Route) ? WorkshopArea(Route) : CaptureArea(bot))
+        uint32 area = CaptureArea(bot);
+        if (IsWorkshop(Route) && Point + 1 == BotRoutes[Route].size())
+            area = WorkshopArea(Route);
+        if (area)
             if (BattlefieldWG* wg = GetBotWarBattlefield())
                 if (GameObject* flag = wg->GetBotWarWorkshopFlagForArea(area))
                     pos = flag->GetPosition();
-        // Inside the fortress breaches (gates/walls), vehicles must stay on the doorway centerline
-        // instead of offsetting laterally into intact wall wings and pillars.
-        if (bot->IsVehicle() && IsAssault(Route) && Point + 1 < BotRoutes[Route].size() && pos.GetPositionX() >= 5120.f)
+        // On bridges and inside fortress breaches, vehicles must stay on the centerline
+        // instead of offsetting laterally off bridge decks or into wall wings and pillars.
+        bool onBridge = (pos.GetPositionX() >= 4520.f && pos.GetPositionX() <= 4780.f);
+        if (bot->IsVehicle() && (IsAssault(Route) || IsCounterAttack(Route)) && Point + 1 < BotRoutes[Route].size()
+            && (pos.GetPositionX() >= 5120.f || onBridge))
         {
             bot->UpdateAllowedPositionZ(pos.m_positionX, pos.m_positionY, pos.m_positionZ);
             return pos;
@@ -1508,7 +1596,7 @@ struct BotRouteMovement
                 return;
             }
 
-            if (Blocked(wg) || MustCaptureWorkshop(wg, bot) || Point + 1 >= BotRoutes[Route].size())
+            if (Blocked(wg) || (!bot->IsVehicle() && MustCaptureWorkshop(wg, bot)) || Point + 1 >= BotRoutes[Route].size())
             {
                 UpdateWander(bot, destination, diff);
                 return;
@@ -1840,11 +1928,14 @@ struct npc_wg_bot_vehicle : public ScriptedAI
                         break;
                     }
             }
+            // Do not waste shots on ambient wildlife/elementals while advancing; check PvP threats only.
             if (!target && (!isAssaultVehicle || !me->isMoving() || holdingSupportPosition || !isRangedVehicle))
-                target = me->SelectNearestTarget((!isRangedVehicle && isAssaultVehicle && me->isMoving()) ? 16.f : 48.f);
+                target = SelectBotWarPvPTarget(me, (!isRangedVehicle && isAssaultVehicle && me->isMoving()) ? 16.f : 48.f,
+                    me, me->GetEntry() == NPC_WINTERGRASP_DEMOLISHER ? 10.f : 0.f);
 
             bool allowTimedCast = !isAssaultVehicle || !me->isMoving() || holdingSupportPosition
                 || (target && target->IsVehicle() && me->IsWithinDistInMap(target, 38.f))
+                || (target && target->GetVictim() == me && me->IsWithinDistInMap(target, 28.f))
                 || me->HealthBelowPct(80);
             if (target && me->IsWithinLOSInMap(target))
             {
@@ -2473,7 +2564,11 @@ struct npc_wg_bot_soldier : public ScriptedAI
                 if (IsAssault(_route.Route) && IsAssault(_requestedLane))
                     _route.RedirectAssault(me, wg, _requestedLane);
                 else
-                    _route.Assign(me, _requestedLane, _route.Slot);
+                {
+                    uint32 startPoint = (IsWorkshop(_requestedLane) || IsCounterAttack(_requestedLane))
+                        ? NearestRoutePoint(me->GetPosition(), _requestedLane) : 0;
+                    _route.Assign(me, _requestedLane, _route.Slot, startPoint);
+                }
             }
             _requestedLane = LaneCount;
         }
@@ -2969,14 +3064,11 @@ struct npc_wg_bot_siege_turret : public ScriptedAI
             }
         }
 
-        if (Unit* target = engine->ToCreature()->SelectNearestTarget(50.f))
+        if (Unit* target = SelectBotWarPvPTarget(me, 52.f, engine, 10.f))
         {
-            if (me->IsWithinLOSInMap(target))
-            {
-                SpellCastResult result = me->CastSpell(target->GetPosition(), 57609, false);
-                _timer = CastRetryDelay(result == SPELL_CAST_OK, 2200);
-                return;
-            }
+            SpellCastResult result = me->CastSpell(target->GetPosition(), 57609, false);
+            _timer = CastRetryDelay(result == SPELL_CAST_OK, 2200);
+            return;
         }
         _timer = 500;
     }
@@ -3020,7 +3112,7 @@ struct npc_wg_tower_cannon : public ScriptedAI
                     && (!target || me->GetDistance(vehicle) < me->GetDistance(target)))
                     target = vehicle;
         }
-        Unit* victim = target ? target : me->SelectNearestTarget(55.f);
+        Unit* victim = target ? target : SelectBotWarPvPTarget(me, 55.f, me, 10.f);
         if (victim && me->IsWithinLOSInMap(victim))
         {
             me->SetFacingToObject(victim);
@@ -3569,6 +3661,8 @@ private:
             else if (lane == Center && route.size() > 5)
                 firstPoint = 5;
         }
+        else if (IsWorkshop(lane))
+            firstPoint = NearestRoutePoint(pos, lane);
         ai->SetData(RankCreditData, slot.KillCredits);
         ai->SetOrders(lane, index, escortVehicle, firstPoint);
     }
@@ -3616,11 +3710,14 @@ private:
                 }
             if (!projected)
                 continue;
-            float const candidateDistance = soldier->GetExactDist(&point);
-            if (candidateDistance < distance)
+            float candidateScore = soldier->GetExactDist(&point);
+            // Attackers prefer northern staging workshops (Broken Temple / Sunken Ring) over distant southern bases.
+            if (team == wg->GetAttackerTeam() && (site.Id == BATTLEFIELD_WG_WORKSHOP_NW || site.Id == BATTLEFIELD_WG_WORKSHOP_NE))
+                candidateScore = std::max(0.f, candidateScore - 220.f);
+            if (candidateScore < distance)
             {
                 best = &site;
-                distance = candidateDistance;
+                distance = candidateScore;
                 buildPoint = point;
             }
         }
@@ -4018,7 +4115,7 @@ private:
                 || !slot.Vehicle.IsEmpty() || !CanMobilizeKeepDefender(attacker, leader->GetPositionX())) continue;
             auto& patrol = _patrols[team][squad];
             if (patrol.Target == LaneCount || (_elapsed >= patrol.Until && !leader->IsInCombat()
-                && (leader->GetExactDist2d(&BotRoutes[patrol.Target][0].Pos) < 80.f || _elapsed > patrol.Until + 90000)))
+                && (leader->GetExactDist2d(&BotRoutes[patrol.Target].back().Pos) < 80.f || _elapsed > patrol.Until + 90000)))
             {
                 std::array<Lane, 5> candidates = { WorkshopWest, WorkshopEast, SouthWest, SouthEast, South };
                 Lane next;
@@ -4082,7 +4179,7 @@ private:
             Creature* vehicle=map->GetCreature(slot.Vehicle);
             Creature* leader=map->GetCreature(slot.Soldier);
             if (vehicle && vehicle->IsAlive() && leader && leader->IsAlive()
-                && vehicle->GetPositionX() >= 4750.f && vehicle->GetPositionX() < 5190.f
+                && vehicle->GetPositionX() >= 5035.f && vehicle->GetPositionX() < 5190.f
                 && !HasBotWarHumanPassenger(vehicle) && convoys < maxConvoys)
             {
                 auto* ai=GetBotWarSoldierAI(leader);
@@ -4113,7 +4210,7 @@ private:
                 }
             }
             if ((!vehicle || !vehicle->IsAlive()) && leader && leader->IsAlive() && !leader->IsInCombat()
-                && leader->GetPositionX() >= 4750.f && leader->GetPositionX() < 5190.f && infantryRedirected < maxInfantrySquads)
+                && leader->GetPositionX() >= 5035.f && leader->GetPositionX() < 5190.f && infantryRedirected < maxInfantrySquads)
             {
                 auto* ai = GetBotWarSoldierAI(leader);
                 if (ai && IsAssault(ai->GetLane()) && !ai->HasLogisticsOrder() && !ai->HasWorkshopOrder())

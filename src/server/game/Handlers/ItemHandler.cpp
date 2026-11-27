@@ -562,7 +562,7 @@ void WorldSession::HandleListInventoryOpcode(WorldPackets::NPC::Hello& packet)
     SendListInventory(packet.Unit);
 }
 
-void JunkSale::SellFromBags(Player& player, JunkSale::Source source)
+void JunkSale::SellFromBags(Player& player, JunkSale::Source source, JunkSale::Mode mode)
 {
     std::vector<Item*> items;
     uint32 copper = 0;
@@ -571,14 +571,64 @@ void JunkSale::SellFromBags(Player& player, JunkSale::Source source)
     uint32 available = money < MAX_MONEY_AMOUNT ? MAX_MONEY_AMOUNT - money - 1 : 0;
     auto collect = [&](Item* item)
     {
-        if (!item || !item->GetTemplate() || item->GetTemplate()->Quality != ITEM_QUALITY_POOR
-            || item->GetOwnerGUID() != player.GetGUID() || item->IsRefundable() || item->IsInTrade()
+        if (!item)
+            return;
+
+        // Never sell equipped items
+        if (item->IsEquipped())
+            return;
+
+        if (item->GetOwnerGUID() != player.GetGUID() || item->IsRefundable() || item->IsInTrade()
             || item->IsNotEmptyBag() || item->GetGUID() == player.GetLootGUID())
             return;
 
+        ItemTemplate const* proto = item->GetTemplate();
+        if (!proto)
+            return;
+
+        // Never sell items without vendor sell price (Hearthstone, tokens, zero-value items)
         uint64 value = uint64(item->GetSellPrice(true)) * item->GetCount();
         if (!value)
             return;
+
+        // Never sell bag containers
+        if (proto->GetContainerSlots() > 0)
+            return;
+
+        // Never sell keys
+        if (proto->Class == ITEM_CLASS_KEY)
+            return;
+
+        // Never sell quest items (by class, binding, start quest, or active player quest)
+        if (proto->Class == ITEM_CLASS_QUEST
+            || proto->Bonding == BIND_QUEST_ITEM
+            || proto->Bonding == BIND_QUEST_ITEM1
+            || proto->StartQuest > 0
+            || player.HasQuestForItem(proto->GetId()))
+            return;
+
+        // Mode filter:
+        switch (mode)
+        {
+            case Mode::GreyOnly:
+                if (proto->Quality != ITEM_QUALITY_POOR)
+                    return;
+                break;
+            case Mode::Greens:
+                // Poor (grey) + Uncommon (green)
+                if (proto->Quality > ITEM_QUALITY_UNCOMMON)
+                    return;
+                break;
+            case Mode::Gear:
+                // Weapons & Armor of any quality with sell price (excluding heirlooms/0-value)
+                if (proto->Class != ITEM_CLASS_WEAPON && proto->Class != ITEM_CLASS_ARMOR)
+                    return;
+                break;
+            case Mode::All:
+                // Everything sellable (excluding quest items, keys, bags, 0-value items)
+                break;
+        }
+
         if (value > available - copper)
         {
             reachedGoldLimit = true;
@@ -595,7 +645,14 @@ void JunkSale::SellFromBags(Player& player, JunkSale::Source source)
             for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
                 collect(bag->GetItemByPos(slot));
 
-    bool scrapper = source == JunkSale::Source::Scrapper;
+    std::string_view tag;
+    switch (source)
+    {
+        case Source::Scrapper: tag = "Junk Scrapper"; break;
+        case Source::Command:  tag = "Sell"; break;
+        default:               tag = "Auto-Sell"; break;
+    }
+
     ChatHandler chat(player.GetSession());
     if (!items.empty())
     {
@@ -615,15 +672,14 @@ void JunkSale::SellFromBags(Player& player, JunkSale::Source source)
 
         player.UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_MONEY_FROM_VENDORS, copper);
         player.PlayDirectSound(120, &player);
-        chat.SendSysMessage(Trinity::StringFormat("|cff00ff00[{}]|r Sold {} grey item(s) for {}g {}s {}c.",
-            scrapper ? "Junk Scrapper" : "Auto-Sell", sold, copper / 10000, (copper / 100) % 100, copper % 100));
+        chat.SendSysMessage(Trinity::StringFormat("|cff00ff00[{}]|r Sold {} item(s) for {}g {}s {}c.",
+            tag, sold, copper / 10000, (copper / 100) % 100, copper % 100));
     }
-    else if (scrapper && !reachedGoldLimit)
-        chat.SendSysMessage("|cffffcc00[Junk Scrapper]|r You have no grey items to scrap in your bags.");
+    else if ((source == Source::Scrapper || source == Source::Command) && !reachedGoldLimit)
+        chat.SendSysMessage(Trinity::StringFormat("|cffffcc00[{}]|r You have no eligible items to sell in your bags.", tag));
 
     if (reachedGoldLimit)
-        chat.SendSysMessage(Trinity::StringFormat("|cffffcc00[{}]|r Some grey items stayed in your bags because of the gold limit.",
-            scrapper ? "Junk Scrapper" : "Auto-Sell"));
+        chat.SendSysMessage(Trinity::StringFormat("|cffffcc00[{}]|r Some items stayed in your bags because of the gold limit.", tag));
 }
 
 void WorldSession::SendListInventory(ObjectGuid vendorGuid)

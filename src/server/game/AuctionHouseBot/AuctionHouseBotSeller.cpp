@@ -235,6 +235,9 @@ bool AuctionBotSeller::Initialize()
             case ITEM_CLASS_ARMOR:
             case ITEM_CLASS_WEAPON:
             {
+                if (prototype->GetQuality() < ITEM_QUALITY_RARE)
+                    continue;
+
                 if (uint32 value = sAuctionBotConfig->GetConfig(CONFIG_AHBOT_ITEM_MIN_ITEM_LEVEL))
                     if (prototype->GetBaseItemLevel() < value)
                         continue;

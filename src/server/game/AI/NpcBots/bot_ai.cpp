@@ -8304,7 +8304,17 @@ void bot_ai::OnSpellHit(Unit* caster, SpellInfo const* spell)
         if (auraname == SPELL_AURA_MOUNTED || (!spell->HasAura(SPELL_AURA_MOUNTED) && auraname == SPELL_AURA_MOD_INCREASE_VEHICLE_FLIGHT_SPEED))
         {
             //BOT_LOG_ERROR("entities.unit", "OnSpellHit: mount on {}", me->GetName());
-            if (master->HasAuraType(SPELL_AURA_MOD_INCREASE_VEHICLE_FLIGHT_SPEED) ||
+            if (IAmFree())
+            {
+                if (auraname == SPELL_AURA_MOUNTED && me->IsMounted())
+                {
+                    bool changedToRun = me->SetWalk(false);
+                    me->UpdateSpeed(MOVE_RUN);
+                    if (changedToRun)
+                        me->GetMotionMaster()->PropagateSpeedChange();
+                }
+            }
+            else if (master->HasAuraType(SPELL_AURA_MOD_INCREASE_VEHICLE_FLIGHT_SPEED) ||
                 master->HasAuraType(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED))
             {
                 //BOT_LOG_ERROR("entities.unit", "OnSpellHit: modding flight speed");

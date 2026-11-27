@@ -1245,9 +1245,71 @@ public:
         {
             { "companion", HandleCompanionCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No },
             { "heirlooms", HandleHeirloomsCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No },
-            { "heirloom",  HandleHeirloomsCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No }
+            { "heirloom",  HandleHeirloomsCommand, rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No },
+            { "sell",      HandleSellCommand,      rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No },
+            { "sellall",   HandleSellAllCommand,   rbac::RBAC_PERM_COMMAND_NPCBOT_INFO, Console::No }
         };
         return commandTable;
+    }
+
+    static bool HandleSellAllCommand(ChatHandler* handler)
+    {
+        return HandleSellCommand(handler, Optional<std::string_view>("all"));
+    }
+
+    static bool HandleSellCommand(ChatHandler* handler, Optional<std::string_view> modeArg)
+    {
+        if (!handler->GetSession())
+        {
+            handler->SendSysMessage("This command can only be used in-game.");
+            return false;
+        }
+
+        Player* player = handler->getSelectedPlayerOrSelf();
+        if (!player)
+        {
+            handler->SendSysMessage("No player selected.");
+            return false;
+        }
+
+        if (player != handler->GetSession()->GetPlayer() && handler->GetSession()->GetSecurity() < SEC_GAMEMASTER)
+        {
+            handler->SendSysMessage("You cannot sell items for other players.");
+            return false;
+        }
+
+        JunkSale::Mode mode = JunkSale::Mode::All;
+        if (modeArg)
+        {
+            std::string arg(modeArg->data(), modeArg->size());
+            std::transform(arg.begin(), arg.end(), arg.begin(), [](unsigned char c) { return std::tolower(c); });
+
+            if (arg == "grey" || arg == "greys" || arg == "junk" || arg == "poor")
+                mode = JunkSale::Mode::GreyOnly;
+            else if (arg == "green" || arg == "greens" || arg == "uncommon")
+                mode = JunkSale::Mode::Greens;
+            else if (arg == "gear" || arg == "equipment" || arg == "armor" || arg == "armors" || arg == "weapons")
+                mode = JunkSale::Mode::Gear;
+            else if (arg == "all" || arg == "everything")
+                mode = JunkSale::Mode::All;
+            else if (arg == "help" || arg == "?")
+            {
+                handler->SendSysMessage("|cff00ccffSyntax:|r .sell [all | greens | gear | junk]");
+                handler->SendSysMessage("  |cffffffff.sell|r or |cffffffff.sell all|r: Sells all sellable items in bags (keeps quest items, keys & bags).");
+                handler->SendSysMessage("  |cffffffff.sell greens|r: Sells unequipped green and grey items.");
+                handler->SendSysMessage("  |cffffffff.sell gear|r: Sells unequipped weapons and armor.");
+                handler->SendSysMessage("  |cffffffff.sell junk|r: Sells grey junk items only.");
+                return true;
+            }
+            else
+            {
+                handler->SendSysMessage(Trinity::StringFormat("Unknown sell mode: '{}'. Use .sell help.", arg));
+                return false;
+            }
+        }
+
+        JunkSale::SellFromBags(*player, JunkSale::Source::Command, mode);
+        return true;
     }
 
     static bool HandleHeirloomsCommand(ChatHandler* handler, Optional<PlayerIdentifier> playerTarget)
