@@ -112,6 +112,18 @@ constexpr Lane ResolveTowerDefense(Lane lane, bool towerDestroyed)
         return lane;
     return lane == GuardSouth ? Center : lane == GuardSouthWest ? West : lane == GuardSouthEast ? East : lane;
 }
+constexpr Lane VehicleLaneForWorkshop(bool attacker, Lane fallback, bool westSide, bool eastSide, bool keepWest, bool keepEast)
+{
+    if (westSide)
+        return attacker ? West : SouthWest;
+    if (eastSide)
+        return attacker ? East : SouthEast;
+    if (keepWest)
+        return KeepWest;
+    if (keepEast)
+        return KeepEast;
+    return fallback;
+}
 }
 
 #endif

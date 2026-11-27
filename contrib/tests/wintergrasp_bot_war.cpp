@@ -91,6 +91,11 @@ int main()
     Check(GuardedTowerEntry(GuardSouth) == 190357 && ResolveTowerDefense(GuardSouth, true) == Center, "south tower assignment");
     Check(GuardedTowerEntry(GuardSouthWest) == 190356 && ResolveTowerDefense(GuardSouthWest, true) == West, "west tower assignment");
     Check(GuardedTowerEntry(GuardSouthEast) == 190358 && ResolveTowerDefense(GuardSouthEast, true) == East, "east tower assignment");
+    Check(VehicleLaneForWorkshop(true, Center, true, false, false, false) == West, "attacker NW/SW vehicle pushes West");
+    Check(VehicleLaneForWorkshop(true, Center, false, true, false, false) == East, "attacker NE/SE vehicle pushes East");
+    Check(VehicleLaneForWorkshop(false, KeepWest, true, false, false, false) == SouthWest, "defender must never take attacker West assault lane");
+    Check(VehicleLaneForWorkshop(false, KeepEast, false, true, false, false) == SouthEast, "defender must never take attacker East assault lane");
+    Check(VehicleLaneForWorkshop(false, South, false, false, true, false) == KeepWest, "keep west workshop assigns KeepWest");
     for (uint32_t size = 30; size <= 120; ++size)
     {
         std::array<uint32_t, LaneCount> counts{};
