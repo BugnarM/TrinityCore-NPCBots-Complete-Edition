@@ -1,6 +1,7 @@
 // Standalone regression test, no running realm/database required:
 // c++ -std=c++20 -O2 contrib/tests/wintergrasp_bot_war.cpp -o /tmp/wg-test && /tmp/wg-test
 #include "../../src/server/scripts/Northrend/wintergrasp_bot_war.h"
+#include "../../src/server/scripts/Northrend/wintergrasp_tactics.h"
 #include "../../src/server/scripts/Northrend/wintergrasp_vehicle_navigation.h"
 #include <array>
 #include <cstdlib>
@@ -70,8 +71,8 @@ int main()
         }
         if (attacker)
         {
-            Check(counts[Center] == 30 && counts[West] == 30 && counts[East] == 30, "assault lanes unbalanced");
-            Check(counts[GuardSouth] == 10 && counts[GuardSouthWest] == 10 && counts[GuardSouthEast] == 10,
+            Check(counts[Center] == 35 && counts[West] == 35 && counts[East] == 35, "assault lanes unbalanced");
+            Check(counts[GuardSouth] == 5 && counts[GuardSouthWest] == 5 && counts[GuardSouthEast] == 5,
                 "attacker south tower guards missing");
             Check(counts[WorkshopWest] == 0 && counts[WorkshopEast] == 0, "tower guards diverted to workshops");
         }
@@ -99,6 +100,28 @@ int main()
     Check(BotWarVehicleMaxHealth(35000, 0) == 105000 && BotWarVehicleMaxHealth(55000, 0) == 165000
         && BotWarVehicleMaxHealth(85000, 0) == 255000 && BotWarVehicleMaxHealth(120000, 2) == 120000,
         "BotWar siege vehicle durability scaled cleanly");
+    Check(ConcurrentBuilderLimit(0, false) == 2 && ConcurrentBuilderLimit(2, false) == 2
+        && ConcurrentBuilderLimit(3, false) == 3 && ConcurrentBuilderLimit(6, false) == 3
+        && ConcurrentBuilderLimit(2, true) == 3 && ConcurrentBuilderLimit(4, true) == 4,
+        "builder limit scales appropriately for defenders and attackers");
+    Check(ShouldHoldSquadStaging(1000, 9000, 2, false, false), "small squad waits briefly to rally");
+    Check(!ShouldHoldSquadStaging(1000, 9000, 3, false, false), "3+ squadmates release staging hold");
+    Check(!ShouldHoldSquadStaging(9000, 9000, 1, false, false), "expired staging window releases squad");
+    Check(!ShouldHoldSquadStaging(1000, 9000, 1, true, false), "combat breaks staging hold");
+    Check(CanMobilizeKeepDefender(false, 5392.f) && !CanMobilizeKeepDefender(true, 5392.f)
+        && CanMobilizeKeepDefender(true, 4950.f),
+        "keep defenders can sortie via portals while attackers never retreat through intact walls");
+    Check(NextVehicle(true, 0, 1, 1, true) == VehicleRole::Demolisher
+        && NextVehicle(true, 0, 2, 2, true) == VehicleRole::Demolisher
+        && NextVehicle(true, 0, 3, 2, true) == VehicleRole::Catapult,
+        "attacker prioritizes 5 wall-breakers per catapult while walls stand");
+    Check(NextVehicle(false, 0, 1, 1, true) == VehicleRole::Catapult,
+        "defender mixes anti-vehicle catapults early");
+    Check(BreachScore(true, 0, 10) == 0 && BreachScore(false, 40, 2) < BreachScore(false, 100, 2),
+        "breach scoring favors open breaches and already-damaged gates");
+    Check(TargetPriority(15.f, 80.f, false, false, false, true, false, false)
+        > TargetPriority(15.f, 80.f, false, false, false, false, false, false),
+        "siege threats receive top targeting priority");
     for (uint32_t size = 30; size <= 120; ++size)
     {
         std::array<uint32_t, LaneCount> counts{};
@@ -115,9 +138,9 @@ int main()
             unsigned bit = lane == GuardSouth ? 0 : lane == GuardSouthWest ? 1 : 2;
             ++counts[ResolveTowerDefense(lane, IsTowerDefense(lane) && (mask & (1u << bit)))];
         }
-        Check(counts[Center] == 30u + ((mask & 1u) ? 10u : 0u), "south reinforcements lost");
-        Check(counts[West] == 30u + ((mask & 2u) ? 10u : 0u), "west reinforcements lost");
-        Check(counts[East] == 30u + ((mask & 4u) ? 10u : 0u), "east reinforcements lost");
+        Check(counts[Center] == 35u + ((mask & 1u) ? 5u : 0u), "south reinforcements lost");
+        Check(counts[West] == 35u + ((mask & 2u) ? 5u : 0u), "west reinforcements lost");
+        Check(counts[East] == 35u + ((mask & 4u) ? 5u : 0u), "east reinforcements lost");
     }
     std::cout << "PASS: population bounds, human priority, squad cohesion and all tactical objectives\n";
 }

@@ -57,6 +57,8 @@ public:
     virtual ~bot_ai();
 
     // A battlefield supplies objectives; the native class AI retains combat and equipment.
+    static constexpr uint32 BattlefieldMovementLockedData = 80504;
+    static constexpr int32 BattlefieldFocusTargetGuid = 80510;
     void SetBattlefieldAI(std::unique_ptr<CreatureAI> controller) { _battlefieldAI = std::move(controller); }
     CreatureAI* GetBattlefieldAI() const { return _battlefieldAI.get(); }
     bool IsBattlefieldBot() const { return bool(_battlefieldAI); }

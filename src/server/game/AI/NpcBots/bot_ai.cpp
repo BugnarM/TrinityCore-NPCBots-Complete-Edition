@@ -4968,15 +4968,39 @@ std::pair<Unit*, Unit*> bot_ai::_getTargets(bool byspell, bool ranged, bool &res
                 ++it;
         }
 
+        auto pickNearest = [this](std::list<Unit*> const& candidates) -> std::pair<Unit*, float> {
+            Unit* nearest = nullptr;
+            float bestDist = std::numeric_limits<float>::max();
+            for (Unit* candidate : candidates)
+            {
+                float d = me->GetDistance(candidate);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    nearest = candidate;
+                }
+            }
+            return { nearest, bestDist };
+        };
         if (!closeList.empty())
         {
-            ts[0].first = closeList.size() == 1 ? closeList.front() : Bcore::Containers::SelectRandomContainerElement(closeList);
-            ts[0].second = me->GetDistance(ts[0].first);
+            if (IsBattlefieldBot())
+                std::tie(ts[0].first, ts[0].second) = pickNearest(closeList);
+            else
+            {
+                ts[0].first = closeList.size() == 1 ? closeList.front() : Bcore::Containers::SelectRandomContainerElement(closeList);
+                ts[0].second = me->GetDistance(ts[0].first);
+            }
         }
         else if (!unitList.empty())
         {
-            ts[0].first = unitList.size() == 1 ? unitList.front() : Bcore::Containers::SelectRandomContainerElement(unitList);
-            ts[0].second = me->GetDistance(ts[0].first);
+            if (IsBattlefieldBot())
+                std::tie(ts[0].first, ts[0].second) = pickNearest(unitList);
+            else
+            {
+                ts[0].first = unitList.size() == 1 ? unitList.front() : Bcore::Containers::SelectRandomContainerElement(unitList);
+                ts[0].second = me->GetDistance(ts[0].first);
+            }
         }
     }
     else
@@ -5085,10 +5109,16 @@ bool bot_ai::CheckAttackTarget()
     }
 
     Unit* cityFocus = _cityRaidAI ? ObjectAccessor::GetUnit(*me, _cityRaidAI->GetGUID(NPCBots::CityRaid::FocusTarget)) : nullptr;
+    Unit* bfFocus = _battlefieldAI ? ObjectAccessor::GetUnit(*me, _battlefieldAI->GetGUID(BattlefieldFocusTargetGuid)) : nullptr;
     if (cityFocus && cityFocus->IsAlive() && cityFocus->GetMap() == me->GetMap() && CanBotAttack(cityFocus, byspell))
     {
         opponent = disttarget = cityFocus;
         reset = me->GetVictim() != cityFocus;
+    }
+    else if (bfFocus && bfFocus->IsAlive() && bfFocus->GetMap() == me->GetMap() && CanBotAttack(bfFocus, byspell))
+    {
+        opponent = disttarget = bfFocus;
+        reset = me->GetVictim() != bfFocus;
     }
     else if (Unit* focus = GetArenaFocusTarget(); focus && HasRole(BOT_ROLE_DPS) && CanBotAttack(focus, byspell))
     {
@@ -6375,6 +6405,7 @@ void bot_ai::CalculateAttackPos(Unit* target, Position& pos, bool& force) const
 void bot_ai::GetInPosition(bool force, Unit* newtarget, Position* mypos)
 {
     if (_cityRaidAI && _cityRaidAI->GetData(NPCBots::CityRaid::FormationOwned)) return;
+    if (_battlefieldAI && _battlefieldAI->GetData(BattlefieldMovementLockedData)) return;
     Unit* mover = me->GetVehicle() ? me->GetVehicleBase() : me;
     if (HasBotCommandState(BOT_COMMAND_STAY))
         return;
@@ -8432,7 +8463,7 @@ bool bot_ai::Wait()
         return true;
 
     if (IAmFree())
-        waitTimer = (me->IsInCombat() || me->GetVictim() || IsCasting() || me->GetMap()->IsBattlegroundOrArena()) ? 500 : ((_rand + 100) * 20);
+        waitTimer = (me->IsInCombat() || me->GetVictim() || IsCasting() || IsBattlefieldBot() || me->GetMap()->IsBattlegroundOrArena()) ? 500 : ((_rand + 100) * 20);
     else if (master->GetMap()->GetEntry()->IsWorldMap() && !me->IsInCombat() && !IsCasting())
         waitTimer = std::min<uint32>(uint32(50 * (master->GetNpcBotsCount() - 1) + _rand), 500);
     else
@@ -18755,7 +18786,7 @@ uint8 bot_ai::LivingVehiclesCount(uint32 entry) const
 //GLOBAL UPDATE
 void bot_ai::UpdateDeadAI(uint32 diff)
 {
-    if (_cityRaidAI) return; // The event owns corpse release and fixed resurrection waves.
+    if (_cityRaidAI || _battlefieldAI) return; // The event/battlefield owns corpse release and replacement.
     // group update
     if (_groupUpdateTimer <= diff)
         SendUpdateToOutOfRangeBotGroupMembers();
@@ -19617,6 +19648,7 @@ bool bot_ai::GlobalUpdate(uint32 diff)
 
         Unit* mover = me->GetVehicle() ? me->GetVehicleBase() : me;
         if (!HasBotCommandState(BOT_COMMAND_MASK_UNCHASE) && !CCed(mover, true) &&
+            (!IsBattlefieldBot() || (_battlefieldAI->GetData(BattlefieldMovementLockedData) == 0 && me->GetVictim())) &&
             (IAmFree() || master->GetBotMgr()->GetBotAllowCombatPositioning()) &&
             (!mover->isMoving() || Rand() < 50) && !IsCasting(mover) && !IsShootingWand(mover))
         {

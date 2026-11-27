@@ -14,10 +14,25 @@ constexpr uint32_t RankCreditData = 80501;
 // five further kills to Lieutenant, matching BattlefieldWG::PromotePlayer.
 constexpr uint32_t RankForCredits(uint32_t credits) { return credits >= 10 ? 2 : credits >= 5 ? 1 : 0; }
 constexpr uint32_t MaxConcurrentBuilders = 2;
+constexpr uint32_t ConcurrentBuilderLimit(uint32_t ownedWorkshops, bool attacker = false)
+{
+    return attacker ? std::clamp(ownedWorkshops + 1, 3u, 4u)
+                    : std::clamp(ownedWorkshops, MaxConcurrentBuilders, 3u);
+}
 // Wintergrasp BotWar uses its own isolated rapid respawn cadence instead of
 // the 5-minute open-world wanderer respawn timer.
 constexpr uint32_t BotRespawnDelayMs = 30000;
 constexpr uint32_t WorkshopCaptureReserveSquads = 8;
+constexpr uint32_t SquadStagingTimeoutMs = 8000;
+constexpr uint32_t SquadStagingMinReady = 3;
+constexpr bool ShouldHoldSquadStaging(uint32_t now, uint32_t rallyUntil, uint32_t readyCount, bool inCombat, bool hasVehicle)
+{
+    return !inCombat && !hasVehicle && rallyUntil > now && readyCount < SquadStagingMinReady;
+}
+constexpr bool CanMobilizeKeepDefender(bool attacker, float posX)
+{
+    return !attacker || posX < 5150.f;
+}
 constexpr uint32_t FactoryPhaseMask(bool alliance, bool keep)
 {
     return keep ? (alliance ? 128u : 64u) : (alliance ? 32u : 16u);
@@ -28,12 +43,13 @@ constexpr bool HasVehicleBuildRank(uint32_t /*credits*/, bool /*attacker*/)
     return true;
 }
 constexpr uint32_t CastRetryDelay(bool success, uint32_t cooldown) { return success ? cooldown : 500; }
-constexpr uint32_t WorkshopResponseSquads(bool owned, uint32_t allies, uint32_t enemies)
+constexpr uint32_t WorkshopResponseSquads(bool owned, uint32_t allies, uint32_t enemies, bool attacker = false)
 {
     if (!owned && allies >= enemies + 5)
         return 0;
+    uint32_t cap = (!owned && attacker) ? 3u : 2u;
     if (!owned)
-        return std::min(2u, (enemies + 5 - allies + SquadSize - 1) / SquadSize);
+        return std::min(cap, std::max(attacker ? 2u : 1u, (enemies + 5 - allies + SquadSize - 1) / SquadSize));
     if (!enemies || allies >= enemies + 5)
         return 0;
     return std::min(2u, (enemies + 5 - allies + SquadSize - 1) / SquadSize);
@@ -68,12 +84,12 @@ constexpr Lane SquadLane(bool attacker, uint32_t slot)
     uint32_t squad = slot / SquadSize;
     if (attacker)
     {
-        // 90 assault troops and 30 tower guards at a full roster. Interleave
-        // duties so reduced populations do not leave every southern tower bare.
+        // 105 assault troops and 15 tower guards at a full roster (3 squads keep
+        // southern towers watched and can flex forward when towers are safe).
         constexpr Lane lanes[] = {
             Center, GuardSouth, West, GuardSouthWest, East, GuardSouthEast, Center, West,
             East, Center, Center, West, West, East, East, Center,
-            West, GuardSouth, East, GuardSouthWest, Center, GuardSouthEast, West, East
+            West, Center, East, West, Center, East, West, East
         };
         return lanes[squad % 24];
     }

@@ -9,6 +9,9 @@ namespace WintergraspBotWar
 {
 constexpr uint32_t ProfileData = 80502;
 constexpr uint32_t RoutePointData = 80503;
+constexpr uint32_t MovementLockedData = 80504;
+constexpr int32_t FocusTargetGuid = 80510;
+constexpr uint32_t MaxSquads = MaxParticipants / SquadSize;
 
 enum SoldierProfile : uint8_t
 {
@@ -45,11 +48,12 @@ constexpr uint32_t HealingSpell(uint32_t profile, bool emergency, bool hasHot, b
     return 0;
 }
 constexpr float TargetPriority(float distance, float healthPct, bool healer, bool casting, bool threatensHealer,
-    bool siegeThreat, bool focused, bool breakableControl)
+    bool siegeThreat, bool focused, bool breakableControl, bool playerTarget = false, bool cannonTarget = false)
 {
-    return (healer ? 65.f : 0.f) + (casting ? 25.f : 0.f) + (threatensHealer ? 100.f : 0.f)
-        + (siegeThreat ? 70.f : 0.f) + (focused ? 20.f : 0.f) + (100.f - healthPct) * 0.4f
-        - distance * 1.2f - (breakableControl ? 1000.f : 0.f);
+    return (healer ? 75.f : 0.f) + (casting ? 25.f : 0.f) + (threatensHealer ? 110.f : 0.f)
+        + (siegeThreat ? 120.f : 0.f) + (focused ? 45.f : 0.f) + (playerTarget ? 30.f : 0.f)
+        + (cannonTarget ? 40.f : 0.f) + (100.f - healthPct) * 0.5f
+        - distance * 1.1f - (breakableControl ? 1000.f : 0.f);
 }
 constexpr bool ShouldSwitchTarget(float current, float candidate) { return candidate > current + 25.f; }
 constexpr bool CanReserveAction(uint32_t now, uint32_t until) { return !until || int32_t(now - until) >= 0; }
@@ -59,15 +63,20 @@ constexpr bool PreserveVehicle(bool alive, bool soldierDied, bool humanPassenger
 }
 constexpr uint32_t BreachScore(bool destroyed, uint32_t healthPct, uint32_t defenders)
 {
-    return destroyed ? 0 : 100 + std::min(healthPct,100u) + std::min(defenders,120u) * 8;
+    if (destroyed)
+        return 0;
+    uint32_t damageBonus = healthPct < 85 ? (85 - healthPct) * 2 : 0;
+    uint32_t raw = 100 + std::min(healthPct, 100u) + std::min(defenders, 120u) * 6;
+    return raw > damageBonus ? raw - damageBonus : 1u;
 }
 
 enum class VehicleRole { Catapult, Demolisher, SiegeEngine };
 
-constexpr VehicleRole NextVehicle(bool attacking, uint32_t catapults, uint32_t demolishers, uint32_t siegeEngines)
+constexpr VehicleRole NextVehicle(bool attacking, uint32_t catapults, uint32_t demolishers, uint32_t siegeEngines, bool wallsStanding = true)
 {
     uint32_t wallBreakers = demolishers + siegeEngines;
-    if (wallBreakers >= (attacking ? 2 * (catapults + 1) : catapults))
+    uint32_t ratio = attacking ? (wallsStanding ? 5u : 2u) : 1u;
+    if (wallBreakers >= ratio * (catapults + 1))
         return VehicleRole::Catapult;
     return demolishers <= siegeEngines ? VehicleRole::Demolisher : VehicleRole::SiegeEngine;
 }
