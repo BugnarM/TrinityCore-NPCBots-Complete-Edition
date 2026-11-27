@@ -3427,7 +3427,7 @@ private:
         Lane const lane = ai->GetLane();
         uint32 current = wg->GetData(team == TEAM_ALLIANCE ? BATTLEFIELD_WG_DATA_VEHICLE_A : BATTLEFIELD_WG_DATA_VEHICLE_H);
         uint32 maximum = wg->GetData(team == TEAM_ALLIANCE ? BATTLEFIELD_WG_DATA_MAX_VEHICLE_A : BATTLEFIELD_WG_DATA_MAX_VEHICLE_H);
-        uint32 humanReserve = wg->GetWarPlayerCount(team) && maximum ? 1 : 0;
+        uint32 humanReserve = wg->GetWarPlayerCount(team) >= 2 && maximum ? 1 : 0;
         auto cancelBuild = [&] {
             slot.FactoryId = NoBuildWorkshop;
             slot.BuildStartedAt = 0;
@@ -3441,6 +3441,8 @@ private:
             || !ai->EscortVehicle().IsEmpty()
             || current >= maximum - humanReserve)
         {
+            if (pinned && slot.FactoryId != NoBuildWorkshop)
+                slot.VehicleRespawnAt = _elapsed + 20000;
             cancelBuild();
             return;
         }
@@ -3467,11 +3469,46 @@ private:
                 return;
             if (slot.VehicleRespawnAt > _elapsed)
                 return;
-            slot.VehicleRespawnAt = _elapsed + 10000;
             float const maxDistance = (IsAssault(lane) && _elapsed >= 8000) ? 750.f : 260.f;
-            BotWorkshopSite const* site = FindBuildWorkshop(map, wg, team, lane, soldier, slot.BuildPoint, maxDistance);
+            Position candidatePoint;
+            BotWorkshopSite const* site = FindBuildWorkshop(map, wg, team, lane, soldier, candidatePoint, maxDistance);
             if (!site)
                 return;
+            if (soldier->GetExactDist(&candidatePoint) > 180.f)
+            {
+                // Prefer squad leaders already standing near a controlled workshop so frontline units
+                // do not tie up MaxConcurrentBuilders slots riding back from across the map.
+                uint32 const teamBudget = BotBudget(sConfigMgr->GetIntDefault("Wintergrasp.BotWar.TargetPerTeam", int32(MaxParticipants), true),
+                    wg->GetMaxPlayersPerTeam(), wg->GetWarPlayerCount(team));
+                for (uint32 otherIdx = 0; otherIdx < teamBudget; otherIdx += SquadSize)
+                {
+                    if (otherIdx == index)
+                        continue;
+                    RosterSlot const& otherSlot = _roster[team][otherIdx];
+                    if (otherSlot.FactoryId != NoBuildWorkshop || otherSlot.VehicleRespawnAt > _elapsed)
+                        continue;
+                    if (Creature* otherVeh = map->GetCreature(otherSlot.Vehicle); otherVeh && otherVeh->IsAlive())
+                        continue;
+                    Creature* otherSoldier = map->GetCreature(otherSlot.Soldier);
+                    if (!otherSoldier || !otherSoldier->IsAlive() || otherSoldier->GetVehicle())
+                        continue;
+                    auto* otherAI = GetBotWarSoldierAI(otherSoldier);
+                    if (!otherAI || !otherAI->EscortVehicle().IsEmpty())
+                        continue;
+                    Lane const otherLane = otherAI->GetLane();
+                    bool otherEligible = IsAssault(otherLane) || IsCounterAttack(otherLane) || IsWorkshop(otherLane)
+                        || otherLane == KeepCenter || otherLane == KeepWest || otherLane == KeepEast;
+                    bool otherPinned = otherSoldier->IsInCombat() && (!otherSoldier->getAttackers().empty()
+                        || otherSoldier->HealthBelowPct(35) || otherSoldier->HasUnitState(UNIT_STATE_CONTROLLED));
+                    if (!otherEligible || otherPinned)
+                        continue;
+                    Position nearbyPoint;
+                    if (FindBuildWorkshop(map, wg, team, otherLane, otherSoldier, nearbyPoint, 180.f))
+                        return;
+                }
+            }
+            slot.VehicleRespawnAt = _elapsed + 10000;
+            slot.BuildPoint = candidatePoint;
             slot.FactoryId = site->Id;
             TC_LOG_INFO("bg.battlefield.botwar", "WG BotWar event=builder_dispatch team={} workshop={} name={} credits={} active_builders={}",
                 uint32(team), uint32(slot.FactoryId), soldier->GetName(), slot.KillCredits, dispatched + 1);
