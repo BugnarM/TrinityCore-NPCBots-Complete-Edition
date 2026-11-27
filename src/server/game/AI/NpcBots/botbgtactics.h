@@ -29,6 +29,25 @@ constexpr uint8_t SACannonIndex(Gate gate, uint32_t botId)
     return gate < Ancient ? uint8_t(base[gate] + (botId % 5 == 2 ? 1 : 0)) : 10;
 }
 
+constexpr bool SiegeEscortMember(uint32_t botId) { return botId % 5 == 2 || botId % 5 == 3; }
+
+constexpr uint32_t SAGateDefenseNode(Gate gate)
+{
+    constexpr uint32_t innerCheckpoints[] = {5221, 5225, 5222, 5224, 5223, 5226};
+    return gate < NoGate ? innerCheckpoints[gate] : innerCheckpoints[Ancient];
+}
+
+constexpr float SiegeGateHealthFraction(uint32_t health, uint32_t maximum)
+{
+    return maximum ? float(health) / maximum : 1.f;
+}
+
+// Detach the reserve only when the other lane is meaningfully further along.
+constexpr bool SAReinforceOtherLane(float ownGateHealth, float otherGateHealth)
+{
+    return ownGateHealth - otherGateHealth >= 0.12f;
+}
+
 constexpr Gate AssaultGate(uint32_t mask, bool west)
 {
     if (!OuterOpen(mask)) return west ? Green : Blue;

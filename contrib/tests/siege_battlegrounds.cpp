@@ -85,6 +85,7 @@ int main(int argc, char** argv)
     {
         auto [before, after] = gateEdges[gate];
         Check(mesh.at(before).x > mesh.at(after).x + 40.f, "SA gate checkpoints are on the wrong side or column");
+        Check(SAGateDefenseNode(Gate(gate)) == after, "SA defenders form on the attacking side of the wall");
         Check(!SAEdgeOpen(before, after, 0), "intact SA gate permits crossing");
         Check(SAEdgeOpen(before, after, 1u << gate), "destroyed SA gate still blocks crossing");
     }
@@ -117,6 +118,13 @@ int main(int argc, char** argv)
         }
         for (unsigned count : counts) Check(count >= 5, "IC does not cover all five strategic nodes");
     }
+    for (unsigned id = 0; id < 40; ++id)
+        Check(!SACaptureScout(id) || !SiegeEscortMember(id), "a capture runner was assigned to a convoy");
+    Check(!SAReinforceOtherLane(1.f, 1.f), "an idle lane pulled the defender reserves");
+    Check(!SAReinforceOtherLane(0.8f, 0.74f), "minor splash damage moved defender reserves");
+    Check(SAReinforceOtherLane(0.95f, 0.55f), "a threatened gate did not receive reserve defenders");
+    Check(SiegeGateHealthFraction(50, 200) == 0.25f && SiegeGateHealthFraction(0, 0) == 1.f,
+        "gate pressure ignores current health or divides by zero");
     Check(!SANodeAccessible(999, 63), "unrelated custom waypoint bypasses SA stage checks");
     for (bool aboard : {false, true})
         for (bool freeBot : {false, true})
