@@ -1335,7 +1335,7 @@ struct BotRouteMovement
 
     uint32 BarrierEntry() const { return BotRoutes[Route][Point].Barrier; }
 
-    uint32 CaptureArea(Creature const* bot) const { return bot->IsVehicle() ? 0 : BotRoutes[Route][Point].CaptureArea; }
+    uint32 CaptureArea(Creature const* /*bot*/) const { return BotRoutes[Route][Point].CaptureArea; }
 
     bool MustCaptureWorkshop(BattlefieldWG* wg, Creature const* bot) const
     {

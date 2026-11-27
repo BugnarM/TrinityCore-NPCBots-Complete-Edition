@@ -967,10 +967,12 @@ void BattlefieldWG::OnGameObjectCreate(GameObject* go)
     {
         if (workshop->GetId() == workshopId)
         {
-            WintergraspCapturePoint* capturePoint = new WintergraspCapturePoint(this, GetAttackerTeam());
+            TeamId initialTeam = workshopId < BATTLEFIELD_WG_WORKSHOP_NE ? GetAttackerTeam() : GetDefenderTeam();
+            WintergraspCapturePoint* capturePoint = new WintergraspCapturePoint(this, initialTeam);
 
             capturePoint->SetCapturePointData(go);
             capturePoint->LinkToWorkshop(workshop);
+            workshop->SetCapturePoint(capturePoint);
             AddCapturePoint(capturePoint);
             break;
         }
@@ -1948,6 +1950,8 @@ void WintergraspWorkshop::GiveControlTo(TeamId teamId, bool init /*= false*/)
             break;
         }
     }
+    if (init && _capturePoint && (teamId == TEAM_ALLIANCE || teamId == TEAM_HORDE))
+        _capturePoint->SyncControl(teamId);
     if (!init)
         _wg->UpdateCounterVehicle(false);
 }

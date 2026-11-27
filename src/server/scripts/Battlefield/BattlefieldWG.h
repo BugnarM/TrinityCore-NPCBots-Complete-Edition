@@ -197,6 +197,14 @@ class WintergraspCapturePoint : public BfCapturePoint
         WintergraspCapturePoint(BattlefieldWG* battlefield, TeamId teamInControl);
 
         void LinkToWorkshop(WintergraspWorkshop* workshop) { m_Workshop = workshop; }
+        void SyncControl(TeamId team)
+        {
+            m_team = team;
+            m_value = (team == TEAM_ALLIANCE) ? m_maxValue : -m_maxValue;
+            m_State = (team == TEAM_ALLIANCE) ? BF_CAPTUREPOINT_OBJECTIVESTATE_ALLIANCE : BF_CAPTUREPOINT_OBJECTIVESTATE_HORDE;
+            m_OldState = m_State;
+            SendChangePhase();
+        }
 
         void ChangeTeam(TeamId oldteam) override;
         uint32 GetScriptedParticipantCount(TeamId team) override;
@@ -572,12 +580,14 @@ private:
     TeamId _teamControl;                            // Team witch control the workshop
 
     StaticWintergraspWorkshopInfo const* _staticInfo;
+    WintergraspCapturePoint* _capturePoint = nullptr;
 
 public:
     WintergraspWorkshop(BattlefieldWG* wg, uint8 type);
 
     uint8 GetId() const;
     TeamId GetTeamControl() const { return _teamControl; }
+    void SetCapturePoint(WintergraspCapturePoint* capturePoint) { _capturePoint = capturePoint; }
 
     // Called on change faction in CapturePoint class
     void GiveControlTo(TeamId teamId, bool init = false);
