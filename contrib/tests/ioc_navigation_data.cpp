@@ -120,6 +120,33 @@ int main(int argc, char** argv)
             Require(arrived,"Road exceeds prefix budget: "+std::to_string(id)+" -> "+std::to_string(next));
             ++edges;
         }
+    // Verify the exterior siege positions using the native gate coordinates.
+    unsigned siegePositions = 0;
+    std::ifstream gateHeader("src/server/game/Battlegrounds/Zones/BattlegroundIC.h");
+    std::regex gatePattern(R"(\{BG_IC_GO_(HORDE|ALLIANCE)_GATE_([1-3]), GO_(?:HORDE|ALLIANCE)_GATE_[1-3], ([^,]+), ([^,]+), ([^,]+),)");
+    dtQueryFilter ground;
+    ground.setIncludeFlags(NAV_GROUND);
+    while (std::getline(gateHeader, line))
+    {
+        std::smatch match;
+        if (!std::regex_search(line, match, gatePattern))
+            continue;
+        unsigned number = std::stoul(match[2]);
+        unsigned gate = match[1] == "HORDE" ? number - 1 : 3 + number % 3;
+        for (float distance : {5.f, 7.f, 11.f, 28.f, 35.f})
+        {
+            float x = std::stof(match[3]), y = std::stof(match[4]), z = std::stof(match[5]);
+            NPCBots::SiegeBG::OffsetOutsideICGate(gate, distance, x, y);
+            Require(NPCBots::SiegeBG::ICPositionKeep(x, y) == 2, "Siege approach is inside a keep");
+            float pos[] = {y, z, x}, near[3]{};
+            float approachExtent[] = {2.f, 24.f, 2.f};
+            dtPolyRef poly = 0;
+            Require(dtStatusSucceed(query.findNearestPoly(pos, approachExtent, &ground, &poly, near)) && poly,
+                "Invalid siege approach to gate " + std::to_string(gate) + " at distance " + std::to_string(distance));
+            ++siegePositions;
+        }
+    }
+    Require(siegePositions == 30, "Expected five exterior positions for each of the six gates");
     // Every native keep platform, including the Horde west-side approach.
     // Read production coordinates so a changed GO cannot silently stale the test.
     struct Portal { unsigned spawn; float x,y,z; };
@@ -162,7 +189,7 @@ int main(int argc, char** argv)
                 "Portal approach crosses an intact wall: road "+std::to_string(portal.spawn)+
                     " -> "+std::to_string(portal.x)+","+std::to_string(portal.y));
     }
-    std::cout<<"PASS: "<<loaded<<" production-compatible IC tiles, 23 checkpoints, "<<edges<<" directed road paths, all 12 keep portal approaches.\n";
+    std::cout<<"PASS: "<<loaded<<" production-compatible IC tiles, 23 checkpoints, "<<edges<<" directed road paths, "<<siegePositions<<" exterior siege positions, all 12 keep portal approaches.\n";
  }
  catch(std::exception const& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}
 }

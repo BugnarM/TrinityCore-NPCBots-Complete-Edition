@@ -2,6 +2,7 @@
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
 #include "bot_ai.h"
+#include "botbgtactics.h"
 #include "bot_Events.h"
 #include "botconfig.h"
 #include "botdatamgr.h"
@@ -659,7 +660,15 @@ void BotMgr::_teleportBot(Creature* bot, Map* newMap, float x, float y, float z,
                     bg->AddBot(bot);
                 }
 
-                if (!bot->IsAlive())
+                if (!bot->IsAlive() && (bg->GetTypeID() == BATTLEGROUND_SA || bg->GetTypeID() == BATTLEGROUND_IC))
+                {
+                    if (Creature* guide = NPCBots::SiegeBG::FindSpiritGuide(*bg, *bot))
+                    {
+                        bg->RemoveBotFromResurrectQueue(bot->GetGUID());
+                        bg->AddPlayerToResurrectQueue(guide->GetGUID(), bot->GetGUID());
+                    }
+                }
+                else if (!bot->IsAlive())
                 {
                     ObjectGuid shGuid = ObjectGuid::Empty;
                     float mindist = 0.0f;

@@ -44,6 +44,7 @@
 #include <cstdarg>
 
 //npcbot
+#include "botbgtactics.h"
 #include "bot_ai.h"
 #include "botdatamgr.h"
 #include "botmgr.h"
@@ -336,12 +337,10 @@ inline void Battleground::_ProcessResurrect(uint32 diff)
                     //npcbot
                     if (itr2->IsCreature())
                     {
-                        if (Creature const* cbot = BotDataMgr::FindBot(itr2->GetEntry()))
+                        if (Creature* bot = GetBgMap()->GetCreature(*itr2); bot && bot->IsInWorld() && !bot->IsAlive())
                         {
-                            Creature* bot = const_cast<Creature*>(cbot);
-                            ASSERT(bot->IsInWorld());
                             if (!sh)
-                                sh = bot->GetMap()->GetCreature(itr->first);
+                                sh = GetBgMap()->GetCreature(itr->first);
                             if (sh)
                             {
                                 if (bot->GetExactDist(sh) > 15.0f)
@@ -384,26 +383,28 @@ inline void Battleground::_ProcessResurrect(uint32 diff)
     }
     else if (m_LastResurrectTime > 500)    // Resurrect players only half a second later, to see spirit heal effect on NPC
     {
-        for (GuidVector::const_iterator itr = m_ResurrectQueue.begin(); itr != m_ResurrectQueue.end(); ++itr)
+        // Resurrection can remove the waiting aura and call back into queue removal.
+        GuidVector ready;
+        ready.swap(m_ResurrectQueue);
+        for (ObjectGuid guid : ready)
         {
             //npcbot
-            if (itr->IsCreature())
+            if (guid.IsCreature())
             {
-                if (Creature const* cbot = BotDataMgr::FindBot(itr->GetEntry()))
-                    cbot->GetBotAI()->UpdateReviveTimer(std::numeric_limits<uint32>::max());
+                if (Creature* bot = GetBgMap()->GetCreature(guid); bot && bot->IsInWorld() && !bot->IsAlive())
+                    bot->GetBotAI()->UpdateReviveTimer(std::numeric_limits<uint32>::max());
                 continue;
             }
             //end npcbot
 
-            Player* player = ObjectAccessor::FindPlayer(*itr);
-            if (!player)
+            Player* player = ObjectAccessor::FindPlayer(guid);
+            if (!player || player->IsAlive() || player->FindMap() != GetBgMap())
                 continue;
             player->ResurrectPlayer(1.0f);
             player->CastSpell(player, 6962, true);
             player->CastSpell(player, SPELL_SPIRIT_HEAL_MANA, true);
             player->SpawnCorpseBones(false);
         }
-        m_ResurrectQueue.clear();
     }
 }
 
@@ -1566,7 +1567,9 @@ bool Battleground::UpdateBotScore(Creature const* bot, uint32 type, uint32 value
 
 void Battleground::AddPlayerToResurrectQueue(ObjectGuid npc_guid, ObjectGuid player_guid)
 {
-    m_ReviveQueue[npc_guid].push_back(player_guid);
+    auto& queued = m_ReviveQueue[npc_guid];
+    if (std::ranges::find(queued, player_guid) == queued.end())
+        queued.push_back(player_guid);
 
     Player* player = ObjectAccessor::FindPlayer(player_guid);
     if (!player)
@@ -1577,6 +1580,7 @@ void Battleground::AddPlayerToResurrectQueue(ObjectGuid npc_guid, ObjectGuid pla
 
 void Battleground::RemovePlayerFromResurrectQueue(ObjectGuid player_guid)
 {
+    std::erase(m_ResurrectQueue, player_guid);
     for (std::map<ObjectGuid, GuidVector>::iterator itr = m_ReviveQueue.begin(); itr != m_ReviveQueue.end(); ++itr)
     {
         for (GuidVector::iterator itr2 = itr->second.begin(); itr2 != itr->second.end(); ++itr2)
@@ -1595,26 +1599,43 @@ void Battleground::RemovePlayerFromResurrectQueue(ObjectGuid player_guid)
 //npcbot
 void Battleground::RemoveBotFromResurrectQueue(ObjectGuid guid)
 {
-    for (auto& kv : m_ReviveQueue)
-    {
-        for (GuidVector::iterator itr2 = kv.second.begin(); itr2 != kv.second.end(); ++itr2)
-        {
-            if (*itr2 == guid)
+    for (auto& [guide, queued] : m_ReviveQueue)
+        std::erase(queued, guid);
+    std::erase(m_ResurrectQueue, guid);
+}
+
+Creature* NPCBots::SiegeBG::FindSpiritGuide(Battleground const& bg, Creature const& bot)
+{
+    TeamId const team = bg.GetBotTeamId(bot.GetGUID());
+    if (team != TEAM_ALLIANCE && team != TEAM_HORDE)
+        return nullptr;
+
+    uint32 const entry = team == TEAM_ALLIANCE ? BG_CREATURE_ENTRY_A_SPIRITGUIDE : BG_CREATURE_ENTRY_H_SPIRITGUIDE;
+    Creature* closest = nullptr;
+    float bestDistance = std::numeric_limits<float>::max();
+    for (ObjectGuid guid : bg.BgCreatures)
+        if (guid.GetEntry() == entry)
+            if (Creature* guide = bg.GetBgMap()->GetCreature(guid); guide && guide->IsAlive() && guide->InSamePhase(&bot))
             {
-                kv.second.erase(itr2);
-                return;
+                float const distance = bot.GetExactDistSq(guide);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    closest = guide;
+                }
             }
-        }
-    }
+    return closest;
 }
 //end npcbot
 
 void Battleground::RelocateDeadPlayers(ObjectGuid guideGuid)
 {
     // Those who are waiting to resurrect at this node are taken to the closest own node's graveyard
-    GuidVector& ghostList = m_ReviveQueue[guideGuid];
-    if (!ghostList.empty())
+    auto queue = m_ReviveQueue.extract(guideGuid);
+    if (!queue.empty())
     {
+        bool const siege = GetTypeID() == BATTLEGROUND_SA || GetTypeID() == BATTLEGROUND_IC;
+        GuidVector const& ghostList = queue.mapped();
         WorldSafeLocsEntry const* closestGrave = nullptr;
         //npcbot
         WorldSafeLocsEntry const* closestBotGrave = nullptr;
@@ -1624,12 +1645,23 @@ void Battleground::RelocateDeadPlayers(ObjectGuid guideGuid)
             //npcbot
             if (itr->IsCreature())
             {
-                if (Creature const* bot = BotDataMgr::FindBot(itr->GetEntry()))
+                if (Creature* bot = GetBgMap()->GetCreature(*itr); bot && bot->IsInWorld() && !bot->IsAlive())
                 {
-                    if (!closestBotGrave)
-                        closestBotGrave = GetClosestGraveyardForBot(*bot, GetBotTeam(*itr));
-                    if (closestBotGrave)
-                        const_cast<Creature*>(bot)->NearTeleportTo(Position(closestBotGrave->Loc.X, closestBotGrave->Loc.Y, closestBotGrave->Loc.Z));
+                    if (siege)
+                    {
+                        if (Creature* guide = NPCBots::SiegeBG::FindSpiritGuide(*this, *bot))
+                        {
+                            bot->NearTeleportTo(*guide);
+                            AddPlayerToResurrectQueue(guide->GetGUID(), *itr);
+                        }
+                    }
+                    else
+                    {
+                        if (!closestBotGrave)
+                            closestBotGrave = GetClosestGraveyardForBot(*bot, GetBotTeam(*itr));
+                        if (closestBotGrave)
+                            bot->NearTeleportTo(Position(closestBotGrave->Loc.X, closestBotGrave->Loc.Y, closestBotGrave->Loc.Z));
+                    }
                 }
                 continue;
             }
@@ -1645,7 +1677,6 @@ void Battleground::RelocateDeadPlayers(ObjectGuid guideGuid)
             if (closestGrave)
                 player->TeleportTo(GetMapId(), closestGrave->Loc.X, closestGrave->Loc.Y, closestGrave->Loc.Z, player->GetOrientation());
         }
-        ghostList.clear();
     }
 }
 

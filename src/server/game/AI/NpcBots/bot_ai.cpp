@@ -17019,14 +17019,29 @@ void bot_ai::JustDied(Unit* u)
     {
         if (Battleground const* bg = GetBG(); bg && !bg->isArena())
         {
-            TeamId my_team = BotDataMgr::GetTeamIdForFaction(me->GetFaction());
-            if (WorldSafeLocsEntry const* gy = bg->GetClosestGraveyardForBot(*me, my_team == TEAM_HORDE ? HORDE : ALLIANCE))
+            if (IsSiegeBattlegroundBot())
             {
-                Position pos(gy->Loc.X, gy->Loc.Y, gy->Loc.Z, me->GetOrientation());
-                Events.AddEventAtOffset([me = me, pos = pos]() {
-                    BotDataMgr::SpawnBotBones(me);
-                    BotMgr::TeleportBot(me, me->GetMap(), &pos, true);
+                Events.AddEventAtOffset([bot = me]() {
+                    Battleground* siege = bot->GetBotBG();
+                    if (!siege || siege->GetStatus() != STATUS_IN_PROGRESS || bot->IsAlive())
+                        return;
+
+                    BotDataMgr::SpawnBotBones(bot);
+                    if (Creature* guide = NPCBots::SiegeBG::FindSpiritGuide(*siege, *bot))
+                        BotMgr::TeleportBot(bot, bot->GetMap(), guide, true);
                 }, 5s);
+            }
+            else
+            {
+                TeamId my_team = BotDataMgr::GetTeamIdForFaction(me->GetFaction());
+                if (WorldSafeLocsEntry const* gy = bg->GetClosestGraveyardForBot(*me, my_team == TEAM_HORDE ? HORDE : ALLIANCE))
+                {
+                    Position pos(gy->Loc.X, gy->Loc.Y, gy->Loc.Z, me->GetOrientation());
+                    Events.AddEventAtOffset([me = me, pos = pos]() {
+                        BotDataMgr::SpawnBotBones(me);
+                        BotMgr::TeleportBot(me, me->GetMap(), &pos, true);
+                    }, 5s);
+                }
             }
         }
     }
@@ -17041,6 +17056,8 @@ void bot_ai::JustDied(Unit* u)
 
     _reviveTimer = IsWanderer() ? BotCfg::GetHealingSettings().reviveMs :
         IAmFree() ? REVIVE_TIMER_DEFAULT : master->InBattleground() ? REVIVE_TIMER_BG : REVIVE_TIMER_SHORT;
+    if (IsSiegeBattlegroundBot())
+        _reviveTimer = std::max(_reviveTimer, 35000u); // Allow the release delay and a complete spirit-guide wave.
     _atHome = false;
     _evadeMode = false;
     spawned = false;
@@ -19956,6 +19973,25 @@ void bot_ai::UpdateReviveTimer(uint32 diff)
         return;
     if (me->IsAlive())
         return;
+
+    if (IsSiegeBattlegroundBot())
+    {
+        Battleground* bg = GetBG();
+        if (bg->GetStatus() != STATUS_IN_PROGRESS)
+            return;
+        if (_reviveTimer > diff)
+        {
+            _reviveTimer -= diff;
+            return;
+        }
+        BotDataMgr::SpawnBotBones(me);
+        if (Creature* guide = NPCBots::SiegeBG::FindSpiritGuide(*bg, *me))
+            me->NearTeleportTo(*guide);
+        ResetSiegeBattlegroundState();
+        BotMgr::ReviveBot(me);
+        me->SetPvP(true);
+        return;
+    }
 
     if (_reviveTimer > diff)        _reviveTimer -= diff;
     else

@@ -2556,6 +2556,7 @@ bool BotDataMgr::GenerateBattlegroundBots(Player const* groupLeader, [[maybe_unu
     }
 
     //find running BG
+    bool const siege = bgTypeId == BATTLEGROUND_SA || bgTypeId == BATTLEGROUND_IC;
     auto const& all_bgs = sBattlegroundMgr->GetBgDataStore();
     for (auto const& [bg_type_id, bg_data] : all_bgs)
     {
@@ -2568,6 +2569,8 @@ bool BotDataMgr::GenerateBattlegroundBots(Player const* groupLeader, [[maybe_unu
                 {
                     if (real_bg->GetFreeSlotsForTeam(groupLeader->GetTeam()) < gqinfo->Players.size())
                     {
+                        if (siege)
+                            continue;
                         BOT_LOG_INFO("npcbots", "[Already running 1] Found running non-full BG {} instance {}. Not generating bots: queuing group or player (leader {}) CANNOT join existing BG, prevent borrowing bots",
                             uint32(bgTypeId), real_bg->GetInstanceID(), groupLeader->GetGUID().GetCounter());
                     }

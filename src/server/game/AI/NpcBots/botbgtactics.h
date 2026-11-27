@@ -5,8 +5,13 @@
 #include <cstddef>
 #include <cmath>
 
+class Battleground;
+class Creature;
+
 namespace NPCBots::SiegeBG
 {
+Creature* FindSpiritGuide(Battleground const& bg, Creature const& bot);
+
 // Keep the commanded waypoint while traversing long edges. Reattaching to the
 // nearest graph node mid-edge can repeatedly send the mover back to its origin.
 constexpr bool KeepSiegeCheckpoint(float distance) { return distance >= 18.f; }
@@ -83,6 +88,22 @@ constexpr bool SiegeControlBlocked(bool aboard, bool casting, bool crowdControll
 // corridor limit requires following long roads in successive prefixes.
 // Combined flags indicate shortcuts, missing tiles or far-from-poly endpoints.
 constexpr bool VerifiedSiegePath(uint32_t type, std::size_t points) { return (type == 1 || type == 4) && points >= 2; }
+
+constexpr uint8_t ICCheckpointGate(uint32_t id)
+{
+    if (id >= 5306 && id <= 5308) return uint8_t(id - 5306);
+    if (id >= 5301 && id <= 5303) return uint8_t(id - 5301 + 3);
+    return 6;
+}
+
+// Outward normals follow ICDoorList (Horde front/west/east, Alliance front/west/east).
+constexpr void OffsetOutsideICGate(uint8_t gate, float distance, float& x, float& y)
+{
+    constexpr int dx[] = {-1, 0, 0, 1, 0, 0};
+    constexpr int dy[] = {0, -1, 1, 0, 1, -1};
+    x += dx[gate] * distance;
+    y += dy[gate] * distance;
+}
 
 constexpr uint8_t ICNodeKeep(uint32_t id)
 {
