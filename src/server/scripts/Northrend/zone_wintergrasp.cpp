@@ -1760,12 +1760,12 @@ struct npc_wg_bot_vehicle : public ScriptedAI
                 if (target)
                     break;
             }
-            if (!target && (!isAssaultVehicle || !me->isMoving()))
-                target = me->SelectNearestTarget(40.f);
+            bool isRangedVehicle = (me->GetEntry() == NPC_WINTERGRASP_CATAPULT || me->GetEntry() == NPC_WINTERGRASP_DEMOLISHER);
+            if (!target && (!isAssaultVehicle || !me->isMoving() || !isRangedVehicle))
+                target = me->SelectNearestTarget((!isRangedVehicle && isAssaultVehicle && me->isMoving()) ? 14.f : 40.f);
 
             if (target && me->IsWithinLOSInMap(target))
             {
-                bool isRangedVehicle = (me->GetEntry() == NPC_WINTERGRASP_CATAPULT || me->GetEntry() == NPC_WINTERGRASP_DEMOLISHER);
                 if ((isRangedVehicle && allowTimedCast) || (!isRangedVehicle && me->IsWithinDistInMap(target, 14.f)))
                 {
                     if (!isAssaultVehicle || !me->isMoving())
@@ -2228,7 +2228,9 @@ struct npc_wg_bot_soldier : public ScriptedAI
         {
             if (unit->HasUnitState(UNIT_STATE_FLEEING | UNIT_STATE_CONFUSED) || !CanEngage(unit))
                 continue;
-            if (!unit->ToPlayer() && !unit->IsNPCBot() && !IsBotWarSoldier(unit) && !unit->IsVehicle()
+            bool attackingOurSide = unit->IsInCombatWith(me)
+                || (unit->GetVictim() && (unit->GetVictim()->GetGUID() == _vehicle || unit->GetVictim()->IsFriendlyTo(me)));
+            if (!attackingOurSide && !unit->ToPlayer() && !unit->IsNPCBot() && !IsBotWarSoldier(unit) && !unit->IsVehicle()
                 && !unit->GetCharmerOrOwnerPlayerOrPlayerItself()
                 && unit->GetEntry()!=BATTLEFIELD_WG_NPC_GUARD_A && unit->GetEntry()!=BATTLEFIELD_WG_NPC_GUARD_H)
                 continue;
@@ -3387,7 +3389,7 @@ private:
         }
         if (slot.FactoryId != NoBuildWorkshop && wg->GetBotWarWorkshopControl(slot.FactoryId) != team)
             cancelBuild();
-        uint32 const walkTimeout = soldier->GetExactDist(&slot.BuildPoint) > 150.f ? 65000 : 30000;
+        uint32 const walkTimeout = soldier->GetExactDist(&slot.BuildPoint) > 150.f ? 45000 : 30000;
         if (slot.FactoryId != NoBuildWorkshop && !slot.BuildStartedAt && _elapsed > slot.VehicleRespawnAt + walkTimeout)
         {
             cancelBuild();
@@ -3408,7 +3410,7 @@ private:
                 return;
             if (slot.VehicleRespawnAt > _elapsed)
                 return;
-            float const maxDistance = (IsAssault(lane) && _elapsed >= 8000) ? 750.f : 260.f;
+            float const maxDistance = (IsAssault(lane) && _elapsed >= 8000 && soldier->GetPositionX() < 5000.f) ? 600.f : 260.f;
             Position candidatePoint;
             BotWorkshopSite const* site = FindBuildWorkshop(map, wg, team, lane, soldier, candidatePoint, maxDistance);
             if (!site)
