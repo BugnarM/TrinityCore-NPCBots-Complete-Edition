@@ -124,6 +124,13 @@ constexpr Lane VehicleLaneForWorkshop(bool attacker, Lane fallback, bool westSid
         return KeepEast;
     return fallback;
 }
+
+// WotLK siege vehicles in creature_template carry Classic base health (expansion == 0: 35k/55k/85k)
+// before player gear scaling. Scale them to WotLK siege durability (~105k/165k/255k) for BotWar.
+constexpr uint32_t BotWarVehicleMaxHealth(uint32_t baseMaxHealth, uint32_t expansion)
+{
+    return expansion == 0 ? baseMaxHealth * 3u : baseMaxHealth;
+}
 }
 
 #endif

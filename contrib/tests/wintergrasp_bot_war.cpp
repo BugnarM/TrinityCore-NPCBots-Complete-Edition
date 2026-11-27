@@ -96,6 +96,9 @@ int main()
     Check(VehicleLaneForWorkshop(false, KeepWest, true, false, false, false) == SouthWest, "defender must never take attacker West assault lane");
     Check(VehicleLaneForWorkshop(false, KeepEast, false, true, false, false) == SouthEast, "defender must never take attacker East assault lane");
     Check(VehicleLaneForWorkshop(false, South, false, false, true, false) == KeepWest, "keep west workshop assigns KeepWest");
+    Check(BotWarVehicleMaxHealth(35000, 0) == 105000 && BotWarVehicleMaxHealth(55000, 0) == 165000
+        && BotWarVehicleMaxHealth(85000, 0) == 255000 && BotWarVehicleMaxHealth(120000, 2) == 120000,
+        "BotWar siege vehicle durability scaled cleanly");
     for (uint32_t size = 30; size <= 120; ++size)
     {
         std::array<uint32_t, LaneCount> counts{};
